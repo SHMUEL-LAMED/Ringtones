@@ -9,9 +9,9 @@ html{scroll-behavior:smooth}body{color:#f7f4ff;background:#090711;min-height:100
 .upload-error{color:#ff8a8a;background:#ff000014;border:1px solid #ff6b6b40;border-radius:10px;padding:9px 13px;font-size:12px;margin-top:14px}
 a:focus-visible,button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px solid #a77bff;outline-offset:2px}
 .choices button[aria-pressed="true"]{border-color:#7c3aed;box-shadow:0 8px 24px #4b267712}
-</style></head><body>
+nav .brand{text-decoration:none;color:inherit}</style></head><body>
 <a class="skip-link" href="#upload">דלג לתוכן הראשי</a>
-<nav><div class="brand"><img src="favicon.svg" alt="סמל צלצולים"><span>צלצולים<small>יוצרים את הצליל שלך</small></span></div><div class="privacy"><b aria-hidden="true">✓</b><span>פרטי לחלוטין<small>השיר נשאר במכשיר שלך</small></span></div></nav>
+<nav><a class="brand" href="https://shmuel-lamed.github.io/SongToNotes/"><img src="favicon.svg" alt="סמל כלי מוזיקה"><span>כלי מוזיקה<small>יצירת צלצולים</small></span></a><div class="privacy"><b aria-hidden="true">✓</b><span>פרטי לחלוטין<small>השיר נשאר במכשיר שלך</small></span></div></nav>
 <section class="hero"><span class="badge">✦ הופכים כל שיר לצלצול מושלם</span><h1>השיר שלך.<br><em>הצלצול שלך.</em></h1><p>מעלים שיר, בוחרים את הקטע שאוהבים — ומורידים צלצול מוכן לפלאפון.</p></section>
 <section id="upload" class="card upload" role="button" tabindex="0" aria-label="גרירת קובץ שמע או לחיצה לבחירת קובץ"><input id="file" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg" aria-label="בחירת קובץ שמע להעלאה"><div class="up" aria-hidden="true">↑</div><h2>מעלים את השיר</h2><p>גוררים לכאן קובץ או לוחצים לבחירה</p><button type="button" class="mainbtn">בחירת שיר</button><small>MP3, WAV, M4A או OGG • עד 100MB</small><p id="uploadError" class="upload-error hidden" role="alert"></p></section>
 <section id="studio" class="card studio hidden"><div class="file"><i aria-hidden="true">♫</i><div><b id="name"></b><small id="duration" aria-live="polite">מנתח…</small></div><button type="button" id="replace">החלפת שיר</button></div><div id="loading" class="loading" aria-live="polite"><i aria-hidden="true">♫</i><h2>מנתחים את השיר…</h2><p>מזהים חזרות מוזיקליות, קצב וצבע צליל כדי למצוא את הקטע המתאים</p></div>
