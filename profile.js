@@ -393,7 +393,28 @@ button.onclick = () => (overlay.classList.contains("hidden") ? openPanel() : clo
 $("#profileClose").onclick = closePanel;
 overlay.onmousedown = (event) => { if (event.target === overlay) closePanel(); };
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !overlay.classList.contains("hidden")) closePanel();
+  if (overlay.classList.contains("hidden")) return;
+  if (event.key === "Escape") {
+    closePanel();
+    return;
+  }
+  if (event.key === "Tab") {
+    const focusables = Array.from(
+      panel.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((el) => !el.closest(".hidden") && el.offsetWidth > 0 && el.offsetHeight > 0);
+    if (!focusables.length) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 });
 document.querySelectorAll("[data-tab]").forEach((element) => {
   element.onclick = () => { tab = element.dataset.tab; renderList(); };
