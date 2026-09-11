@@ -253,12 +253,16 @@ async function loadProfile(nextUser) {
   profile = created;
 }
 
+/**
+ * Loads both lists and reports which of them failed, so that one table being
+ * unreachable — or not migrated yet — never blanks out the other tab.
+ */
 async function loadHistory() {
   const local = readLocal();
   if (!user) {
     ringtones = local;
     notes = [];
-    return;
+    return { notesFailed: false, ringtonesFailed: false };
   }
 
   const [savedRingtones, savedNotes] = await Promise.all([
@@ -275,8 +279,15 @@ async function loadHistory() {
       .order("created_at", { ascending: false })
       .limit(40),
   ]);
-  if (savedRingtones.error) throw savedRingtones.error;
-  if (savedNotes.error) throw savedNotes.error;
+  const notesFailed = Boolean(savedNotes.error);
+  if (notesFailed) console.warn("התווים לא נטענו", savedNotes.error);
+  notes = notesFailed ? [] : savedNotes.data ?? [];
+
+  if (savedRingtones.error) {
+    console.warn("הצלצולים לא נטענו", savedRingtones.error);
+    ringtones = local;
+    return { notesFailed, ringtonesFailed: true };
+  }
 
   // Ringtones this device made before signing in join the profile now.
   const cloud = (savedRingtones.data ?? []).map(fromRow);
@@ -290,18 +301,27 @@ async function loadHistory() {
   }
 
   ringtones = [...cloud, ...missing].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  notes = savedNotes.data ?? [];
+  return { notesFailed, ringtonesFailed: false };
 }
 
 async function refresh() {
   loading = true;
   render();
   try {
-    await loadHistory();
-    setMessage("");
+    const { notesFailed, ringtonesFailed } = await loadHistory();
+    setMessage(
+      ringtonesFailed && notesFailed
+        ? "לא הצלחנו לטעון את ההיסטוריה מהפרופיל. מוצגים הצלצולים מהמכשיר הזה."
+        : ringtonesFailed
+          ? "לא הצלחנו לטעון את הצלצולים מהפרופיל. מוצגים הצלצולים מהמכשיר הזה."
+          : notesFailed
+            ? "לא הצלחנו לטעון את התווים מהפרופיל."
+            : "",
+    );
   } catch (error) {
     console.warn("ההיסטוריה לא נטענה", error);
     ringtones = readLocal();
+    notes = [];
     setMessage("לא הצלחנו לטעון את ההיסטוריה מהפרופיל. מוצגים הצלצולים מהמכשיר הזה.");
   } finally {
     loading = false;
