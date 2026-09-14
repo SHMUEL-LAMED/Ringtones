@@ -395,6 +395,22 @@ overlay.onmousedown = (event) => { if (event.target === overlay) closePanel(); }
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !overlay.classList.contains("hidden")) closePanel();
 });
+panel.addEventListener("keydown", (event) => {
+  if (event.key !== "Tab" || overlay.classList.contains("hidden")) return;
+  const focusables = panel.querySelectorAll(
+    'button:not([disabled]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  );
+  if (!focusables.length) return;
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+});
 document.querySelectorAll("[data-tab]").forEach((element) => {
   element.onclick = () => { tab = element.dataset.tab; renderList(); };
 });
