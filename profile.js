@@ -178,7 +178,10 @@ function renderList() {
     const active = element.dataset.tab === tab;
     element.classList.toggle("active", active);
     element.setAttribute("aria-selected", String(active));
+    // Roving tab stop: the tablist itself is one stop, the arrows move inside.
+    element.tabIndex = active ? 0 : -1;
   });
+  list.setAttribute("aria-labelledby", `profileTab-${tab}`);
 
   list.textContent = "";
   if (loading) {
@@ -300,7 +303,9 @@ async function loadHistory() {
     if (error) console.warn("צלצולים מקומיים לא הועלו לפרופיל", error);
   }
 
-  ringtones = [...cloud, ...missing].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  ringtones = [...cloud, ...missing].sort((a, b) =>
+    String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")),
+  );
   return { notesFailed, ringtonesFailed: false };
 }
 
@@ -353,6 +358,7 @@ async function removeRingtone(id) {
 async function removeNote(id) {
   notes = notes.filter((item) => item.id !== id);
   render();
+  if (!supabase || !user) return;
   const { error } = await supabase
     .from("transcriptions")
     .delete()
@@ -362,6 +368,17 @@ async function removeNote(id) {
 }
 
 let lastFocused = null;
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])';
+
+const isOpen = () => !overlay.classList.contains("hidden");
+
+/** The visible tab stops of the panel, in document order. */
+function focusStops() {
+  return Array.from(panel.querySelectorAll(FOCUSABLE)).filter(
+    (element) => element.offsetParent !== null,
+  );
+}
 
 function openPanel() {
   lastFocused = document.activeElement;
@@ -389,14 +406,48 @@ document.addEventListener("ringtone-created", (event) => {
 });
 
 button.classList.remove("hidden");
-button.onclick = () => (overlay.classList.contains("hidden") ? openPanel() : closePanel());
+button.onclick = () => (isOpen() ? closePanel() : openPanel());
 $("#profileClose").onclick = closePanel;
 overlay.onmousedown = (event) => { if (event.target === overlay) closePanel(); };
+// The panel declares `aria-modal`, so Tab has to stay inside it.
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !overlay.classList.contains("hidden")) closePanel();
+  if (!isOpen()) return;
+  if (event.key === "Escape") {
+    closePanel();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const stops = focusStops();
+  if (stops.length === 0) return;
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!panel.contains(document.activeElement)) {
+    event.preventDefault();
+    (event.shiftKey ? last : first).focus();
+  }
 });
-document.querySelectorAll("[data-tab]").forEach((element) => {
+const tabButtons = Array.from(document.querySelectorAll("[data-tab]"));
+tabButtons.forEach((element, index) => {
   element.onclick = () => { tab = element.dataset.tab; renderList(); };
+  // The page is right-to-left, so the left arrow is the one that moves on.
+  element.onkeydown = (event) => {
+    const forward = event.key === "ArrowLeft";
+    const back = event.key === "ArrowRight";
+    if (!forward && !back && event.key !== "Home" && event.key !== "End") return;
+    event.preventDefault();
+    const next = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? tabButtons.length - 1
+        : (index + (forward ? 1 : -1) + tabButtons.length) % tabButtons.length;
+    tabButtons[next].focus();
+  };
 });
 
 $("#profileSignIn").onclick = async () => {
@@ -408,6 +459,7 @@ $("#profileSignIn").onclick = async () => {
 };
 
 $("#profileSignOut").onclick = async () => {
+  if (!supabase) return;
   const { error } = await supabase.auth.signOut();
   if (error) setMessage("לא הצלחנו לצאת מהחשבון. נסה שוב.");
 };
@@ -419,7 +471,7 @@ $("#profileNameInput").oninput = () => {
 
 $("#profileNameSave").onclick = async () => {
   const fullName = $("#profileNameInput").value.trim().slice(0, 80);
-  if (!user || !fullName) return;
+  if (!supabase || !user || !fullName) return;
   const { data, error } = await supabase
     .from("profiles")
     .update({ full_name: fullName })
