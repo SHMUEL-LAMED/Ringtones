@@ -405,7 +405,11 @@ document.addEventListener("keydown", (event) => {
     if (focusables.length === 0) return;
     const first = focusables[0];
     const last = focusables[focusables.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
+    if (!panel.contains(document.activeElement)) {
+      event.preventDefault();
+      if (event.shiftKey) last.focus();
+      else first.focus();
+    } else if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
       last.focus();
     } else if (!event.shiftKey && document.activeElement === last) {
