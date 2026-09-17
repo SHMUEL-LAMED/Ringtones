@@ -358,6 +358,8 @@ async function removeRingtone(id) {
 async function removeNote(id) {
   notes = notes.filter((item) => item.id !== id);
   render();
+  // Signing out while the panel is open leaves the list on screen, so the
+  // delete has to survive having no session to delete through.
   if (!supabase || !user) return;
   const { error } = await supabase
     .from("transcriptions")
