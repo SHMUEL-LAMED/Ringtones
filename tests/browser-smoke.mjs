@@ -151,6 +151,20 @@ for (let offset = 44; offset + 1 < wav.length; offset += 2) {
 }
 log(peak > 0.05, "download: the ringtone is not silence", `peak ${peak.toFixed(3)}`);
 
+// --- the directory of the other tools, on the page the old links land on ---
+const toolLinks = await page.locator(".more-tools a").evaluateAll((nodes) =>
+  nodes.map((node) => node.getAttribute("href")),
+);
+log(toolLinks.length === 9, "moved: every tool on the new site is linked", `found ${toolLinks.length}`);
+log(
+  toolLinks.every((href) => href?.startsWith("https://shmuel-lamed.github.io/SongToNotes/#/")),
+  "moved: the links point at the new site",
+);
+log(
+  toolLinks.includes("https://shmuel-lamed.github.io/SongToNotes/#/ringtone"),
+  "moved: the ringtone maker itself is among them",
+);
+
 // --- mobile layout ---
 const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
 await mobile.goto(BASE, { waitUntil: "networkidle" });
