@@ -110,10 +110,15 @@ function avatarInto(element, size) {
 
 function renderButton() {
   avatarInto($("#profileAvatar"), "15px");
-  $("#profileButtonName").textContent = user
+  const name = user
     ? profile?.full_name?.split(" ")[0] || "הפרופיל שלי"
     : "התחברות";
+  $("#profileButtonName").textContent = name;
   $("#profileButtonNote").textContent = user ? "ההיסטוריה שלי" : "לשמירת הצלצולים";
+  $("#profileButton")?.setAttribute(
+    "aria-label",
+    user ? `פרופיל — ${profile?.full_name || "משתמש מחובר"}` : "התחברות לפרופיל",
+  );
 }
 
 function renderAccount() {
