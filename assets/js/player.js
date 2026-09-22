@@ -145,6 +145,9 @@
       audio.src = candidates[0];
       audio.load();
       S.history.add(ep.id);
+      // סטטיסטיקה: האזנה אחת לכל טעינה של הקלטה (בלי פרטים מזהים)
+      S.sb.event('play', ep.id);
+      P.listened = 0;
     }
     P.els.title.textContent = ep.title;
     P.els.link.href = `episode.html?ep=${encodeURIComponent(ep.slug)}`;
@@ -294,6 +297,13 @@
   }
 
   /* ---------- שמירת מיקום ---------- */
+
+  // דקות האזנה לסטטיסטיקה: כל שתי דקות של ניגון נשלחות כאירוע אחד
+  setInterval(() => {
+    if (audio.paused || !P.episode) return;
+    P.listened = (P.listened || 0) + 1;
+    if (P.listened >= 120) { S.sb.event('listen', P.episode.id, P.listened); P.listened = 0; }
+  }, 1000);
 
   function save(force) {
     if (!P.episode) return;

@@ -135,11 +135,12 @@
   Fo.setAttribute('data-reveal', '');
   Fo.innerHTML = `
 <section class="subscribe-card">
-  <div class="subscribe-copy"><b>נשארים בראש</b><small>התוכנית החדשה ישירות למייל, בכל שבועיים. שלחו בקשת הצטרפות לתפוצה.</small></div>
-  <a class="continue btn xl primary" href="mailto:rbr17011701@gmail.com?subject=${encodeURIComponent('צרף')}">הצטרפות לתפוצה</a>
+  <div class="subscribe-copy"><b>נשארים בראש</b><small>התוכנית החדשה ישירות למייל, בכל שבועיים.${S.sb.configured ? '' : ' שלחו בקשת הצטרפות לתפוצה.'}</small></div>
+  ${S.sb.configured ? '<div data-subscribe-host></div>' : `<a class="continue btn xl primary" href="mailto:rbr17011701@gmail.com?subject=${encodeURIComponent('צרף')}">הצטרפות לתפוצה</a>`}
   ${links.length ? `<p class="subscribe-note">${links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join(' · ')}</p>` : ''}
 </section>
-<div class="community-grid"><article class="card card-body"><p class="kicker">קו התוכן</p><h2>גם בטלפון</h2><p>האזנה לתוכניות בשלוחה 1, שירים מומלצים בשלוחה 3 והרשמה לצינתוק בשלוחה 4.</p><a class="btn" href="tel:0772262271" dir="ltr">077-226-2271</a><p style="margin-top:10px">מספר נוסף: <a href="tel:0737079536" dir="ltr">073-707-9536</a></p></article><article class="card card-body"><p class="kicker">מדברים איתנו</p><h2>הקול שלכם</h2><p>לשאלות ולתגובות למגישים: שלוחה 9 בקו התוכן. פורום המאזינים נמצא בשלוחה 5.</p><a class="btn" href="mailto:rbr17011701@gmail.com?subject=${encodeURIComponent("צרף לצ'אט")}">בקשת הצטרפות לצ׳אט</a><p style="margin-top:10px">בבקשה ציינו לאיזו קבוצה להצטרף — גברים או נשים.</p></article></div>`;
+<div class="community-grid"><article class="card card-body"><p class="kicker">קו התוכן</p><h2>גם בטלפון</h2><p>האזנה לתוכניות בשלוחה 1, שירים מומלצים בשלוחה 3 והרשמה לצינתוק בשלוחה 4.</p><a class="btn" href="tel:0772262271" dir="ltr">077-226-2271</a><p style="margin-top:10px">מספר נוסף: <a href="tel:0737079536" dir="ltr">073-707-9536</a></p></article><article class="card card-body"><p class="kicker">מדברים איתנו</p><h2>הקול שלכם</h2><p>לשאלות ולתגובות למגישים: שלוחה 9 בקו התוכן. פורום המאזינים נמצא בשלוחה 5.</p><a class="btn" href="mailto:rbr17011701@gmail.com?subject=${encodeURIComponent("צרף לצ'אט")}">בקשת הצטרפות לצ׳אט</a><p style="margin-top:10px">בבקשה ציינו לאיזו קבוצה להצטרף — גברים או נשים.</p>${U.messageForm({ title: 'או כתבו כאן', hint: 'ההודעה מגיעה ישירות למגישים.' })}</article></div>`;
+  U.mountSubscribe(Fo.querySelector('[data-subscribe-host]'));
 
   U.reveal();
 

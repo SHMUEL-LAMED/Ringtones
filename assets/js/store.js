@@ -15,6 +15,8 @@
     sb: 'rosh:cf:session',          // סשן מנהל Cloudflare
     prefs: 'rosh:prefs',            // מהירות, עוצמה, תצוגת ארכיון
     history: 'rosh:history',        // היסטוריית האזנה (במכשיר הזה)
+    overrideAt: 'rosh:override-at', // מתי הטיוטה המקומית נשמרה (להשוואה עם הטיוטה המשותפת)
+    preview: 'rosh:preview',        // קישור תצוגה מקדימה (sessionStorage)
   };
 
   const read = (k, fb) => { try { const v = localStorage.getItem(k); return v == null ? fb : JSON.parse(v); } catch { return fb; } };
@@ -22,10 +24,11 @@
 
   const state = {
     site: null,
-    data: { version: 1, seasons: [], episodes: [] },
+    data: { version: 1, seasons: [], episodes: [], settings: { banner: null, updates: [] } },
     source: 'json',
     error: null,
     loadedFrom: null,
+    preview: null,   // טוקן תצוגה מקדימה כשצופים בטיוטה דרך קישור
   };
 
   /* ---------- נרמול ---------- */
@@ -43,11 +46,18 @@
       cover: String(e.cover || ''),
       audio: String(e.audio || ''),
       duration: Number(e.duration) || 0,
+      sourceFileBytes: Number(e.sourceFileBytes) || 0,
+      r2Key: String(e.r2Key || ''),
+      audioSource: String(e.audioSource || ''),
+      audioSize: Number(e.audioSize) || 0,
+      audioMigratedAt: String(e.audioMigratedAt || ''),
       tags: Array.isArray(e.tags) ? e.tags.map(String).filter(Boolean) : [],
       guests: Array.isArray(e.guests) ? e.guests.map(String).filter(Boolean) : [],
       links: Array.isArray(e.links) ? e.links.filter((l) => l && l.url).map((l) => ({ label: String(l.label || l.url), url: String(l.url) })) : [],
       featured: !!e.featured,
       visible: e.visible !== false,
+      // פרסום מתוזמן: התוכנית מוצגת לציבור רק מהמועד הזה (זמן מקומי, "2026-10-01T20:00")
+      publishAt: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(e.publishAt || '')) ? String(e.publishAt).slice(0, 16) : '',
       tracks: tracks
         .filter((t) => t && (t.title || t.artist))
         .map((t) => ({ at: Math.max(0, Number(t.at) || 0), title: String(t.title || ''), artist: String(t.artist || ''), note: String(t.note || '') }))
@@ -68,7 +78,26 @@
     for (const e of episodes) {
       if (e.season && !seasons.find((s) => s.id === e.season)) seasons.push({ id: e.season, title: e.season, year: null, note: '' });
     }
-    return { version: Number(raw?.version) || 1, updated: raw?.updated || '', seasons, episodes };
+    return { version: Number(raw?.version) || 1, updated: raw?.updated || '', seasons, episodes, settings: normSettings(raw?.settings) };
+  }
+
+  /** ההגדרות שמתפרסמות עם הקטלוג: ההודעה בדף הבית ודף העדכונים */
+  function normSettings(raw) {
+    const b = raw?.banner && typeof raw.banner === 'object' ? raw.banner : {};
+    const banner = { enabled: !!b.enabled, text: String(b.text || ''), link: String(b.link || ''), linkLabel: String(b.linkLabel || ''), until: String(b.until || '').slice(0, 10) };
+    const updates = (Array.isArray(raw?.updates) ? raw.updates : []).map((u, i) => ({
+      id: String(u?.id || `u${i}`), date: String(u?.date || '').slice(0, 10), title: String(u?.title || ''), text: String(u?.text || ''), link: String(u?.link || ''), pinned: !!u?.pinned,
+    })).filter((u) => u.title || u.text);
+    return { banner, updates };
+  }
+  /** ההודעה בדף הבית פעילה? (מסומנת, יש טקסט, והתאריך לא עבר) */
+  function bannerActive(banner = state.data.settings?.banner) {
+    if (!banner?.enabled || !banner.text) return false;
+    return !banner.until || banner.until >= new Date().toISOString().slice(0, 10);
+  }
+  /** תוכנית מתוזמנת שעדיין לא הגיע זמנה */
+  function scheduled(e, now = new Date()) {
+    return !!e.publishAt && new Date(e.publishAt) > now;
   }
 
   /* ---------- Cloudflare: אותו D1 ואותו אימות Google של אתר הסקר ---------- */
@@ -107,6 +136,82 @@
     },
     async refresh() { return this.session; },
     signOut() { this.session = null; },
+    /* כניסה ישירה עם Google מתוך האתר (בלי דף ביניים): כפתור Google נטען
+       לתוך אלמנט, והאישור נשלח ל־Worker שמחזיר סשן. */
+    async google(el, { onDone, onError } = {}) {
+      const clientId = this.cfg?.googleClientId;
+      if (!clientId || !el) throw new Error('כניסה עם Google אינה מוגדרת באתר הזה.');
+      if (!window.google?.accounts?.id) {
+        await new Promise((resolve, reject) => {
+          const existing = document.querySelector('script[data-gsi]');
+          if (existing) { existing.addEventListener('load', resolve); existing.addEventListener('error', reject); if (window.google?.accounts?.id) resolve(); return; }
+          const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.defer = true; sc.dataset.gsi = '1';
+          sc.onload = resolve; sc.onerror = () => reject(new Error('כפתור Google לא נטען. בדקו את החיבור ונסו שוב.'));
+          document.head.appendChild(sc);
+        });
+      }
+      if (!window.google?.accounts?.id) throw new Error('כפתור Google לא נטען.');
+      window.google.accounts.id.initialize({
+        client_id: clientId, ux_mode: 'popup', auto_select: false, itp_support: true,
+        callback: async ({ credential }) => {
+          try {
+            const r = await fetch(this.base('/api/program/auth/google'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential }) });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok || !j.token) throw new Error(j.error || 'ההתחברות לא הצליחה.');
+            this.session = { token: j.token, user: { ...j.user, isAdmin: !!j.user?.isAdmin } };
+            onDone?.(this.user);
+          } catch (err) { onError?.(err); }
+        },
+      });
+      el.innerHTML = '';
+      window.google.accounts.id.renderButton(el, { theme: 'filled_black', size: 'large', shape: 'pill', text: 'continue_with', locale: 'he', width: 280 });
+    },
+    /* קריאות לכלי הניהול ולשירותים של האתר */
+    async call(path, { method = 'GET', body, auth = true } = {}) {
+      const r = await fetch(this.base(path), { method, headers: this.headers(auth), body: body === undefined ? undefined : JSON.stringify(body), cache: 'no-store' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { const err = new Error(j.error || `השרת החזיר שגיאה (${r.status})`); err.status = r.status; throw err; }
+      return j;
+    },
+    /** אירוע האזנה לסטטיסטיקה (ציבורי; בלי preflight, בלי המתנה) */
+    event(kind, episodeId, seconds = 0) {
+      if (!this.configured || state.preview) return;
+      const device = matchMedia('(pointer: coarse)').matches ? 'phone' : 'desktop';
+      try { fetch(this.base('/api/program/events'), { method: 'POST', keepalive: true, headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ kind, episodeId, seconds, device }) }).catch(() => {}); } catch { /* */ }
+    },
+    draft: {
+      get: () => sb.call('/api/program/draft'),
+      put: (data) => sb.call('/api/program/draft', { method: 'PUT', body: { data } }),
+      clear: () => sb.call('/api/program/draft', { method: 'DELETE' }),
+    },
+    preview: {
+      get: () => sb.call('/api/program/preview'),
+      create: () => sb.call('/api/program/preview', { method: 'POST' }),
+      revoke: () => sb.call('/api/program/preview', { method: 'DELETE' }),
+      open: (token) => sb.call(`/api/program/preview/${encodeURIComponent(token)}`, { auth: false }),
+    },
+    versions: {
+      list: () => sb.call('/api/program/versions'),
+      get: (id) => sb.call(`/api/program/versions/${encodeURIComponent(id)}`),
+    },
+    stats: () => sb.call('/api/program/stats'),
+    messages: {
+      list: () => sb.call('/api/program/messages'),
+      send: (body) => sb.call('/api/program/messages', { method: 'POST', body }),
+      read: (id, read = true) => sb.call('/api/program/messages/read', { method: 'POST', body: { id, read } }),
+      remove: (id) => sb.call('/api/program/messages', { method: 'DELETE', body: { id } }),
+    },
+    admins: {
+      list: () => sb.call('/api/program/admins'),
+      add: (email) => sb.call('/api/program/admins', { method: 'POST', body: { email } }),
+      remove: (email) => sb.call('/api/program/admins', { method: 'DELETE', body: { email } }),
+    },
+    subscribe: {
+      status: () => sb.call('/api/program/subscribe'),
+      join: () => sb.call('/api/program/subscribe', { method: 'POST' }),
+      leave: () => sb.call('/api/program/subscribe', { method: 'DELETE' }),
+      count: () => sb.call('/api/program/subscribers/count'),
+    },
     /** מרענן את פרטי המשתמש מהשרת; מחזיר true רק למנהל. סשן שפג נמחק. */
     async isAdmin() {
       if (!this.session?.token) return false;
@@ -124,10 +229,23 @@
     async push(data, { removedIds = [] } = {}) {
       if (!await this.isAdmin()) throw new Error('צריך להתחבר עם חשבון מנהל כדי לפרסם');
       const r = await fetch(this.base('/api/program/catalog'), {
-        method:'POST', headers:this.headers(), body:JSON.stringify({ seasons:data.seasons, episodes:data.episodes, removedIds }),
+        method:'POST', headers:this.headers(), body:JSON.stringify({ seasons:data.seasons, episodes:data.episodes, removedIds, settings:data.settings || {} }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || `שמירת התוכניות נכשלה (${r.status})`);
+      return j;
+    },
+    async importDrive(episode) {
+      if (!await this.isAdmin()) throw new Error('צריך להתחבר עם חשבון מנהל כדי להעביר הקלטות');
+      const driveId = window.RoshUI?.driveId(episode);
+      if (!driveId) throw new Error('לא נמצא מזהה קובץ בדרייב');
+      const r = await fetch(this.base('/api/program/import-drive'), {
+        method:'POST', headers:this.headers(), body:JSON.stringify({
+          episodeId:episode.id, driveId, expectedSize:Number(episode.sourceFileBytes) || 0,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `העברת ההקלטה נכשלה (${r.status})`);
       return j;
     },
   };
@@ -150,15 +268,34 @@
     state.source = state.site.storage?.provider === 'cloudflare' && sb.configured ? 'cloudflare' : 'json';
 
 
+    // תצוגה מקדימה של הטיוטה דרך קישור (?preview=טוקן) — נשמר לכל הביקור
+    try {
+      const fromUrl = new URLSearchParams(location.search).get('preview');
+      if (fromUrl != null) { if (fromUrl) sessionStorage.setItem(LS.preview, fromUrl); else sessionStorage.removeItem(LS.preview); }
+      state.preview = sessionStorage.getItem(LS.preview) || null;
+    } catch { state.preview = null; }
+
     const override = ignoreOverride ? null : read(LS.override, null);
-    if (override) {
+    if (state.preview && state.source === 'cloudflare') {
+      try { state.data = normalize((await sb.preview.open(state.preview)).data); state.loadedFrom = 'preview'; }
+      catch (e) { state.error = e; state.preview = null; try { sessionStorage.removeItem(LS.preview); } catch { /* */ } state.data = normalize(await sb.pull().catch(() => ({}))); state.loadedFrom = state.source; }
+    } else if (override) {
       state.data = normalize(override);
       state.loadedFrom = 'override';
     } else {
       try {
         const raw = state.source === 'cloudflare' ? await sb.pull() : await fetchJSON('data/episodes.json');
-        state.data = normalize(raw);
-        state.loadedFrom = state.source;
+        const remote = normalize(raw);
+        // חיבור חדש ל־D1 מחזיר קטלוג תקין אך ריק. במקרה כזה מציגים מיד את
+        // הקטלוג המלא שנבנה מתיקיית הדרייב של התוכנית, במקום אתר ריק. מנהל
+        // יכול לפרסם את אותה רשימה ל־D1 בלחיצה אחת מאזור הניהול.
+        if (state.source === 'cloudflare' && remote.episodes.length === 0) {
+          state.data = normalize(await fetchJSON('data/episodes.json'));
+          state.loadedFrom = 'json-empty-cloudflare';
+        } else {
+          state.data = remote;
+          state.loadedFrom = state.source;
+        }
       } catch (e) {
         state.error = e;
         // נפילה חזרה לקובץ המקומי אם Cloudflare לא זמין
@@ -176,8 +313,9 @@
 
   const byDate = (a, b) => (b.date || '').localeCompare(a.date || '') || (b.number || 0) - (a.number || 0);
 
-  function episodes({ includeHidden = false } = {}) {
-    return state.data.episodes.filter((e) => includeHidden || e.visible).sort(byDate);
+  function episodes({ includeHidden = false, includeScheduled = false } = {}) {
+    const now = new Date();
+    return state.data.episodes.filter((e) => includeHidden || (e.visible && (includeScheduled || !scheduled(e, now)))).sort(byDate);
   }
   function seasons() {
     const list = state.data.seasons.slice();
@@ -272,14 +410,15 @@
 
   const admin = {
     get hasOverride() { return !!read(LS.override, null); },
-    saveOverride(data) { write(LS.override, data); },
-    clearOverride() { write(LS.override, null); },
+    get overrideAt() { return read(LS.overrideAt, ''); },
+    saveOverride(data, at = new Date().toISOString()) { write(LS.override, data); write(LS.overrideAt, at); },
+    clearOverride() { write(LS.override, null); write(LS.overrideAt, null); },
     /** הנתונים כפי שהם במקור (בלי הטיוטה המקומית) */
     async pullOrigin() {
       return normalize(state.source === 'cloudflare' ? await sb.pull(true) : await fetchJSON('data/episodes.json'));
     },
     export(data) {
-      return JSON.stringify({ version: 1, updated: new Date().toISOString().slice(0, 10), seasons: data.seasons, episodes: data.episodes }, null, 2);
+      return JSON.stringify({ version: 1, updated: new Date().toISOString().slice(0, 10), seasons: data.seasons, episodes: data.episodes, settings: data.settings || {} }, null, 2);
     },
     validate(raw) {
       const errors = [];
@@ -300,13 +439,16 @@
     },
     normalize,
     normEpisode,
+    normSettings,
   };
 
   window.RoshStore = {
     state, ready, load, sb, prefs, positions, last, later, history, admin,
     episodes, seasons, bySlug, byId, latest, featured, neighbors, songIndex, searchEpisodes, searchSongs,
+    bannerActive, scheduled,
     get site() { return state.site; },
     get data() { return state.data; },
+    get settings() { return state.data.settings || { banner: null, updates: [] }; },
   };
 
   load();

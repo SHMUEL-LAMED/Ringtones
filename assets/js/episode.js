@@ -65,6 +65,7 @@
   </div>
 </div>
 <div class="now-playing-strip" id="now-strip" hidden></div>
+${U.messageForm({ episodeId: ep.id, title: 'תגובה על התוכנית', hint: 'מה חשבתם? ההודעה מגיעה למגישים.' }) ? `<div class="card-body" style="padding-top:0">${U.messageForm({ episodeId: ep.id, title: 'תגובה על התוכנית', hint: 'מה חשבתם? ההודעה מגיעה למגישים.' })}</div>` : ''}
 ${ep.tracks.length ? `
 <div class="card-body">
   <div class="tracks"><fieldset>

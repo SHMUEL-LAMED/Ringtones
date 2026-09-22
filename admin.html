@@ -13,106 +13,86 @@
   <link rel="stylesheet" href="assets/css/rosh.css">
   <link rel="stylesheet" href="assets/css/admin.css">
 </head>
-<body class="admin-locked">
+<body class="admin-locked" data-page="admin">
   <a class="skip-link" href="#main">דילוג לתוכן</a>
   <div class="shell">
     <div id="site-header"></div>
 
     <main id="main">
-      <section id="admin-gate" class="card" role="status"><p class="kicker">אזור מנהלים</p><h1>ניהול התוכניות</h1><p id="admin-gate-text">בודקים הרשאת מנהל…</p><div class="actions" style="justify-content:center;margin:0"><button type="button" class="btn primary" id="gate-login">התחברות לניהול</button><a class="btn" href="me.html">לאזור האישי</a></div></section>
-      <div class="admin-bar" id="admin-bar">
-        <span class="status"><span class="dot" id="src-dot"></span><span id="src-text">טוענים…</span></span>
-        <span class="dirty" id="dirty" hidden>• שינויים שלא נשמרו</span>
-        <span class="spacer"></span>
-        <button type="button" class="btn small" id="btn-new">+ תוכנית חדשה</button>
-        <button type="button" class="btn small" id="btn-seasons">עונות</button>
-        <details class="admin-advanced"><summary>כלים נוספים</summary><button type="button" class="btn small" id="btn-json">עריכת נתונים</button><button type="button" class="btn small" id="btn-import">ייבוא מקובץ</button><button type="button" class="btn small" id="btn-load-repo" title="טוען לטיוטה את data/episodes.json שמפורסם עם האתר">טעינה מהמאגר</button></details>
-        <button type="button" class="btn small" id="btn-settings">החשבון שלי</button>
-        <button type="button" class="btn small gold" id="btn-save" title="Ctrl+S">שמירת טיוטה</button>
-        <button type="button" class="btn primary small" id="btn-publish">פרסום <span>←</span></button>
-        <input type="file" id="file-import" accept="application/json,.json" hidden>
+      <!-- השער: רק מנהל מחובר רואה את הניהול -->
+      <section id="admin-gate" class="card" role="status">
+        <p class="kicker">אזור מנהלים</p>
+        <h1>ניהול התוכניות</h1>
+        <p id="admin-gate-text">בודקים מי מחובר…</p>
+        <div class="gate-actions">
+          <div class="google-slot" id="gate-google"></div>
+          <button type="button" class="btn primary xl" id="gate-login">כניסה לניהול</button>
+          <a class="btn" href="me.html">לאזור האישי</a>
+        </div>
+        <p class="cue-hint" id="gate-fallback" hidden><a href="#" id="gate-login-site">בעיה עם הכפתור? כניסה דרך אתר הסקר</a></p>
+      </section>
+
+      <!-- הכותרת של הניהול: מה המצב, וכפתור פרסום אחד -->
+      <div class="admin-top" id="admin-top">
+        <div class="admin-title">
+          <p class="kicker">ניהול</p>
+          <h1>התוכניות של ראש בראש</h1>
+        </div>
+        <div class="admin-status" id="admin-status" aria-live="polite">
+          <span class="dot" id="status-dot"></span><span id="status-text">טוענים…</span>
+        </div>
+        <button type="button" class="icon-btn" id="btn-guide" title="איך זה עובד?" aria-label="מדריך קצר">?</button>
+        <button type="button" class="btn primary" id="btn-publish-top">פרסום לאתר <span>←</span></button>
       </div>
 
-      <div class="workspace">
-        <aside class="side" aria-label="רשימת התוכניות">
-          <div class="card">
-            <div class="card-body" style="padding:10px">
-              <div class="search-box" role="search">
-                <span class="search-glyph" aria-hidden="true">♫</span>
-                <label for="ep-q" class="visually-hidden">חיפוש תוכנית</label>
-                <input id="ep-q" type="search" placeholder="חיפוש ברשימה…" autocomplete="off">
-              </div>
-              <div class="filters" style="margin:10px 0 0">
-                <select id="ep-filter" class="input" style="min-height:34px;padding:5px 10px;border-radius:99px;font-size:12px;font-weight:800">
-                  <option value="all">הכול</option>
-                  <option value="visible">מוצגות</option>
-                  <option value="hidden">מוסתרות</option>
-                  <option value="noaudio">בלי הקלטה</option>
-                  <option value="notracks">בלי רשימת שירים</option>
-                </select>
-                <span class="count" id="ep-count"></span>
-              </div>
-            </div>
-            <div class="ep-list" id="ep-list" role="listbox" aria-label="תוכניות"></div>
-          </div>
-        </aside>
+      <!-- ארבעת החלקים -->
+      <nav class="admin-tabs" id="admin-tabs" aria-label="חלקי הניהול">
+        <a href="#programs" data-tab="programs"><i>1</i><span><b>תוכניות</b><small>הוספה ועריכה</small></span></a>
+        <a href="#site" data-tab="site"><i>2</i><span><b>האתר</b><small>הודעה, עדכונים, עונות</small></span></a>
+        <a href="#listeners" data-tab="listeners"><i>3</i><span><b>מאזינים</b><small>מספרים והודעות</small><em id="tab-unread" hidden></em></span></a>
+        <a href="#publish" data-tab="publish"><i>4</i><span><b>פרסום</b><small>בדיקה והעברה לאתר</small></span></a>
+      </nav>
 
-        <section class="editor" id="editor" aria-live="polite">
-          <div class="card"><div class="state empty-editor"><span class="mark">♫</span><h3>בחרו תוכנית או צרו חדשה</h3><p>כל שינוי נשמר כטיוטה בדפדפן הזה. "פרסום" מעביר את הטיוטה לאתר.</p></div></div>
-        </section>
-      </div>
+      <div id="panel" class="admin-panel" aria-live="polite"></div>
     </main>
 
     <div id="site-footer"></div>
   </div>
 
-  <!-- דיאלוגים -->
-  <dialog class="sheet wide" id="dlg-json">
-    <div class="section-title"><div><p class="kicker">כל הנתונים</p><h2>עריכת JSON</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+  <!-- המדריך הקצר -->
+  <dialog class="sheet" id="dlg-guide">
+    <div class="section-title"><div><p class="kicker">איך זה עובד?</p><h2>ארבעה צעדים</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+    <div class="card-body guide">
+      <ol>
+        <li><b>תוכניות</b> — לוחצים "+ תוכנית חדשה", ממלאים שם, תאריך והקלטה. אפשר גם ליצור תמונה בלחיצה, להסתיר תוכנית, לשכפל, או לתזמן פרסום לתאריך עתידי.</li>
+        <li><b>האתר</b> — הודעה שמופיעה בראש כל הדפים, דף העדכונים, ועונות לסידור הארכיון.</li>
+        <li><b>מאזינים</b> — כמה מאזינים, מה הכי נשמע, וההודעות שהמאזינים שלחו לכם.</li>
+        <li><b>פרסום</b> — בדיקה שהכול תקין, ואז כפתור אחד שמעביר את השינויים לאתר. עד אז, רק אתם רואים אותם.</li>
+      </ol>
+      <p class="help">כל שינוי נשמר מיד, גם אם סוגרים את הדף. הטיוטה משותפת בין המחשב לטלפון. תמיד אפשר לחזור לגרסה קודמת מחלק "פרסום".</p>
+    </div>
+    <div class="card-foot"><button type="button" class="btn primary" data-close>הבנתי, מתחילים <span>←</span></button></div>
+  </dialog>
+
+  <!-- העברת ההקלטות מהדרייב לאחסון של האתר -->
+  <dialog class="sheet" id="dlg-migrate">
+    <div class="section-title"><div><p class="kicker">כלים מתקדמים</p><h2>העברת ההקלטות לאתר</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
     <div class="card-body">
-      <label class="visually-hidden" for="json-area">JSON</label>
-      <textarea id="json-area" class="json-area" spellcheck="false"></textarea>
-      <div id="json-msg"></div>
+      <p class="help">ההקלטות מועתקות אחת־אחת מהדרייב לאחסון של האתר. אפשר לעצור באמצע ולהמשיך מאוחר יותר — הקלטות שכבר הועברו לא יועברו שוב.</p>
+      <div class="sb-box" id="migrate-status"><b>מוכן להתחלה</b><span id="migrate-summary"></span></div>
+      <progress id="migrate-progress" max="1" value="0" style="width:100%;margin-top:16px"></progress>
+      <div id="migrate-errors" class="cue-hint" style="margin-top:12px"></div>
     </div>
-    <div class="card-foot">
-      <button type="button" class="btn" id="json-copy">העתקה</button>
-      <button type="button" class="btn" id="json-download">הורדת episodes.json</button>
-      <button type="button" class="btn" id="json-validate">אימות</button>
-      <button type="button" class="btn primary" id="json-apply">החלה על הטיוטה <span>←</span></button>
-    </div>
+    <div class="card-foot"><button type="button" class="btn" id="migrate-stop" disabled>עצירה</button><button type="button" class="btn primary" id="migrate-start">התחלת ההעברה <span>←</span></button></div>
   </dialog>
 
-  <dialog class="sheet wide" id="dlg-seasons">
-    <div class="section-title"><div><p class="kicker">ארגון הארכיון</p><h2>עונות</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
-    <div class="card-body">
-      <div class="season-row track-head" style="padding:0 6px"><span>מזהה</span><span>שם</span><span>שנה</span><span>הערה</span><span></span><span></span></div>
-      <div class="season-rows" id="season-rows"></div>
-      <div class="track-tools"><button type="button" class="btn small" id="season-add">+ עונה</button><span class="cue-hint">המזהה משמש בקישורים ובקובץ. מחיקת עונה לא מוחקת תוכניות — הן יישארו "ללא עונה".</span></div>
-    </div>
-    <div class="card-foot"><button type="button" class="btn primary" id="season-save">שמירת העונות <span>←</span></button></div>
+  <!-- גרסה קודמת של תוכנית -->
+  <dialog class="sheet wide" id="dlg-history">
+    <div class="section-title"><div><p class="kicker">גרסאות קודמות</p><h2 id="history-title">היסטוריית התוכנית</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+    <div class="card-body" id="history-body"></div>
   </dialog>
 
-  <dialog class="sheet wide" id="dlg-paste">
-    <div class="section-title"><div><p class="kicker">רשימת שירים</p><h2>הדבקת רשימה</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
-    <div class="card-body">
-      <p style="margin:0 0 10px;font-size:13px;color:var(--muted)">שורה לכל שיר. אפשר להתחיל בזמן (12:30) או בלי, ולהפריד בין שם השיר לזמר עם מקף, קו נטוי או שתי נקודות. לדוגמה:<br><code style="direction:rtl">03:15 שם השיר — שם הזמר</code></p>
-      <label class="visually-hidden" for="paste-area">רשימה</label>
-      <textarea id="paste-area" class="json-area" style="direction:rtl;text-align:right;min-height:220px;font-family:inherit;font-size:14px"></textarea>
-      <div id="paste-preview" style="margin-top:10px;font-size:12px;color:var(--muted);font-weight:700"></div>
-    </div>
-    <div class="card-foot"><label class="check"><input type="checkbox" id="paste-replace"> להחליף את הרשימה הקיימת</label><span class="spacer" style="flex:1"></span><button type="button" class="btn primary" id="paste-apply">הוספה לרשימה <span>←</span></button></div>
-  </dialog>
-
-  <dialog class="sheet" id="dlg-publish">
-    <div class="section-title"><div><p class="kicker">העברה לאתר</p><h2>פרסום</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
-    <div class="card-body" id="publish-body"></div>
-    <div class="card-foot" id="publish-foot"></div>
-  </dialog>
-
-  <dialog class="sheet" id="dlg-settings">
-    <div class="section-title"><div><p class="kicker">מקור הנתונים</p><h2>חיבור</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
-    <div class="card-body" id="settings-body"></div>
-  </dialog>
+  <input type="file" id="file-restore" accept="application/json,.json" hidden>
 
   <script src="assets/js/ui.js"></script>
   <script src="assets/js/store.js"></script>
