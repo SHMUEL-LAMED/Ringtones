@@ -1,7 +1,7 @@
 /* שכבת הנתונים של ראש בראש.
    מקורות אפשריים (site.json → storage.provider):
      "json"     — קובץ data/episodes.json במאגר (ברירת מחדל, בלי שרת).
-     "supabase" — טבלאות ב־Supabase; קריאה ציבורית, כתיבה למשתמש מחובר.
+     "cloudflare" — אותו D1 של אתר הסקר; קריאה ציבורית וכתיבת מנהל.
    בכל מצב, אזור הניהול יכול לשמור "טיוטה מקומית" בדפדפן שמופיעה באתר
    רק במכשיר הזה — כדי לבדוק לפני שמפרסמים. */
 (function () {
@@ -12,7 +12,7 @@
     pos: 'rosh:pos:',               // מיקום האזנה לכל תוכנית
     last: 'rosh:last',              // התוכנית האחרונה שנוגנה
     later: 'rosh:later',            // "לאחר כך"
-    sb: 'rosh:sb:session',          // סשן Supabase
+    sb: 'rosh:cf:session',          // סשן מנהל Cloudflare
     prefs: 'rosh:prefs',            // מהירות, עוצמה, תצוגת ארכיון
   };
 
@@ -67,98 +67,50 @@
     return { version: Number(raw?.version) || 1, updated: raw?.updated || '', seasons, episodes };
   }
 
-  /* ---------- Supabase (REST בלבד, בלי ספרייה) ---------- */
+  /* ---------- Cloudflare: אותו D1 ואותו אימות Google של אתר הסקר ---------- */
 
   const sb = {
-    get cfg() { return state.site?.storage?.supabase || null; },
-    get configured() { const c = this.cfg; return !!(c && c.url && c.anonKey); },
+    get cfg() { return state.site?.storage?.cloudflare || null; },
+    get configured() { return !!this.cfg?.apiBase; },
     get session() { return read(LS.sb, null); },
     set session(v) { write(LS.sb, v); },
     get user() { return this.session?.user || null; },
+    base(path) { return `${this.cfg.apiBase.replace(/\/$/, '')}${path}`; },
     headers(auth = true) {
-      const h = { apikey: this.cfg.anonKey, 'Content-Type': 'application/json' };
-      const s = this.session;
-      h.Authorization = `Bearer ${auth && s?.access_token ? s.access_token : this.cfg.anonKey}`;
+      const h = { 'Content-Type': 'application/json' };
+      if (auth && this.session?.token) h.Authorization = `Bearer ${this.session.token}`;
       return h;
     },
-    base(path) { return `${this.cfg.url.replace(/\/$/, '')}${path}`; },
-    async signIn(email, password) {
-      const r = await fetch(this.base('/auth/v1/token?grant_type=password'), {
-        method: 'POST', headers: this.headers(false), body: JSON.stringify({ email, password }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error_description || j.msg || j.message || 'ההתחברות נכשלה');
-      this.session = { ...j, expires_at: Date.now() + (j.expires_in || 3600) * 1000 };
-      return this.user;
+    async signInWithGoogleCredential(credential) {
+      const r = await fetch(this.base('/api/program/auth/google'), { method:'POST', headers:this.headers(false), body:JSON.stringify({ credential }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || 'ההתחברות נכשלה');
+      this.session = j;
+      return j.user;
     },
-    async refresh() {
-      const s = this.session;
-      if (!s?.refresh_token) return null;
-      if (s.expires_at && s.expires_at - Date.now() > 60_000) return s;
-      const r = await fetch(this.base('/auth/v1/token?grant_type=refresh_token'), {
-        method: 'POST', headers: this.headers(false), body: JSON.stringify({ refresh_token: s.refresh_token }),
-      });
-      if (!r.ok) { this.session = null; return null; }
-      const j = await r.json();
-      this.session = { ...j, expires_at: Date.now() + (j.expires_in || 3600) * 1000 };
-      return this.session;
-    },
+    async refresh() { return this.session; },
     signOut() { this.session = null; },
     async isAdmin() {
-      await this.refresh();
-      if (!this.session?.access_token) return false;
-      const r = await fetch(this.base('/rest/v1/rpc/rosh_is_admin'), { method: 'POST', headers: this.headers(), body: '{}' });
-      return r.ok && await r.json() === true;
+      if (!this.session?.token) return false;
+      const r = await fetch(this.base('/api/program/me'), { headers:this.headers() });
+      if (!r.ok) { if (r.status === 401) this.session = null; return false; }
+      const j = await r.json();
+      this.session = { ...this.session, user:j.user };
+      return !!j.user?.isAdmin;
     },
-    /** התחברות עם Google: מעבר לדף ההרשאה של Supabase וחזרה לכאן עם הטוקן ב-hash */
-    signInWithGoogle(returnTo = location.href.split('#')[0]) {
-      location.href = this.base(`/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(returnTo)}`);
-    },
-    /** קליטת הטוקן מה-hash אחרי חזרה מ-Google. מחזיר את המשתמש או null. */
-    async handleRedirect() {
-      if (!this.configured || !location.hash.includes('access_token=')) return null;
-      const h = new URLSearchParams(location.hash.slice(1));
-      const access_token = h.get('access_token'), refresh_token = h.get('refresh_token');
-      if (!access_token) return null;
-      history.replaceState(null, '', location.pathname + location.search);
-      const r = await fetch(this.base('/auth/v1/user'), { headers: { apikey: this.cfg.anonKey, Authorization: `Bearer ${access_token}` } });
-      if (!r.ok) return null;
-      const user = await r.json();
-      this.session = { access_token, refresh_token, expires_at: Date.now() + Number(h.get('expires_in') || 3600) * 1000, user };
-      return user;
-    },
-    /** auth=true מושך גם תוכניות מוסתרות (למנהל מחובר) */
     async pull(auth = false) {
-      if (auth) await this.refresh();
-      const t = this.cfg.table || 'rosh_episodes', st = this.cfg.settingsTable || 'rosh_settings';
-      const [er, sr] = await Promise.all([
-        fetch(this.base(`/rest/v1/${t}?select=id,data&order=date.desc.nullslast,number.desc.nullslast`), { headers: this.headers(auth) }),
-        fetch(this.base(`/rest/v1/${st}?select=key,value`), { headers: this.headers(auth) }),
-      ]);
-      if (!er.ok) throw new Error(`Supabase: ${er.status}`);
-      const rows = await er.json();
-      const settings = sr.ok ? await sr.json() : [];
-      const seasons = settings.find((s) => s.key === 'seasons')?.value || [];
-      return { version: 1, seasons, episodes: rows.map((r) => ({ ...r.data, id: r.id })) };
+      const r = await fetch(this.base('/api/program/catalog'), { headers:this.headers(auth), cache:'no-store' });
+      if (!r.ok) throw new Error(`Cloudflare: ${r.status}`);
+      return r.json();
     },
     async push(data, { removedIds = [] } = {}) {
-      await this.refresh();
-      if (!this.user) throw new Error('צריך להתחבר כדי לפרסם');
-      const t = this.cfg.table || 'rosh_episodes', st = this.cfg.settingsTable || 'rosh_settings';
-      const rows = data.episodes.map((e) => ({ id: e.id, data: e, visible: e.visible, date: e.date || null, number: e.number, updated_at: new Date().toISOString() }));
-      const r = await fetch(this.base(`/rest/v1/${t}?on_conflict=id`), {
-        method: 'POST', headers: { ...this.headers(), Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(rows),
+      if (!await this.isAdmin()) throw new Error('צריך להתחבר עם חשבון מנהל כדי לפרסם');
+      const r = await fetch(this.base('/api/program/catalog'), {
+        method:'POST', headers:this.headers(), body:JSON.stringify({ seasons:data.seasons, episodes:data.episodes, removedIds }),
       });
-      if (!r.ok) throw new Error(`שמירת התוכניות נכשלה (${r.status}): ${await r.text()}`);
-      if (removedIds.length) {
-        const d = await fetch(this.base(`/rest/v1/${t}?id=in.(${removedIds.map(encodeURIComponent).join(',')})`), { method: 'DELETE', headers: this.headers() });
-        if (!d.ok) throw new Error(`מחיקה נכשלה (${d.status})`);
-      }
-      const s = await fetch(this.base(`/rest/v1/${st}?on_conflict=key`), {
-        method: 'POST', headers: { ...this.headers(), Prefer: 'resolution=merge-duplicates,return=minimal' },
-        body: JSON.stringify([{ key: 'seasons', value: data.seasons }]),
-      });
-      if (!s.ok) throw new Error(`שמירת העונות נכשלה (${s.status})`);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `שמירת התוכניות נכשלה (${r.status})`);
+      return j;
     },
   };
 
@@ -177,8 +129,8 @@
     state.error = null;
     try { state.site = await fetchJSON('data/site.json'); }
     catch (e) { state.site = { name: 'ראש בראש', tagline: 'מוזיקה ואקטואליה', storage: { provider: 'json' } }; }
-    state.source = state.site.storage?.provider === 'supabase' && sb.configured ? 'supabase' : 'json';
-    if (state.source === 'supabase') { try { state.authRedirect = await sb.handleRedirect(); } catch { state.authRedirect = null; } }
+    state.source = state.site.storage?.provider === 'cloudflare' && sb.configured ? 'cloudflare' : 'json';
+
 
     const override = ignoreOverride ? null : read(LS.override, null);
     if (override) {
@@ -186,13 +138,13 @@
       state.loadedFrom = 'override';
     } else {
       try {
-        const raw = state.source === 'supabase' ? await sb.pull() : await fetchJSON('data/episodes.json');
+        const raw = state.source === 'cloudflare' ? await sb.pull() : await fetchJSON('data/episodes.json');
         state.data = normalize(raw);
         state.loadedFrom = state.source;
       } catch (e) {
         state.error = e;
         // נפילה חזרה לקובץ המקומי אם Supabase לא זמין
-        if (state.source === 'supabase') {
+        if (state.source === 'cloudflare') {
           try { state.data = normalize(await fetchJSON('data/episodes.json')); state.loadedFrom = 'json-fallback'; }
           catch { state.data = normalize({}); }
         } else state.data = normalize({});
@@ -299,7 +251,7 @@
     clearOverride() { write(LS.override, null); },
     /** הנתונים כפי שהם במקור (בלי הטיוטה המקומית) */
     async pullOrigin() {
-      return normalize(state.source === 'supabase' ? await sb.pull(true) : await fetchJSON('data/episodes.json'));
+      return normalize(state.source === 'cloudflare' ? await sb.pull(true) : await fetchJSON('data/episodes.json'));
     },
     export(data) {
       return JSON.stringify({ version: 1, updated: new Date().toISOString().slice(0, 10), seasons: data.seasons, episodes: data.episodes }, null, 2);
