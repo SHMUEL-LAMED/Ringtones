@@ -242,3 +242,11 @@ dialog.sheet.wide { width: min(860px, calc(100% - 32px)); }
   .update-head input[data-uf="title"] { grid-column: 1 / -1; }
   .bars .bar:nth-child(even) small { visibility: hidden; }
 }
+
+/* מוטמע בתוך ניהול אתר הסקר: בלי כותרת האתר, בלי פוטר, בלי מעבר חוזר */
+body.embed #site-header, body.embed #site-footer, body.embed .admin-title, body.embed .admin-tabs { display: none; }
+body.embed .side { top: 12px; }
+body.embed .admin-top { position: sticky; top: 0; z-index: 30; padding: 8px 12px; border-radius: 16px; background: rgba(10, 13, 26, .9); }
+body.embed .admin-top { margin-top: 6px; }
+.admin-list li .seen { display: block; font-size: 11px; color: var(--muted); font-weight: 700; direction: rtl; text-align: right; }
+.banner-sites { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 12px; }

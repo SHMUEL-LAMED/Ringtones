@@ -11,7 +11,8 @@ const fails = [];
 const check = (ok, msg) => { console.log(`${ok ? '✓' : '✕'} ${msg}`); if (!ok) fails.push(msg); };
 const catalog = JSON.parse(readFileSync(new URL('../data/episodes.json', import.meta.url), 'utf8'));
 let published = null; let draftPuts = 0; let events = []; let messagesSent = [];
-let settings = { banner: { enabled: false, text: '', link: '', linkLabel: '', until: '' }, updates: [] };
+let settings = { banner: { enabled: false, text: '', link: '', linkLabel: '', until: '', sites: { program: true, survey: false } }, updates: [], survey: { id: 'main', name: 'מצעד האלבומים', open: true, url: 'https://rosh-berosh.smwlyqswkwt232.workers.dev/' } };
+let handoffs = 0; let logouts = 0; let ssoBounces = 0; let ssoSignedIn = false;
 
 const browser = await chromium.launch(process.env.PW_EXECUTABLE ? { executablePath: process.env.PW_EXECUTABLE } : {});
 const ctx = await browser.newContext({ locale: 'he-IL', viewport: { width: 1280, height: 900 } });
@@ -40,6 +41,13 @@ await ctx.route(`${API}/**`, async (route) => {
   if (p === '/api/program/preview/tok123') return json({ data: { ...catalog, episodes: [{ ...catalog.episodes[0], title: 'טיוטה לבדיקה' }] }, updatedAt: 'x' });
   if (p === '/api/program/admins' && m === 'GET') return json({ admins: [{ email: 'admin@example.com', fixed: true, you: true }, { email: 'b@example.com', fixed: false, you: false }] });
   if (p === '/api/program/events') { events.push(req.postDataJSON()); return json({ ok: true }); }
+  if (p === '/api/program/surveys') return json({ surveys: [{ id: 'main', name: 'מצעד האלבומים', active: true, open: true }, { id: 'old', name: 'מצעד 2025', active: false, open: false }] });
+  if (p === '/api/program/handoff' && m === 'POST') { handoffs++; return json({ code: 'c0ffee', toSurvey: `${API}/api/program/handoff/c0ffee` }); }
+  if (p === '/api/program/auth/handoff') { const b = req.postDataJSON(); return b.code === 'c0ffee' ? json({ token: 'handed', user: { email: 'admin@example.com', name: 'בדיקה', isAdmin: true } }) : json({ error: 'קוד המעבר פג' }, 401); }
+  if (p === '/api/program/logout') { logouts++; return json({ ok: true }); }
+  if (p === '/api/program/sso') { const back = new URL(url.searchParams.get('return')); back.searchParams.set('sso', ssoSignedIn ? 'c0ffee' : 'none'); ssoBounces++; return route.fulfill({ status: 302, headers: { location: back.toString() } }); }
+  if (p === '/api/program/banner') return json({ banner: null });
+  if (p === '/api/program/handoff/c0ffee') return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>ניהול משותף</title>' });
   if (p.startsWith('/api/program/stream/')) return route.fulfill({ status: 206, headers: { 'access-control-allow-origin': '*', 'content-range': 'bytes 0-1/100', 'content-type': 'audio/mpeg' }, body: Buffer.from([0, 0]) });
   return json({ error: 'לא נמצא' }, 404);
 });
@@ -51,7 +59,7 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.
 page.on('dialog', (d) => d.accept());
 
 /* ---------- השער בלי סשן ---------- */
-await page.goto(`${BASE}/admin.html`);
+await page.goto(`${BASE}/admin.html?standalone=1`);
 await page.waitForSelector('#admin-gate');
 await page.waitForTimeout(800);
 check(await page.evaluate(() => document.body.classList.contains('admin-locked')), 'הניהול נעול בלי מנהל מחובר');
@@ -60,7 +68,7 @@ check((await page.locator('#gate-login:visible').count()) === 1 || (await page.l
 
 /* ---------- מנהל מחובר ---------- */
 await page.evaluate(() => { localStorage.clear(); localStorage.setItem('rosh:cf:session', JSON.stringify({ token: 'test', user: { email: 'admin@example.com', name: 'בדיקה', isAdmin: true } })); });
-await page.goto(`${BASE}/admin.html`);
+await page.goto(`${BASE}/admin.html?standalone=1`);
 await page.waitForSelector('#panel .workspace', { timeout: 15000 });
 await page.evaluate(() => document.querySelector('#dlg-guide')?.close());
 check(!(await page.evaluate(() => document.body.classList.contains('admin-locked'))), 'מנהל מחובר רואה את הניהול');
@@ -69,6 +77,7 @@ check((await page.locator('#ep-list .ep-item').count()) === 86, 'רשימת הת
 check(!/JSON|slug|API/.test(await page.locator('#main').innerText()), 'בלי JSON, slug או API על המסך');
 check(!/רשימת השירים|זמר\/ת|הדבקת רשימה/.test(await page.locator('#main').innerText()), 'בלי רשימת שירים וזמרים בניהול');
 await page.waitForFunction(() => document.querySelector('#status-text').textContent.includes('הכול מפורסם'), null, { timeout: 10000 }).catch(() => {});
+await page.waitForLoadState('networkidle');
 check((await page.locator('#status-text').innerText()).includes('הכול מפורסם'), 'המצב: הכול מפורסם');
 
 // תוכנית חדשה
@@ -87,6 +96,10 @@ await page.fill('[data-f="publishAt"]', '2031-01-01T20:00');
 await page.dispatchEvent('[data-f="publishAt"]', 'change');
 await page.waitForTimeout(300);
 check((await page.locator('#editor .st.scheduled').count()) >= 1, 'תזמון פרסום מסומן');
+// קישור למצעד
+check((await page.locator('[data-f="surveyId"] option').count()) === 3, 'בחירת מצעד לתוכנית מציעה את הסקרים');
+await page.selectOption('[data-f="surveyId"]', 'main');
+await page.waitForTimeout(300);
 // תמונה אוטומטית — יוצרת קנבס ומעלה; ההעלאה מדומה
 await ctx.route(`${API}/api/program/upload**`, (route) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ url: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=' }) }));
 await page.click('[data-op="cover-auto"]');
@@ -108,6 +121,8 @@ await page.fill('[data-sf="text"]', 'התוכנית הבאה ביום חמישי
 await page.click('[data-op="banner-toggle"]');
 await page.waitForSelector('.banner-preview');
 check((await page.locator('.banner-preview .site-banner').innerText()).includes('חמישי'), 'הודעה בדף הבית: תצוגה מקדימה');
+await page.check('[data-bs="survey"]');
+await page.waitForTimeout(300);
 await page.click('[data-op="update-add"]');
 await page.fill('#update-rows input[data-uf="title"] >> nth=0', 'עדכון ראשון');
 await page.fill('#update-rows textarea >> nth=0', 'תוכן העדכון');
@@ -145,13 +160,21 @@ await page.waitForFunction(() => document.querySelector('#status-text').textCont
 check(!!published && published.episodes.length === 87, 'הפרסום שלח 87 תוכניות לשרת');
 check(published.episodes.some((e) => e.title === 'תוכנית בדיקה חדשה' && e.publishAt === '2031-01-01T20:00'), 'התוכנית החדשה עם התזמון נשלחה');
 check(settings.banner.enabled && settings.banner.text.includes('חמישי') && settings.updates.length === 1, 'ההודעה והעדכונים פורסמו');
+check(settings.banner.sites?.survey === true && settings.banner.sites?.program === true, 'ההודעה מסומנת לשני האתרים');
+check(published.episodes.some((e) => e.title === 'תוכנית בדיקה חדשה' && e.surveyId === 'main'), 'הקישור למצעד נשמר בתוכנית');
+// דף ניהול אחד: הכתובת של ניהול התוכניות עוברת לדף הניהול המשותף, לאותו חלק, בלי כניסה נוספת
+await page.goto(`${BASE}/admin.html#site`);
+await page.waitForURL(/\/api\/program\/handoff\/c0ffee#prog-site$/, { timeout: 15000 }).catch(() => {});
+check(/\/api\/program\/handoff\/c0ffee#prog-site$/.test(page.url()) && handoffs === 1, 'ניהול התוכניות נפתח בתוך דף הניהול המשותף');
+await page.goto(`${BASE}/index.html`);
 check(!(await page.evaluate(() => localStorage.getItem('rosh:override'))), 'אחרי פרסום הטיוטה המקומית נמחקה');
 
 /* ---------- האתר הציבורי אחרי הפרסום ---------- */
 await page.evaluate(() => localStorage.removeItem('rosh:cf:session'));
 await page.goto(`${BASE}/index.html`);
 await page.waitForSelector('#featured .card');
-check((await page.locator('.site-banner').count()) === 1 && (await page.locator('.site-banner').innerText()).includes('חמישי'), 'ההודעה מופיעה בראש דף הבית');
+check((await page.locator('.site-banner:not(.vote)').count()) === 1 && (await page.locator('.site-banner:not(.vote)').innerText()).includes('חמישי'), 'ההודעה מופיעה בראש דף הבית');
+check((await page.locator('.site-banner.vote').count()) === 1, '"הצביעו עכשיו" כשההצבעה במצעד פתוחה');
 check((await page.locator('.site-nav a[href="updates.html"]').count()) === 1, 'קישור לעדכונים בתפריט');
 const visible = await page.evaluate(() => window.RoshStore.episodes().length);
 check(visible === 84, `תוכנית מתוזמנת ושתי מוסתרות לא מוצגות לציבור (${visible})`);
@@ -175,7 +198,45 @@ await page.goto(`${BASE}/me.html`);
 await page.waitForSelector('#me-profile .profile-hero');
 check((await page.locator('#me-profile [data-google]').count()) === 1, 'האזור האישי: כפתור Google ישיר');
 
-const real = errors.filter((e) => !/favicon|manifest|sw\.js|serviceWorker|net::ERR_|accounts\.google|gsi/i.test(e));
+/* ---------- כניסה אחת: מי שמחובר באתר הסקר מחובר גם כאן, בלי ללחוץ כלום ---------- */
+await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); localStorage.setItem('rosh:sso-test', '1'); });
+await page.goto(`${BASE}/index.html`);
+await page.waitForSelector('#featured .card');
+check(ssoBounces === 1 && !(await page.locator('.site-nav .me-link.signed').count()), 'לא מחוברים באתר הסקר: בדיקה אחת, ונשארים אורחים');
+await page.goto(`${BASE}/archive.html`);
+await page.waitForSelector('#results .ep-card');
+check(ssoBounces === 1, 'לא בודקים שוב בכל דף');
+ssoSignedIn = true;
+await page.evaluate(() => localStorage.removeItem('rosh:sso-checked'));
+await page.goto(`${BASE}/index.html`);
+await page.waitForSelector('#featured .card');
+check(ssoBounces === 2 && (await page.locator('.site-nav .me-link.signed').count()) === 1, 'מחוברים באתר הסקר: מחוברים גם כאן אוטומטית');
+check(!page.url().includes('sso='), 'הקוד נמחק מהכתובת');
+await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
+
+/* ---------- הגעה מניהול הסקר: קוד מעבר במקום כניסה, במצב מוטמע ---------- */
+await page.evaluate(() => { localStorage.removeItem('rosh:cf:session'); sessionStorage.clear(); });
+await page.goto(`${BASE}/admin.html?handoff=c0ffee&embed=1`);
+await page.waitForSelector('#panel .workspace', { timeout: 15000 });
+await page.evaluate(() => document.querySelector('#dlg-guide')?.close());
+check(!(await page.evaluate(() => document.body.classList.contains('admin-locked'))), 'קוד המעבר מחבר לניהול בלי כניסה נוספת');
+check(await page.evaluate(() => document.body.classList.contains('embed') && !location.search.includes('handoff')), 'מצב מוטמע, והקוד נמחק מהכתובת');
+check(!(await page.locator('#site-header .site-header').count()), 'במצב מוטמע אין כותרת אתר');
+check(!(await page.locator('#admin-tabs').isVisible()), 'בדף המשותף אין תפריט לשוניות כפול');
+check(await page.evaluate(() => JSON.parse(localStorage.getItem('rosh:cf:session') || 'null')?.token === 'handed'), 'הסשן מהמעבר נשמר');
+await page.evaluate(() => { location.hash = 'publish'; });
+await page.waitForSelector('.pub-card');
+await page.click('summary');
+await page.click('[data-op="logout"]');
+await page.waitForTimeout(500);
+check(logouts === 1, 'התנתקות מנתקת גם בשרת (מכל המקומות)');
+await page.goto(`${BASE}/admin.html?handoff=bad000&standalone=1`);
+await page.waitForSelector('#admin-gate');
+await page.waitForTimeout(800);
+check(await page.evaluate(() => document.body.classList.contains('admin-locked')), 'קוד מעבר שפג משאיר את הניהול נעול');
+
+// תשובות 401/404 מהשרת המדומה הן חלק מהתרחישים (קוד מעבר שפג, נתיב שלא קיים בשרת ישן)
+const real = errors.filter((e) => !/favicon|manifest|sw\.js|serviceWorker|net::ERR_|accounts\.google|gsi|status of 40[14]/i.test(e));
 check(real.length === 0, `אין שגיאות JavaScript${real.length ? `: ${real.join(' | ')}` : ''}`);
 await browser.close();
 if (fails.length) { console.error(`\n${fails.length} בדיקות נכשלו`); process.exit(1); }

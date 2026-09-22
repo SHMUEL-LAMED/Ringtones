@@ -794,3 +794,6 @@ dialog.sheet .card-body { padding: 18px 22px 22px; }
 .subscribe-google .g { min-height: 44px; }
 .subscribe-state { font-weight: 800; color: var(--success); }
 .google-slot { min-height: 44px; display: grid; place-items: center; }
+
+.site-banner.vote { border-color: var(--success-border); background: linear-gradient(90deg, rgba(94, 230, 184, .16), rgba(94, 230, 184, .04)); }
+.site-banner.vote .site-banner-mark { background: var(--success); color: #062b21; }
