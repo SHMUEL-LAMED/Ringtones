@@ -42,6 +42,14 @@
     $('#dirty').hidden = !A.dirty;
   }
   function markDirty() { A.dirty = true; $('#dirty').hidden = false; }
+  async function checkAccess() {
+    let allowed = false;
+    try { allowed = await S.sb.isAdmin(); } catch { /* show the sign-in gate */ }
+    document.body.classList.toggle('admin-locked', !allowed);
+    $('#admin-gate').hidden = allowed;
+    $('#admin-gate-text').textContent = S.sb.user ? 'לחשבון הזה אין הרשאת ניהול, או שלא ניתן לאמת אותה כרגע.' : 'התחברו עם חשבון המנהל כדי להעלות ולערוך תוכניות.';
+    return allowed;
+  }
   window.addEventListener('beforeunload', (e) => { if (A.dirty) { e.preventDefault(); e.returnValue = ''; } });
 
   /* ---------- רשימת התוכניות ---------- */
@@ -52,7 +60,7 @@
     let l = A.data.episodes.slice().sort(byDate);
     if (A.filter === 'visible') l = l.filter((e) => e.visible);
     if (A.filter === 'hidden') l = l.filter((e) => !e.visible);
-    if (A.filter === 'noaudio') l = l.filter((e) => !e.audio);
+    if (A.filter === 'noaudio') l = l.filter((e) => !e.audio && !U.driveId(e));
     if (A.filter === 'notracks') l = l.filter((e) => !e.tracks.length);
     if (A.q) l = S.searchEpisodes(A.q, l);
     return l;
@@ -103,8 +111,8 @@
   </div>
   <div class="card-body">
     <div class="form-grid">
-      <label class="field span2"><span>כותרת התוכנית *</span><input data-f="title" value="${esc(e.title)}" required placeholder="למשל: שירי הסתיו"></label>
-      <label class="field"><span>מספר תוכנית</span><input data-f="number" type="number" inputmode="numeric" value="${e.number ?? ''}" placeholder="38"></label>
+      <label class="field span2"><span>כותרת התוכנית *</span><input data-f="title" value="${esc(e.title)}" required placeholder="שם התוכנית"></label>
+      <label class="field"><span>מספר תוכנית</span><input data-f="number" type="number" inputmode="numeric" value="${e.number ?? ''}" placeholder="90"></label>
       <label class="field"><span>תאריך שידור</span><input data-f="date" type="date" value="${esc(e.date)}"></label>
       <label class="field"><span>עונה</span><select data-f="season">${seasonOptions(e.season)}</select></label>
       <label class="field"><span>כתובת הדף (slug)</span><div class="slug-line"><input data-f="slug" value="${esc(e.slug)}" spellcheck="false"><button type="button" class="btn small" data-op="slug-auto" title="לפי התאריך והמספר">אוטומטי</button></div><small>episode.html?ep=<span id="slug-echo">${esc(e.slug)}</span></small></label>
@@ -123,12 +131,17 @@
   <div class="card-body">
     <div class="form-grid">
       <div class="field">
-        <label class="field"><span>קישור להקלטה (MP3 / M4A / WAV)</span><input data-f="audio" value="${esc(e.audio)}" placeholder="https://… או assets/audio/…" spellcheck="false" style="direction:ltr;text-align:left"></label>
-        ${e.audio ? `<audio class="audio-preview" id="preview-audio" controls preload="metadata" src="${esc(e.audio)}"></audio><small class="cue-hint">הנגן הזה משמש גם לסימון זמני השירים למטה.</small>` : ''}
+        <label class="field"><span>העלאת הקלטה</span><input type="file" data-upload="audio" accept=".mp3,.m4a,.wav,.ogg,.flac,.aac"></label>
+        <small>עד 50MB. אפשר גם להדביק קישור ציבורי מ־Google Drive בשדה הבא.</small>
+        <label class="field"><span>קישור להקלטה או ל־Google Drive</span><input data-f="audio" value="${esc(e.audio)}" placeholder="https://…" spellcheck="false" style="direction:ltr;text-align:left"></label>
+        <span class="upload-status" role="status" data-upload-status="audio"></span>
+        ${e.audio && !U.driveId(e) ? `<audio class="audio-preview" id="preview-audio" controls preload="metadata" src="${esc(e.audio)}"></audio>` : ''}
         <label class="field" style="margin-top:10px"><span>אורך (דקות:שניות)</span><div class="slug-line"><input data-f="duration" value="${e.duration ? fmtTime(e.duration) : ''}" placeholder="58:30" style="direction:ltr;text-align:center"><button type="button" class="btn small" data-op="dur-auto" ${e.audio ? '' : 'disabled'}>מהקובץ</button></div></label>
       </div>
       <div class="field">
         <label class="field"><span>קישור לתמונה</span><input data-f="cover" value="${esc(e.cover)}" placeholder="https://…/cover.jpg" spellcheck="false" style="direction:ltr;text-align:left"></label>
+        <label class="field"><span>העלאת תמונת התוכנית</span><input type="file" data-upload="cover" accept=".jpg,.jpeg,.png,.webp"></label>
+        <span class="upload-status" role="status" data-upload-status="cover"></span>
         ${e.cover ? `<img class="cover-preview" src="${esc(e.cover)}" alt="" style="margin-top:8px">` : '<div class="cover-preview" style="margin-top:8px;display:grid;place-items:center;color:var(--gold-ink);font-size:32px">♫</div>'}
       </div>
     </div>
@@ -243,8 +256,22 @@
         l[lf] = ev.target.value; markDirty(); schedulePreview();
       }
     });
-    E.addEventListener('change', (ev) => {
+    E.addEventListener('change', async (ev) => {
       const e = cur(); if (!e) return;
+      if (ev.target.dataset.upload) {
+        const input = ev.target, kind = input.dataset.upload, file = input.files[0];
+        if (!file) return;
+        const status = E.querySelector(`[data-upload-status="${kind}"]`);
+        input.disabled = true;
+        try {
+          status.textContent = 'מתחברים להעלאה…';
+          e[kind] = await window.RoshUpload(file, e.id, kind, pct => { status.textContent = `מעלים ${file.name} — ${pct}%`; });
+          markDirty();
+          if (A.selected === e.id) renderEditor();
+          U.notify('הקובץ הועלה. לחצו פרסום כדי להציג אותו באתר.', 'success');
+        } catch (err) { status.textContent = err.message; input.disabled = false; input.value = ''; }
+        return;
+      }
       if (ev.target.dataset.f === 'slug') { e.slug = uniqueSlug(ev.target.value, e.id); ev.target.value = e.slug; renderPreview(); }
       if (ev.target.dataset.f === 'audio' || ev.target.dataset.f === 'cover') renderEditor();
       if (ev.target.dataset.tf === 'at') { ev.target.value = fmtTime(parseTime(ev.target.value) || 0); }
@@ -523,16 +550,17 @@ ${S.state.source === 'supabase' ? (u ? `
     dlgSettings.showModal();
   }
   $('#btn-settings').addEventListener('click', openSettings);
+  $('#gate-login').addEventListener('click', openSettings);
   dlgSettings.addEventListener('submit', async (ev) => {
     const f = ev.target.closest('[data-set="login"]'); if (!f) return; ev.preventDefault();
     const btn = f.querySelector('button[type="submit"]'); btn.disabled = true;
-    try { await S.sb.signIn(f.email.value.trim(), f.password.value); U.notify('התחברתם.', 'success'); openSettings(); paintStatus(); loadOriginIds(); }
+    try { await S.sb.signIn(f.email.value.trim(), f.password.value); await checkAccess(); U.notify('התחברתם.', 'success'); openSettings(); paintStatus(); loadOriginIds(); }
     catch (err) { U.notify(`ההתחברות נכשלה: ${err.message}`, 'error'); btn.disabled = false; }
   });
   dlgSettings.addEventListener('click', async (ev) => {
     const b = ev.target.closest('[data-set]'); if (!b || b.tagName === 'FORM') return;
     switch (b.dataset.set) {
-      case 'logout': S.sb.signOut(); U.notify('התנתקתם.', 'success'); openSettings(); paintStatus(); break;
+      case 'logout': S.sb.signOut(); await checkAccess(); U.notify('התנתקתם.', 'success'); openSettings(); paintStatus(); break;
       case 'google': S.sb.signInWithGoogle(); break;
       case 'reload': { if (A.dirty && !confirm('יש שינויים שלא נשמרו. להמשיך?')) return; const stop = U.notify('מושכים מהמקור…', 'progress'); try { const o = await S.admin.pullOrigin(); A.data = clone(o); A.originIds = new Set(o.episodes.map((e) => e.id)); A.removed.clear(); A.dirty = true; stop(); renderList(); renderEditor(); dlgSettings.close(); U.notify('נמשך מהמקור אל הטיוטה. שמרו כדי להחיל.', 'success'); } catch (err) { stop(); U.notify(`המשיכה נכשלה: ${err.message}`, 'error'); } break; }
       case 'discard': if (confirm('למחוק את הטיוטה המקומית? השינויים שלא פורסמו יאבדו.')) { S.admin.clearOverride(); location.reload(); } break;
@@ -549,6 +577,7 @@ ${S.state.source === 'supabase' ? (u ? `
   renderList();
   if (S.state.authRedirect) U.notify(`התחברתם כ־${S.state.authRedirect.email}.`, 'success');
   if (S.state.error && S.state.loadedFrom !== 'override') U.notify('טעינת המקור נכשלה. אפשר לעבוד על הטיוטה ולנסות שוב.', 'error', { action: 'ניסיון חוזר', onAction: () => location.reload(), ttl: 0 });
+  await checkAccess();
   loadOriginIds();
   const first = U.qs('ep'); if (first && A.data.episodes.some((e) => e.id === first || e.slug === first)) select(A.data.episodes.find((e) => e.id === first || e.slug === first).id);
 })();
