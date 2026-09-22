@@ -8,7 +8,7 @@
   const site = S.site || {};
   document.getElementById('site-header').innerHTML = U.header('home', site);
   document.getElementById('site-footer').innerHTML = U.footer(site);
-  document.title = `${site.name || 'ראש בראש'} — ${site.tagline || 'מצעד המוזיקה הגדול'}`;
+  document.title = `${site.name || 'ראש בראש'} — ${site.tagline || 'מוזיקה ואקטואליה'}`;
   for (const [sel, key] of [['[data-site-name]', 'name'], ['[data-site-tagline]', 'tagline'], ['[data-site-numeral]', 'numeral'], ['[data-site-numeral-label]', 'numeralLabel'], ['[data-site-description]', 'description']]) {
     const el = document.querySelector(sel); if (el && site[key]) el.textContent = site[key];
   }
@@ -60,7 +60,7 @@
       <p class="desc">${esc(feat.description)}</p>
       <div class="actions">
         ${feat.audio ? `<button type="button" class="btn primary" data-play="${esc(feat.id)}">האזנה לתוכנית <span>▶</span></button>` : ''}
-        <a class="btn" href="episode.html?ep=${encodeURIComponent(feat.slug)}">לדף התוכנית</a>
+        <a class="btn${!feat.audio ? ' primary' : ''}" href="episode.html?ep=${encodeURIComponent(feat.slug)}">${U.driveId(feat) ? 'האזנה לתוכנית ▶' : 'לדף התוכנית'}</a>
         <button type="button" class="btn" data-later="${esc(feat.id)}" aria-pressed="${S.later.has(feat.id)}">${S.later.has(feat.id) ? '✓ שמור לאחר כך' : '+ לאחר כך'}</button>
       </div>
     </div>
@@ -101,32 +101,32 @@
   }
 
   /* ---------- תוכניות אחרונות ---------- */
-  const recent = list.filter((e) => e.id !== feat?.id).slice(0, 8);
+  const recent = list.filter((e) => e.id !== feat?.id && e.season !== 'sets').slice(0, 8);
   const Rc = document.getElementById('recent');
   Rc.innerHTML = recent.length ? `
 <div class="grid-head"><div><p class="kicker">ארכיון</p><h2>תוכניות אחרונות</h2></div><a href="archive.html">לכל ${list.length} התוכניות ←</a></div>
 <div class="ep-grid">${recent.map((e) => epCard(e)).join('')}</div>` : '';
 
   /* ---------- מספרים ---------- */
-  const songs = S.songIndex().length;
-  const totalSec = list.reduce((a, e) => a + (e.duration || 0), 0);
-  const listen = totalSec >= 3600 ? [Math.round(totalSec / 3600), 'שעות האזנה'] : [Math.max(1, Math.round(totalSec / 60)), 'דקות האזנה'];
+  const sets = list.filter(e => e.season === 'sets');
+  document.getElementById('sets').innerHTML = sets.length ? `<div class="grid-head"><div><p class="kicker">רק המוזיקה</p><h2>סטים מיוחדים</h2></div></div><div class="ep-grid">${sets.map(e => epCard(e)).join('')}</div>` : '';
   document.getElementById('stats').innerHTML = list.length ? `
 <div class="stats">
-  <div class="stat"><b>${list.length}</b><small>תוכניות</small></div>
-  <div class="stat"><b>${songs}</b><small>שירים ברשימות</small></div>
-  <div class="stat"><b>${listen[0]}</b><small>${listen[1]}</small></div>
-  <div class="stat"><b>${S.seasons().filter((s) => s.count).length}</b><small>עונות</small></div>
+  <div class="stat"><b>${list.filter(e => e.season !== 'sets' && e.season !== 'legacy').length}</b><small>תוכניות ופרקי בונוס</small></div>
+  <div class="stat"><b>${list.filter(e => e.season === 'legacy').length}</b><small>הקלטות מקו המכלול</small></div>
+  <div class="stat"><b>${sets.length}</b><small>סטים מיוחדים</small></div>
+  <div class="stat"><b>▶</b><small>האזנה מכל מקום</small></div>
 </div>` : '';
 
   /* ---------- עקבו אחרינו ---------- */
   const links = site.links || [];
   document.getElementById('follow').innerHTML = `
 <section class="subscribe-card">
-  <div class="subscribe-copy"><b>רוצים לשמוע מאיתנו?</b><small>${esc(site.description || 'כל התוכניות של ראש בראש במקום אחד.')}</small></div>
-  <a class="continue btn" href="archive.html">לארכיון התוכניות <span>←</span></a>
+  <div class="subscribe-copy"><b>נשארים בראש</b><small>התוכנית החדשה ישירות למייל, בכל שבועיים. שלחו בקשת הצטרפות לתפוצה.</small></div>
+  <a class="continue btn" href="mailto:rbr17011701@gmail.com?subject=${encodeURIComponent('צרף')}">הצטרפות לתפוצה</a>
   ${links.length ? `<p class="subscribe-note">${links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join(' · ')}</p>` : ''}
-</section>`;
+</section>
+<div class="community-grid"><article class="card card-body"><h2>גם בטלפון</h2><p>האזנה לתוכניות בשלוחה 1, שירים מומלצים בשלוחה 3 והרשמה לצינתוק בשלוחה 4.</p><a class="btn" href="tel:0772262271" dir="ltr">077-226-2271</a><p>מספר נוסף: <a href="tel:0737079536" dir="ltr">073-707-9536</a></p></article><article class="card card-body"><h2>הקול שלכם</h2><p>לשאלות ולתגובות למגישים: שלוחה 9 בקו התוכן. פורום המאזינים נמצא בשלוחה 5.</p><a class="btn" href="mailto:rbr17011701@gmail.com?subject=${encodeURIComponent("צרף לצ'אט")}">בקשת הצטרפות לצ׳אט</a><p>בבקשה ציינו לאיזו קבוצה להצטרף — גברים או נשים.</p></article></div>`;
 
   /* ---------- אירועים ---------- */
   document.addEventListener('click', (e) => {
