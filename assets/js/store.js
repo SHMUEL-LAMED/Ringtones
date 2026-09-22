@@ -81,12 +81,21 @@
       if (auth && this.session?.token) h.Authorization = `Bearer ${this.session.token}`;
       return h;
     },
-    async signInWithGoogleCredential(credential) {
-      const r = await fetch(this.base('/api/program/auth/google'), { method:'POST', headers:this.headers(false), body:JSON.stringify({ credential }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || 'ההתחברות נכשלה');
-      this.session = j;
-      return j.user;
+    async signInWithGoogle() {
+      const origin = new URL(this.cfg.apiBase).origin;
+      const popup = window.open(this.base('/api/program/login'), 'rosh-program-login', 'popup,width=460,height=620');
+      if (!popup) throw new Error('הדפדפן חסם את חלון ההתחברות. אפשרו חלונות קופצים ונסו שוב.');
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { window.removeEventListener('message', receive); reject(new Error('ההתחברות ארכה יותר מדי. נסו שוב.')); }, 120000);
+        const receive = (event) => {
+          if (event.origin !== origin || event.data?.type !== 'rosh-program-auth') return;
+          clearTimeout(timer); window.removeEventListener('message', receive);
+          if (!event.data.token || !event.data.user?.isAdmin) return reject(new Error('לחשבון הזה אין הרשאת ניהול.'));
+          this.session = { token:event.data.token, user:event.data.user };
+          resolve(event.data.user);
+        };
+        window.addEventListener('message', receive);
+      });
     },
     async refresh() { return this.session; },
     signOut() { this.session = null; },
