@@ -1,181 +1,110 @@
-/**
- * End-to-end smoke test for the ringtone studio.
- *
- * Serve the repository root (`npx http-server -p 4180 .`) and run
- * `npm_config_yes=1 node tests/browser-smoke.mjs`. It drives the page the way
- * a visitor on a phone would, because the parts most likely to break — which
- * files the picker accepts, what happens when the replace dialog is
- * cancelled, whether the download is real audio — are invisible to any check
- * that only reads the source.
- *
- * Playwright is not a dependency of the site. Install it where the test runs
- * (`npm i -g playwright`) and this picks it up.
- */
-import { readFileSync } from "node:fs";
-import { fileURLToPath, pathToFileURL } from "node:url";
+/* בדיקת דפדפן אמיתי לאתר ראש בראש.
+   הרצה:  npx http-server -p 4180 .   (בחלון אחד)
+          node tests/browser-smoke.mjs (בחלון שני)
+   דורש Playwright (npm i -g playwright) — אינו תלות של האתר. */
+import { chromium } from 'playwright';
 
-async function loadPlaywright() {
-  try {
-    return await import("playwright");
-  } catch {
-    // Falls through to the global root below.
-  }
-  try {
-    const { execSync } = await import("node:child_process");
-    const root = execSync("npm root -g", { encoding: "utf8" }).trim();
-    return await import(pathToFileURL(`${root}/playwright/index.mjs`).href);
-  } catch {
-    console.error("Playwright is not installed. `npm i -g playwright` and run this again.");
-    process.exit(2);
-  }
-}
-
-const { chromium } = await loadPlaywright();
-
-const BASE = process.env.SMOKE_URL ?? "http://127.0.0.1:4180/";
-const DEMO = process.env.SMOKE_AUDIO ?? fileURLToPath(new URL("./fixtures/demo.wav", import.meta.url));
-
+const BASE = process.env.BASE || 'http://127.0.0.1:4180';
 const failures = [];
-const log = (ok, name, extra = "") => {
-  if (!ok) failures.push(name + (extra ? ` — ${extra}` : ""));
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${extra ? ` — ${extra}` : ""}`);
-};
+const check = (ok, msg) => { console.log(`${ok ? '✓' : '✕'} ${msg}`); if (!ok) failures.push(msg); };
 
-const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
-const consoleErrors = [];
-page.on("pageerror", (error) => consoleErrors.push(error.message));
+const browser = await chromium.launch(process.env.PW_EXECUTABLE ? { executablePath: process.env.PW_EXECUTABLE } : {});
+const ctx = await browser.newContext({ locale: 'he-IL', viewport: { width: 1200, height: 900 } });
+const page = await ctx.newPage();
+const errors = [];
+page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
 
-const audioBytes = readFileSync(DEMO);
+/* ---------- דף הבית ---------- */
+await page.goto(`${BASE}/index.html`);
+await page.waitForSelector('#featured .card');
+check((await page.getAttribute('html', 'dir')) === 'rtl', 'הדף בעברית מימין לשמאל');
+check(await page.locator('.site-header .brand strong').innerText() === 'ראש בראש', 'הכותרת מציגה את שם התוכנית');
+check((await page.locator('#recent .ep-card').count()) >= 3, 'רשת התוכניות האחרונות מלאה');
+check((await page.locator('#stats .stat').count()) === 4, 'לוח המספרים מוצג');
 
-const reload = async () => {
-  await page.goto(BASE, { waitUntil: "networkidle" });
-  await page.waitForTimeout(200);
-};
+// ניגון התוכנית המומלצת מדף הבית פותח את הנגן הקבוע
+await page.click('#featured [data-play]');
+await page.waitForSelector('.dock.open');
+check(await page.locator('.dock.open').count() === 1, 'הנגן הקבוע נפתח');
+await page.waitForFunction(() => window.RoshPlayer && !window.RoshPlayer.paused, null, { timeout: 5000 }).catch(() => {});
+check(!(await page.evaluate(() => window.RoshPlayer.paused)), 'ההקלטה מתנגנת');
+await page.waitForFunction(() => window.RoshPlayer.duration > 30);
+check((await page.locator('.dock .scrub .seg').count()) >= 4, 'פס ההתקדמות מחולק לשירים');
 
-// --- a file with no MIME type at all, the way a phone file manager hands it
-// over. A name the browser cannot guess from is what actually leaves
-// `File.type` empty; give it a known extension and Chromium fills the type
-// back in and the case never gets tested.
-await reload();
-const reportedType = await page.evaluate(() => {
-  const input = document.querySelector("#file");
-  return input.files.length ? input.files[0].type : null;
-});
-await page.locator("#file").setInputFiles({ name: "הקלטה", mimeType: "", buffer: audioBytes });
-const seenType = await page.evaluate(() => document.querySelector("#file").files[0].type);
-log(
-  seenType === "" || seenType === "application/octet-stream",
-  "fixture: the browser reports an unnameable type, as a phone file manager does",
-  `type="${seenType}" (was ${reportedType})`,
-);
-const typelessAccepted = await page
-  .waitForSelector("#work:not(.hidden)", { timeout: 30_000 })
-  .then(() => true)
-  .catch(() => false);
-log(typelessAccepted, "upload: a file whose type the browser cannot name is accepted");
+// קפיצה לשיר מרשימת השירים
+await page.click('#featured [data-track="2"] .row-main');
+await page.waitForFunction(() => window.RoshPlayer.time >= 17.5);
+check((await page.evaluate(() => window.RoshPlayer.trackIndex)) === 2, 'לחיצה על שיר קופצת אליו בהקלטה');
+check((await page.locator('.dock [data-now]').innerText()).includes('ראש בראש'), 'הנגן מציג את השיר המתנגן');
 
-// --- audio inside a video container ---
-await reload();
-await page.locator("#file").setInputFiles({ name: "clip.mp4", mimeType: "video/mp4", buffer: audioBytes });
-await page.waitForTimeout(600);
-const videoNotRefused = !(await page.locator("#uploadError").textContent()).includes("אינו קובץ שמע");
-log(videoNotRefused, "upload: a video container is not refused out of hand");
+// המיקום נשמר והנגן ממשיך גם בדף אחר
+await page.evaluate(() => window.RoshPlayer.pause());
+await page.click('.site-nav a[href="archive.html"]');
+await page.waitForSelector('#results .ep-card');
+check(await page.locator('.dock.open').count() === 1, 'הנגן נשאר פתוח במעבר לארכיון');
+check((await page.evaluate(() => window.RoshPlayer.time)) >= 17, 'המיקום בהקלטה נשמר בין דפים');
 
-// --- a genuinely wrong file is still turned away, with the message on screen ---
-await reload();
-await page.locator("#file").setInputFiles({
-  name: "notes.pdf",
-  mimeType: "application/pdf",
-  buffer: Buffer.from("%PDF-1.4 not audio"),
-});
-await page.waitForTimeout(400);
-const errorShown = await page.locator("#uploadError").isVisible();
-log(errorShown, "upload: a PDF is rejected and the reason is visible");
+/* ---------- ארכיון ---------- */
+const total = await page.locator('#results .ep-card').count();
+check(total >= 6, `הארכיון מציג את כל התוכניות (${total})`);
+await page.click('[data-season="2025"]');
+await page.waitForFunction(() => document.querySelectorAll('#results .ep-card').length === 2);
+check(true, 'סינון לפי עונה עובד');
+await page.click('[data-season=""]');
+await page.fill('#q', 'להיט');
+await page.waitForSelector('#song-hits .song-hit');
+check((await page.locator('#song-hits .song-hit').count()) >= 1, 'חיפוש שיר מוצא את הרגע בתוכנית');
+const hitHref = await page.locator('#song-hits .song-hit').first().getAttribute('href');
+check(/episode\.html\?ep=.+&t=\d+/.test(hitHref), 'תוצאת השיר מקשרת לרגע בהקלטה');
+await page.fill('#q', 'אין-כזה-דבר-בכלל');
+await page.waitForSelector('#results .state');
+check(true, 'מצב ריק בחיפוש בלי תוצאות');
+await page.click('[data-view="seasons"]');
+await page.fill('#q', '');
+await page.waitForSelector('.season-block');
+check((await page.locator('.season-block').count()) === 2, 'תצוגה לפי עונות');
 
-// --- the ordinary path ---
-await reload();
-await page.locator("#file").setInputFiles(DEMO);
-await page.waitForSelector("#work:not(.hidden)", { timeout: 30_000 });
-log(true, "upload: a normal audio file opens the studio");
+/* ---------- דף תוכנית עם קישור עמוק ---------- */
+await page.goto(`${BASE}/episode.html?ep=2026-09-12&t=31`);
+await page.waitForSelector('#episode .ep-hero');
+check((await page.locator('#episode h1').innerText()).includes('מצעד הקיץ'), 'דף התוכנית נטען לפי הכתובת');
+await page.waitForFunction(() => window.RoshPlayer.episode && window.RoshPlayer.episode.slug === '2026-09-12');
+check((await page.evaluate(() => Math.round(window.RoshPlayer.time))) >= 30, 'קישור עמוק פותח את ההקלטה ברגע הנכון');
+check((await page.locator('#prevnext a').count()) === 2, 'קישורי קודמת/הבאה');
+await page.goto(`${BASE}/episode.html?ep=לא-קיים`);
+await page.waitForSelector('#episode .state.error');
+check(true, 'תוכנית שלא קיימת מציגה הודעה ברורה');
 
-const lengthBefore = await page.locator("#len").textContent();
-log(Boolean(lengthBefore), "studio: a ringtone length is chosen automatically", `${lengthBefore}s`);
+/* ---------- ניהול: יצירה, שמירה כטיוטה, והצגה באתר ---------- */
+await page.goto(`${BASE}/admin.html`);
+await page.waitForSelector('#ep-list .ep-item');
+await page.click('#btn-new');
+await page.fill('[data-f="title"]', 'תוכנית בדיקה אוטומטית');
+await page.fill('[data-f="audio"]', 'assets/audio/demo.wav');
+await page.press('[data-f="audio"]', 'Tab');
+await page.waitForSelector('#preview-audio');
+await page.click('[data-op="track-paste"]');
+await page.fill('#paste-area', '0:05 שיר בדיקה — זמר בדיקה\n0:20 שיר שני / להקה\nשיר בלי זמן');
+await page.click('#paste-apply');
+await page.waitForFunction(() => document.querySelectorAll('.track-row').length === 3);
+check((await page.inputValue('.track-row[data-i="1"] input.t')) === '0:20', 'הדבקת רשימה מזהה זמנים ושמות');
+check((await page.inputValue('.track-row[data-i="1"] input.a')) === 'להקה', 'הדבקת רשימה מזהה את הזמר');
+await page.click('[data-op="visible"]');
+check((await page.locator('[data-op="visible"]').innerText()) === 'מוסתר', 'כפתור הסתרה משנה מילה');
+await page.click('[data-op="visible"]');
+await page.keyboard.press('Control+S');
+await page.waitForSelector('.notice-success');
+check((await page.evaluate(() => !!localStorage.getItem('rosh:override'))), 'שמירה כותבת טיוטה מקומית');
 
-// --- cancelling "replace song" must not throw the song away ---
-await page.locator("#replace").click();
-await page.waitForTimeout(600); // the picker opens and is never answered
-const studioStillUp = await page.locator("#work").isVisible();
-const uploadCardHidden = await page.locator("#upload").isHidden();
-log(studioStillUp && uploadCardHidden, "replace: cancelling keeps the loaded song",
-  `work visible=${studioStillUp}, upload hidden=${uploadCardHidden}`);
+await page.goto(`${BASE}/archive.html?q=${encodeURIComponent('בדיקה אוטומטית')}`);
+await page.waitForSelector('#results .ep-card');
+check((await page.locator('#results .ep-card b').first().innerText()).includes('בדיקה אוטומטית'), 'הטיוטה מופיעה בארכיון במכשיר הזה');
+await page.evaluate(() => localStorage.removeItem('rosh:override'));
 
-// --- a bad replacement keeps the song that is already open ---
-await page.locator("#file").setInputFiles({
-  name: "broken.mp3",
-  mimeType: "audio/mpeg",
-  buffer: Buffer.from("this is not an mp3 at all"),
-});
-await page.waitForTimeout(1200);
-const keptAfterBadFile = await page.locator("#work").isVisible();
-log(keptAfterBadFile, "replace: a file that fails to decode keeps the previous song");
-log(await page.locator("#uploadError").isVisible(), "replace: the decode failure is reported");
-
-// --- manual trimming ---
-await reload();
-await page.locator("#file").setInputFiles(DEMO);
-await page.waitForSelector("#work:not(.hidden)", { timeout: 30_000 });
-const startBefore = await page.locator("#manualStart").inputValue();
-await page.locator('[data-nudge="1"]').click();
-await page.waitForTimeout(200);
-const startAfter = await page.locator("#manualStart").inputValue();
-log(Number(startAfter) > Number(startBefore), "editor: the +1s nudge moves the start",
-  `${startBefore} -> ${startAfter}`);
-
-await page.locator("#snapNatural").click();
-await page.waitForTimeout(400);
-log(Boolean(await page.locator("#manualNote").textContent()), "editor: natural-boundary snapping responds");
-
-// --- the download is real audio ---
-const [download] = await Promise.all([
-  page.waitForEvent("download", { timeout: 60_000 }),
-  page.locator("#download").click(),
-]);
-const path = await download.path();
-const wav = readFileSync(path);
-const header = wav.subarray(0, 4).toString("latin1") + wav.subarray(8, 12).toString("latin1");
-log(header === "RIFFWAVE", "download: the file is a valid WAV", header);
-let peak = 0;
-for (let offset = 44; offset + 1 < wav.length; offset += 2) {
-  peak = Math.max(peak, Math.abs(wav.readInt16LE(offset)) / 32768);
-}
-log(peak > 0.05, "download: the ringtone is not silence", `peak ${peak.toFixed(3)}`);
-
-// --- the directory of the other tools, on the page the old links land on ---
-const toolLinks = await page.locator(".more-tools a").evaluateAll((nodes) =>
-  nodes.map((node) => node.getAttribute("href")),
-);
-log(toolLinks.length === 9, "moved: every tool on the new site is linked", `found ${toolLinks.length}`);
-log(
-  toolLinks.every((href) => href?.startsWith("https://shmuel-lamed.github.io/SongToNotes/#/")),
-  "moved: the links point at the new site",
-);
-log(
-  toolLinks.includes("https://shmuel-lamed.github.io/SongToNotes/#/ringtone"),
-  "moved: the ringtone maker itself is among them",
-);
-
-// --- mobile layout ---
-const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
-await mobile.goto(BASE, { waitUntil: "networkidle" });
-const overflow = await mobile.evaluate(
-  () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-);
-log(overflow <= 1, "mobile 390px: no horizontal overflow", `${overflow}px`);
-await mobile.close();
-
-log(consoleErrors.length === 0, "no uncaught page errors", consoleErrors.slice(0, 3).join(" | "));
-
+/* ---------- סיכום ---------- */
+const realErrors = errors.filter((e) => !/favicon|manifest|sw\.js|serviceWorker|net::ERR_(FAILED|TUNNEL_CONNECTION_FAILED|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|CONNECTION_REFUSED)/i.test(e));
+check(realErrors.length === 0, `אין שגיאות JavaScript${realErrors.length ? `: ${realErrors.join(' | ')}` : ''}`);
 await browser.close();
-console.log(`\n${failures.length ? `${failures.length} FAILURES:\n- ` + failures.join("\n- ") : "ALL CHECKS PASSED"}`);
-process.exit(failures.length ? 1 : 0);
+if (failures.length) { console.error(`\n${failures.length} בדיקות נכשלו`); process.exit(1); }
+console.log('\nכל הבדיקות עברו');

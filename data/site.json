@@ -1,0 +1,23 @@
+{
+  "name": "ראש בראש",
+  "tagline": "מצעד המוזיקה הגדול",
+  "description": "כל התוכניות של ראש בראש במקום אחד: התוכנית האחרונה, ארכיון מלא, ורשימת השירים של כל תוכנית עם קפיצה ישירה לרגע שבו הושמעו.",
+  "numeral": "25",
+  "numeralLabel": "שנות מוזיקה",
+  "url": "https://shmuel-lamed.github.io/Ringtones/",
+  "links": [
+    {
+      "label": "אתר המצעד",
+      "url": "https://shmuel-lamed.github.io/rosh-berosh/"
+    }
+  ],
+  "storage": {
+    "provider": "supabase",
+    "supabase": {
+      "url": "https://ydcfafijktzasrkkxyux.supabase.co",
+      "anonKey": "sb_publishable_hmcfter-RriY3pKrbZnJqg_2228WwCM",
+      "table": "rosh_episodes",
+      "settingsTable": "rosh_settings"
+    }
+  }
+}

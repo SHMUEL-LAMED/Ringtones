@@ -1,0 +1,179 @@
+/* ארכיון התוכניות: חיפוש, סינון לפי עונה, מיון, תצוגות, וחיפוש שירים חוצה־תוכניות. */
+(async function () {
+  'use strict';
+  const U = window.RoshUI, S = window.RoshStore, Pl = window.RoshPlayer;
+  const { esc, fmtTime, fmtDate, fmtDuration } = U;
+
+  await S.ready;
+  const site = S.site || {};
+  document.getElementById('site-header').innerHTML = U.header('archive', site);
+  document.getElementById('site-footer').innerHTML = U.footer(site);
+  if (S.state.loadedFrom === 'json-fallback') U.notify('החיבור למקור הנתונים נכשל — מוצג העותק השמור באתר.', 'info', { ttl: 6000 });
+  else if (S.state.error && S.state.loadedFrom !== 'override') U.notify('טעינת רשימת התוכניות נכשלה. בדקו את החיבור ונסו שוב.', 'error', { action: 'ניסיון חוזר', onAction: () => location.reload(), ttl: 0 });
+
+  const params = new URLSearchParams(location.search);
+  const state = {
+    q: params.get('q') || '',
+    season: params.get('season') || '',
+    audio: params.get('audio') === '1',
+    later: params.get('later') === '1',
+    sort: params.get('sort') || 'new',
+    view: params.get('view') || S.prefs.get('archiveView', 'grid'),
+  };
+
+  const qEl = document.getElementById('q');
+  qEl.value = state.q;
+  document.getElementById('search-form').addEventListener('submit', (e) => e.preventDefault());
+  let t;
+  qEl.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { state.q = qEl.value; render(); }, 120); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && !U.isTyping(e)) { e.preventDefault(); qEl.focus(); qEl.select(); }
+    if (e.key === 'Escape' && document.activeElement === qEl) { qEl.value = ''; state.q = ''; render(); }
+  });
+
+  const seasons = S.seasons();
+  const all = S.episodes();
+
+  function syncUrl() {
+    const p = new URLSearchParams();
+    if (state.q) p.set('q', state.q);
+    if (state.season) p.set('season', state.season);
+    if (state.audio) p.set('audio', '1');
+    if (state.later) p.set('later', '1');
+    if (state.sort !== 'new') p.set('sort', state.sort);
+    if (state.view !== 'grid') p.set('view', state.view);
+    history.replaceState(null, '', `${location.pathname}${p.toString() ? '?' + p : ''}`);
+    S.prefs.set('archiveView', state.view);
+  }
+
+  function renderFilters() {
+    document.getElementById('filters').innerHTML = `
+<button type="button" class="chip" data-season="" aria-pressed="${!state.season}">כל העונות</button>
+${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" data-season="${esc(s.id)}" aria-pressed="${state.season === s.id}">${esc(s.title)} <span style="opacity:.6">${s.count}</span></button>`).join('')}
+<button type="button" class="chip" data-audio aria-pressed="${state.audio}">עם הקלטה</button>
+<button type="button" class="chip" data-later aria-pressed="${state.later}">לאחר כך</button>
+<span class="spacer"></span>
+<label class="visually-hidden" for="sort">מיון</label>
+<select id="sort" class="input" style="width:auto;min-height:36px;padding:6px 10px;border-radius:99px;font-size:12px;font-weight:800">
+  <option value="new" ${state.sort === 'new' ? 'selected' : ''}>מהחדשה לישנה</option>
+  <option value="old" ${state.sort === 'old' ? 'selected' : ''}>מהישנה לחדשה</option>
+  <option value="num" ${state.sort === 'num' ? 'selected' : ''}>לפי מספר תוכנית</option>
+  <option value="long" ${state.sort === 'long' ? 'selected' : ''}>הארוכות קודם</option>
+</select>
+<div class="segmented" role="group" aria-label="תצוגה">
+  <button type="button" data-view="grid" aria-pressed="${state.view === 'grid'}">רשת</button>
+  <button type="button" data-view="list" aria-pressed="${state.view === 'list'}">רשימה</button>
+  <button type="button" data-view="seasons" aria-pressed="${state.view === 'seasons'}">לפי עונות</button>
+</div>`;
+  }
+
+  function filtered() {
+    let list = all;
+    if (state.season) list = list.filter((e) => e.season === state.season);
+    if (state.audio) list = list.filter((e) => e.audio);
+    if (state.later) { const l = S.later.list(); list = list.filter((e) => l.includes(e.id)); }
+    list = S.searchEpisodes(state.q, list);
+    const by = {
+      new: (a, b) => (b.date || '').localeCompare(a.date || '') || (b.number || 0) - (a.number || 0),
+      old: (a, b) => (a.date || '').localeCompare(b.date || '') || (a.number || 0) - (b.number || 0),
+      num: (a, b) => (b.number || 0) - (a.number || 0),
+      long: (a, b) => (b.duration || 0) - (a.duration || 0),
+    }[state.sort] || (() => 0);
+    return list.slice().sort(by);
+  }
+
+  const mark = (text, q) => {
+    if (!q) return esc(text);
+    const terms = q.trim().split(/\s+/).filter(Boolean).map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    return esc(text).replace(new RegExp(`(${terms.join('|')})`, 'gi'), '<mark>$1</mark>');
+  };
+
+  function card(e) {
+    const pos = S.positions.get(e.id);
+    const pct = pos && e.duration ? Math.min(100, (pos.t / e.duration) * 100) : 0;
+    return `
+<a class="ep-card${Pl.isCurrent(e.id) ? ' current' : ''}" href="episode.html?ep=${encodeURIComponent(e.slug)}" data-ep="${esc(e.id)}">
+  ${e.cover ? `<img class="ep-cover" src="${esc(e.cover)}" alt="" loading="lazy">` : `<span class="cover-fallback num" aria-hidden="true">${e.number ?? '♫'}</span>`}
+  ${e.number != null ? `<span class="ep-num">תוכנית ${e.number}</span>` : ''}
+  ${e.audio ? '<i class="ep-badge" aria-hidden="true">▶</i>' : ''}
+  <b>${mark(e.title, state.q)}</b>
+  <small>${esc(fmtDate(e.date, true))}${e.duration ? ` · ${esc(fmtDuration(e.duration))}` : ''}</small>
+  ${e.tracks.length ? `<span class="ep-meta">♫ ${e.tracks.length} שירים</span>` : ''}
+  ${pct ? `<span class="resume" aria-hidden="true"><i style="width:${pct}%"></i></span>` : ''}
+</a>`;
+  }
+
+  function rowItem(e) {
+    return `
+<div class="row${Pl.isCurrent(e.id) ? ' selected' : ''}" data-ep="${esc(e.id)}">
+  <a class="row-main" href="episode.html?ep=${encodeURIComponent(e.slug)}">
+    <i aria-hidden="true">${e.number ?? '♫'}</i>
+    <span class="txt"><b>${mark(e.title, state.q)}</b><small>${esc(fmtDate(e.date))}${e.tracks.length ? ` · ${e.tracks.length} שירים` : ''}${e.guests.length ? ` · עם ${esc(e.guests.join(', '))}` : ''}</small></span>
+  </a>
+  ${e.duration ? `<span class="time">${fmtTime(e.duration)}</span>` : ''}
+  ${e.audio ? `<button type="button" class="icon-btn" data-play="${esc(e.id)}" aria-label="האזנה ל${esc(e.title)}">▶</button>` : ''}
+</div>`;
+  }
+
+  function render() {
+    const list = filtered();
+    document.getElementById('count').textContent = list.length === all.length ? `${all.length} תוכניות` : `${list.length} מתוך ${all.length}`;
+    const R = document.getElementById('results');
+    const H = document.getElementById('song-hits');
+
+    // חיפוש שירים חוצה־תוכניות
+    const hits = state.q.trim().length >= 2 ? S.searchSongs(state.q) : [];
+    H.innerHTML = hits.length ? `
+<div class="grid-head" style="margin-top:4px"><div><p class="kicker">איפה השמענו את זה</p><h2>שירים שנמצאו</h2></div><span class="pill">${hits.length}</span></div>
+<div class="song-hits" style="margin-bottom:22px">
+  ${hits.map(({ episode: e, track: tr }) => `
+  <a class="song-hit" href="episode.html?ep=${encodeURIComponent(e.slug)}&t=${tr.at}" data-hit="${esc(e.id)}" data-at="${tr.at}">
+    <span class="icon-btn${e.audio ? '' : ' gold'}" aria-hidden="true">${e.audio ? '▶' : '♫'}</span>
+    <span class="txt"><b>${mark(tr.title, state.q)}${tr.artist ? ` — ${mark(tr.artist, state.q)}` : ''}</b><small>${esc(e.title)} · ${esc(fmtDate(e.date, true))}${tr.note ? ` · ${esc(tr.note)}` : ''}</small></span>
+    <span class="time">${fmtTime(tr.at)}</span>
+  </a>`).join('')}
+</div>` : '';
+
+    if (!list.length) {
+      R.innerHTML = `<div class="state"><span class="mark">♫</span><h3>לא נמצאו תוכניות</h3><p>${state.q ? `אין תוכנית שמתאימה ל"${esc(state.q)}". נסו מילה אחרת או נקו את הסינון.` : 'עדיין אין תוכניות בעונה הזו.'}</p>${state.q || state.season || state.audio || state.later ? '<button type="button" class="btn" data-clear>ניקוי הסינון</button>' : ''}</div>`;
+      syncUrl();
+      return;
+    }
+    if (state.view === 'list') R.innerHTML = `<div class="row-list">${list.map(rowItem).join('')}</div>`;
+    else if (state.view === 'seasons') {
+      const groups = new Map();
+      for (const e of list) { const k = e.season || ''; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
+      R.innerHTML = [...groups.entries()].map(([id, eps]) => {
+        const s = seasons.find((x) => x.id === id);
+        return `<section class="season-block"><div class="season-head"><h2>${esc(s?.title || 'ללא עונה')}</h2><span class="line" aria-hidden="true"></span><span class="pill">${eps.length} תוכניות</span></div><div class="ep-grid">${eps.map(card).join('')}</div></section>`;
+      }).join('');
+    } else R.innerHTML = `<div class="ep-grid">${list.map(card).join('')}</div>`;
+    syncUrl();
+  }
+
+  renderFilters();
+  render();
+
+  document.addEventListener('click', (e) => {
+    const s = e.target.closest('[data-season]');
+    if (s) { state.season = s.dataset.season; renderFilters(); render(); return; }
+    if (e.target.closest('[data-audio]')) { state.audio = !state.audio; renderFilters(); render(); return; }
+    if (e.target.closest('[data-later]')) { state.later = !state.later; renderFilters(); render(); return; }
+    const v = e.target.closest('[data-view]');
+    if (v) { state.view = v.dataset.view; renderFilters(); render(); return; }
+    if (e.target.closest('[data-clear]')) { Object.assign(state, { q: '', season: '', audio: false, later: false }); qEl.value = ''; renderFilters(); render(); return; }
+    const play = e.target.closest('[data-play]');
+    if (play) { const ep = S.byId(play.dataset.play); if (ep) Pl.load(ep); return; }
+    const hit = e.target.closest('[data-hit]');
+    if (hit) {
+      const ep = S.byId(hit.dataset.hit);
+      if (ep?.audio) { e.preventDefault(); Pl.isCurrent(ep.id) ? (Pl.seek(Number(hit.dataset.at)), Pl.play()) : Pl.load(ep, { at: Number(hit.dataset.at) }); }
+    }
+  });
+  document.addEventListener('change', (e) => { if (e.target.id === 'sort') { state.sort = e.target.value; render(); } });
+
+  window.addEventListener('rosh:player', (ev) => {
+    const id = ev.detail.episode?.id;
+    document.querySelectorAll('[data-ep]').forEach((c) => { c.classList.toggle('current', c.dataset.ep === id); c.classList.toggle('selected', c.classList.contains('row') && c.dataset.ep === id); });
+  });
+})();

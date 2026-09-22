@@ -1,83 +1,35 @@
-/*
- * Offline support for the ringtone studio.
- *
- * Cutting a ringtone is pure Web Audio work in the page, so once the page
- * itself is cached there is nothing left that needs the network. The AI vocal
- * separation is the exception: it pulls its runtime from a CDN on demand, and
- * cross-origin requests are left on the default path untouched.
- */
+/* Service Worker של ראש בראש: שומר את מעטפת האתר להפעלה מהירה ובלי רשת.
+   נתוני התוכניות נטענים תמיד מהרשת קודם (ונופלים למטמון אם אין), וההקלטות
+   עצמן לא נשמרות. */
+const VERSION = 'rosh-v1';
+const SHELL = [
+  './', './index.html', './archive.html', './episode.html',
+  './assets/css/rosh.css', './assets/js/ui.js', './assets/js/store.js', './assets/js/player.js',
+  './assets/js/home.js', './assets/js/archive.js', './assets/js/episode.js',
+  './assets/img/medallion.svg', './manifest.webmanifest',
+];
 
-const VERSION = "v1";
-const CACHE = `ringtones-${VERSION}`;
-const SHELL = ["./", "./index.html", "./profile.js", "./favicon.svg", "./manifest.webmanifest", "./icon-192.png"];
-
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE).then((cache) =>
-      // One missing entry should not fail the whole install.
-      Promise.all(
-        SHELL.map((path) =>
-          cache.add(new Request(path, { cache: "reload" })).catch(() => undefined),
-        ),
-      ),
-    ),
-  );
-  self.skipWaiting();
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
-
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    (async () => {
-      const keys = await caches.keys();
-      await Promise.all(
-        keys.filter((key) => key.startsWith("ringtones-") && key !== CACHE).map((key) => caches.delete(key)),
-      );
-      await self.clients.claim();
-    })(),
-  );
+self.addEventListener('activate', (e) => {
+  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
-
-/** HTML: fresh when online, the last good copy when not. */
-async function handleNavigation(request) {
-  try {
-    const response = await fetch(request);
-    if (response.ok) {
-      const cache = await caches.open(CACHE);
-      await cache.put("./index.html", response.clone());
-    }
-    return response;
-  } catch (error) {
-    const cached = (await caches.match("./index.html")) ?? (await caches.match("./"));
-    if (cached) return cached;
-    throw error;
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.origin !== location.origin) return;
+  // הקלטות: ישר מהרשת, בלי מטמון
+  if (/\.(mp3|m4a|wav|ogg|aac|flac)$/i.test(url.pathname)) return;
+  // נתונים: רשת קודם, מטמון כגיבוי
+  if (url.pathname.includes('/data/')) {
+    e.respondWith(fetch(req).then((r) => { const copy = r.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); return r; }).catch(() => caches.match(req)));
+    return;
   }
-}
-
-/** The script and the artwork: instant from cache, refreshed in the background. */
-async function handleAsset(request) {
-  const cache = await caches.open(CACHE);
-  const cached = await cache.match(request);
-  const network = fetch(request)
-    .then(async (response) => {
-      if (response.ok && response.type === "basic") await cache.put(request, response.clone());
-      return response;
-    })
-    .catch((error) => {
-      if (cached) return cached;
-      throw error;
-    });
-  return cached ?? network;
-}
-
-self.addEventListener("fetch", (event) => {
-  const { request } = event;
-  if (request.method !== "GET") return;
-  // A partial response must not be cached or replayed as the whole file.
-  if (request.headers.has("range")) return;
-
-  const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
-  if (!url.pathname.startsWith(new URL("./", self.location.href).pathname)) return;
-
-  event.respondWith(request.mode === "navigate" ? handleNavigation(request) : handleAsset(request));
+  // מעטפת: מטמון קודם, ועדכון ברקע
+  e.respondWith(caches.match(req, { ignoreSearch: true }).then((hit) => {
+    const net = fetch(req).then((r) => { if (r.ok) caches.open(VERSION).then((c) => c.put(req, r.clone())); return r; }).catch(() => hit);
+    return hit || net;
+  }));
 });

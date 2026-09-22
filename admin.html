@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ניהול — ראש בראש</title>
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#fbf8f2">
+  <link rel="icon" href="assets/img/medallion.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/css/rosh.css">
+  <link rel="stylesheet" href="assets/css/admin.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">דילוג לתוכן</a>
+  <div class="shell">
+    <div id="site-header"></div>
+
+    <main id="main">
+      <div class="admin-bar" id="admin-bar">
+        <span class="status"><span class="dot" id="src-dot"></span><span id="src-text">טוענים…</span></span>
+        <span class="dirty" id="dirty" hidden>• שינויים שלא נשמרו</span>
+        <span class="spacer"></span>
+        <button type="button" class="btn small" id="btn-new">+ תוכנית חדשה</button>
+        <button type="button" class="btn small" id="btn-seasons">עונות</button>
+        <button type="button" class="btn small" id="btn-json">JSON</button>
+        <button type="button" class="btn small" id="btn-import">ייבוא</button>
+        <button type="button" class="btn small" id="btn-settings">חיבור</button>
+        <button type="button" class="btn small gold" id="btn-save" title="Ctrl+S">שמירת טיוטה</button>
+        <button type="button" class="btn primary small" id="btn-publish">פרסום <span>←</span></button>
+        <input type="file" id="file-import" accept="application/json,.json" hidden>
+      </div>
+
+      <div class="workspace">
+        <aside class="side" aria-label="רשימת התוכניות">
+          <div class="card">
+            <div class="card-body" style="padding:10px">
+              <div class="search-box" role="search">
+                <span class="search-glyph" aria-hidden="true">♫</span>
+                <label for="ep-q" class="visually-hidden">חיפוש תוכנית</label>
+                <input id="ep-q" type="search" placeholder="חיפוש ברשימה…" autocomplete="off">
+              </div>
+              <div class="filters" style="margin:10px 0 0">
+                <select id="ep-filter" class="input" style="min-height:34px;padding:5px 10px;border-radius:99px;font-size:12px;font-weight:800">
+                  <option value="all">הכול</option>
+                  <option value="visible">מוצגות</option>
+                  <option value="hidden">מוסתרות</option>
+                  <option value="noaudio">בלי הקלטה</option>
+                  <option value="notracks">בלי רשימת שירים</option>
+                </select>
+                <span class="count" id="ep-count"></span>
+              </div>
+            </div>
+            <div class="ep-list" id="ep-list" role="listbox" aria-label="תוכניות"></div>
+          </div>
+        </aside>
+
+        <section class="editor" id="editor" aria-live="polite">
+          <div class="card"><div class="state empty-editor"><span class="mark">♫</span><h3>בחרו תוכנית או צרו חדשה</h3><p>כל שינוי נשמר כטיוטה בדפדפן הזה. "פרסום" מעביר את הטיוטה לאתר.</p></div></div>
+        </section>
+      </div>
+    </main>
+
+    <div id="site-footer"></div>
+  </div>
+
+  <!-- דיאלוגים -->
+  <dialog class="sheet wide" id="dlg-json">
+    <div class="section-title"><div><p class="kicker">כל הנתונים</p><h2>עריכת JSON</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+    <div class="card-body">
+      <label class="visually-hidden" for="json-area">JSON</label>
+      <textarea id="json-area" class="json-area" spellcheck="false"></textarea>
+      <div id="json-msg"></div>
+    </div>
+    <div class="card-foot">
+      <button type="button" class="btn" id="json-copy">העתקה</button>
+      <button type="button" class="btn" id="json-download">הורדת episodes.json</button>
+      <button type="button" class="btn" id="json-validate">אימות</button>
+      <button type="button" class="btn primary" id="json-apply">החלה על הטיוטה <span>←</span></button>
+    </div>
+  </dialog>
+
+  <dialog class="sheet wide" id="dlg-seasons">
+    <div class="section-title"><div><p class="kicker">ארגון הארכיון</p><h2>עונות</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+    <div class="card-body">
+      <div class="season-row track-head" style="padding:0 6px"><span>מזהה</span><span>שם</span><span>שנה</span><span>הערה</span><span></span><span></span></div>
+      <div class="season-rows" id="season-rows"></div>
+      <div class="track-tools"><button type="button" class="btn small" id="season-add">+ עונה</button><span class="cue-hint">המזהה משמש בקישורים ובקובץ. מחיקת עונה לא מוחקת תוכניות — הן יישארו "ללא עונה".</span></div>
+    </div>
+    <div class="card-foot"><button type="button" class="btn primary" id="season-save">שמירת העונות <span>←</span></button></div>
+  </dialog>
+
+  <dialog class="sheet wide" id="dlg-paste">
+    <div class="section-title"><div><p class="kicker">רשימת שירים</p><h2>הדבקת רשימה</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+    <div class="card-body">
+      <p style="margin:0 0 10px;font-size:13px;color:var(--muted)">שורה לכל שיר. אפשר להתחיל בזמן (12:30) או בלי, ולהפריד בין שם השיר לזמר עם מקף, קו נטוי או שתי נקודות. לדוגמה:<br><code style="direction:rtl">03:15 שם השיר — שם הזמר</code></p>
+      <label class="visually-hidden" for="paste-area">רשימה</label>
+      <textarea id="paste-area" class="json-area" style="direction:rtl;text-align:right;min-height:220px;font-family:inherit;font-size:14px"></textarea>
+      <div id="paste-preview" style="margin-top:10px;font-size:12px;color:var(--muted);font-weight:700"></div>
+    </div>
+    <div class="card-foot"><label class="check"><input type="checkbox" id="paste-replace"> להחליף את הרשימה הקיימת</label><span class="spacer" style="flex:1"></span><button type="button" class="btn primary" id="paste-apply">הוספה לרשימה <span>←</span></button></div>
+  </dialog>
+
+  <dialog class="sheet" id="dlg-publish">
+    <div class="section-title"><div><p class="kicker">העברה לאתר</p><h2>פרסום</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+    <div class="card-body" id="publish-body"></div>
+    <div class="card-foot" id="publish-foot"></div>
+  </dialog>
+
+  <dialog class="sheet" id="dlg-settings">
+    <div class="section-title"><div><p class="kicker">מקור הנתונים</p><h2>חיבור</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+    <div class="card-body" id="settings-body"></div>
+  </dialog>
+
+  <script src="assets/js/ui.js"></script>
+  <script src="assets/js/store.js"></script>
+  <script src="assets/js/admin.js"></script>
+</body>
+</html>
