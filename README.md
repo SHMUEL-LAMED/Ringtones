@@ -41,17 +41,17 @@
 
 `data/site.json` → `storage.provider` קובע מאיפה האתר קורא:
 
-**`"supabase"` (מוגדר כרגע)** — התוכניות בטבלאות `rosh_episodes` ו־`rosh_settings` בפרויקט
-ה־Supabase שלכם. הציבור קורא תוכניות מוצגות; כתיבה רק למי שהדוא"ל שלו בטבלת `rosh_admins`.
-באזור הניהול לוחצים "חיבור" → "התחברות עם Google" (או דוא"ל וסיסמה של משתמש ב־Supabase Auth),
-ואז "פרסום" שומר בלחיצה אחת.
+**`"cloudflare"` (מוגדר כרגע)** — התוכניות נשמרות באותו Cloudflare D1 של אתר הסקר,
+והקלטות ותמונות חדשות נשמרות באותו R2. הציבור קורא רק תוכניות מוצגות; כתיבה אפשרית רק
+למנהלים שכבר מוגדרים באזור **הרשאות** של אתר הסקר.
 
-- הסכמה המלאה: `supabase/schema.sql` (כבר הופעלה על הפרויקט).
-- כדי להוסיף מנהל: `insert into public.rosh_admins (email) values ('name@example.com');`
-- כדי שההתחברות עם Google תחזור לאזור הניהול, הכתובת `https://shmuel-lamed.github.io/Ringtones/admin.html`
-  (או `https://shmuel-lamed.github.io/Ringtones/*`) צריכה להיות ברשימת ה־Redirect URLs
-  ב־Authentication → URL Configuration של הפרויקט.
-- אם Supabase לא זמין, האתר נופל חזרה ל־`data/episodes.json`.
+באזור הניהול לוחצים **חיבור עם Google**. חלון ההתחברות נפתח בכתובת המאושרת של אתר הסקר,
+ומחזיר לאתר התוכניות סשן מנהל מאובטח ל־30 יום. הוספה או הסרה של מנהל מתבצעת רק באתר
+הסקר ומשפיעה מיד גם על אתר התוכניות — אין רשימת מנהלים נפרדת.
+
+- כתובת ה־API מוגדרת ב־`data/site.json` תחת `storage.cloudflare.apiBase`.
+- הטבלאות `program_episodes` ו־`program_settings` נוצרות אוטומטית ב־D1 של אתר הסקר.
+- אם Cloudflare אינו זמין, האתר נופל חזרה ל־`data/episodes.json` לקריאה בלבד.
 
 **`"json"`** — בלי שרת בכלל. האתר קורא את `data/episodes.json` מהמאגר, ו"פרסום" באזור הניהול
 מוריד קובץ מעודכן שמעלים למאגר.
@@ -91,14 +91,14 @@ index.html, archive.html, episode.html, admin.html
 assets/css/rosh.css      מערכת העיצוב (טוקנים, כרטיסים, נגן, ארכיון)
 assets/css/admin.css     פריסת אזור הניהול
 assets/js/ui.js          כותרת, פוטר, הודעות, עיצוב זמנים ותאריכים
-assets/js/store.js       שכבת הנתונים: JSON / Supabase / טיוטה מקומית, חיפוש, מיקומי האזנה
+assets/js/store.js       שכבת הנתונים: JSON / Cloudflare / טיוטה מקומית, חיפוש, מיקומי האזנה
 assets/js/player.js      הנגן הקבוע
 assets/js/home.js, archive.js, episode.js, admin.js
 assets/img/medallion.svg המדליון (מתוך מערכת העיצוב)
 assets/audio/demo.wav    הקלטת דוגמה של 42 שניות לתוכניות הדוגמה
 data/site.json           שם, תיאור, קישורים, מקור הנתונים
 data/episodes.json       התוכניות (מקור כש-provider="json", וגיבוי אחרת)
-supabase/schema.sql      הטבלאות והמדיניות ב-Supabase
+supabase/schema.sql      סכמה ישנה שנשמרה רק לתיעוד המעבר
 sw.js, manifest.webmanifest   התקנה כאפליקציה ועבודה בלי רשת (המעטפת בלבד; ההקלטות לא נשמרות)
 tests/browser-smoke.mjs  בדיקת דפדפן אמיתי
 ```
