@@ -152,7 +152,7 @@
         state.loadedFrom = state.source;
       } catch (e) {
         state.error = e;
-        // נפילה חזרה לקובץ המקומי אם Supabase לא זמין
+        // נפילה חזרה לקובץ המקומי אם Cloudflare לא זמין
         if (state.source === 'cloudflare') {
           try { state.data = normalize(await fetchJSON('data/episodes.json')); state.loadedFrom = 'json-fallback'; }
           catch { state.data = normalize({}); }
