@@ -12,9 +12,11 @@
 
   await S.ready;
   const site = S.site || {};
-  const paintHeader = () => { $('#site-header').innerHTML = U.header('admin', site); };
+  const EMBED = !!S.state.embed;
+  if (EMBED) document.body.classList.add('embed');
+  const paintHeader = () => { $('#site-header').innerHTML = EMBED ? '' : U.header('admin', site); };
   paintHeader();
-  $('#site-footer').innerHTML = U.footer(site);
+  $('#site-footer').innerHTML = EMBED ? '' : U.footer(site);
 
   const TABS = ['programs', 'site', 'listeners', 'publish'];
   const CLOUD = S.state.source === 'cloudflare';
@@ -34,6 +36,7 @@
     versions: null,        // רשימת הגרסאות מהשרת
     versionCache: new Map(),
     stats: null, messages: null, admins: null, subs: null,
+    surveys: null,         // הסקרים באתר הסקר, לקישור תוכנית
   };
   if (!A.data.settings) A.data.settings = S.admin.normSettings({});
 
@@ -128,6 +131,7 @@
       } catch { /* אין טיוטה משותפת או השרת הישן */ }
     }
     if (!A.data.settings) A.data.settings = S.admin.normSettings({});
+    if (CLOUD && S.sb.user?.isAdmin && !A.surveys) { try { A.surveys = (await S.sb.surveys()).surveys; } catch { A.surveys = []; } }
     paintStatus(); render();
   }
 
@@ -323,6 +327,7 @@
       <label class="field"><span>מספר התוכנית</span><input data-f="number" type="number" inputmode="numeric" value="${e.number ?? ''}" placeholder="90"></label>
       <label class="field"><span>עונה</span><select data-f="season">${seasonOptions(e.season)}</select></label>
       <label class="field"><span>אורחים</span><input data-f="guests" value="${esc(e.guests.join(', '))}" placeholder="שמות, מופרדים בפסיק"></label>
+      ${CLOUD ? `<label class="field"><span>מקושרת למצעד (לא חובה)</span><select data-f="surveyId"><option value="">בלי מצעד</option>${(A.surveys || []).map((s) => `<option value="${esc(s.id)}" ${s.id === e.surveyId ? 'selected' : ''}>${esc(s.name)}${s.active ? ' · הפעיל' : ''}${s.open ? ' · ההצבעה פתוחה' : ''}</option>`).join('')}${e.surveyId && !(A.surveys || []).some((s) => s.id === e.surveyId) ? `<option value="${esc(e.surveyId)}" selected>מצעד שנמחק</option>` : ''}</select><small>דף התוכנית יציג קישור להצבעה כשהמצעד פתוח.</small></label>` : ''}
       <label class="field span2"><span>על התוכנית</span><textarea data-f="description" placeholder="כמה משפטים על מה שהיה בתוכנית. שורה ריקה פותחת פסקה חדשה.">${esc(e.description)}</textarea></label>
     </div>
     <div class="switches">
@@ -542,7 +547,8 @@
       <label class="field"><span>טקסט הכפתור</span><input data-sf="linkLabel" value="${esc(b.linkLabel || '')}" placeholder="לפרטים"></label>
       <label class="field"><span>להציג עד (לא חובה)</span><input data-sf="until" type="date" value="${esc(b.until || '')}"></label>
     </div>
-    <div class="switches"><button type="button" class="toggle${b.enabled ? ' on' : ''}" data-op="banner-toggle" aria-pressed="${!!b.enabled}">${b.enabled ? '✓ ההודעה מוצגת באתר' : 'להציג את ההודעה'}</button></div>
+    <div class="switches"><button type="button" class="toggle${b.enabled ? ' on' : ''}" data-op="banner-toggle" aria-pressed="${!!b.enabled}">${b.enabled ? '✓ ההודעה מוצגת' : 'להציג את ההודעה'}</button></div>
+    <div class="banner-sites"><span class="cue-hint">איפה להציג:</span><label class="check"><input type="checkbox" data-bs="program" ${b.sites?.program !== false ? 'checked' : ''}> באתר התוכניות</label><label class="check"><input type="checkbox" data-bs="survey" ${b.sites?.survey ? 'checked' : ''}> באתר הסקר</label></div>
     ${b.enabled && b.text ? `<div class="banner-preview"><span class="kicker">כך זה נראה</span><div class="site-banner"><span class="site-banner-mark">✦</span><p>${esc(b.text)}</p>${b.link ? `<span class="btn small">${esc(b.linkLabel || 'לפרטים')} <span>←</span></span>` : ''}</div></div>` : ''}
   </div>
 </div>
@@ -707,7 +713,7 @@ ${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי י
 <div class="card">
   <div class="section-title"><div><p class="kicker">גיבוי אוטומטי</p><h2>גרסאות קודמות</h2></div><button type="button" class="btn small" data-op="versions" ${CLOUD ? '' : 'disabled'}>${A.versions ? 'רענון' : 'הצגת הגרסאות'}</button></div>
   <div class="card-body">
-    <p class="help">כל פרסום נשמר אוטומטית כגרסה. אם משהו השתבש, בוחרים גרסה, לוחצים "שחזור" — והכול חוזר לטיוטה כפי שהיה. אחר כך לוחצים פרסום.</p>
+    <p class="help">כל פרסום נשמר אוטומטית כגרסה. אם משהו השתבש, בוחרים גרסה, לוחצים "שחזור" — והכול חוזר לטיוטה כפי שהיה. אחר כך לוחצים פרסום.${CLOUD ? ' הגיבוי המלא של שני האתרים יחד (הסקר והתוכניות) נמצא בניהול הסקר, בלשונית "ארכיון וגיבויים".' : ''}</p>
     ${!CLOUD ? '<p class="cue-hint">עובד רק כשהאתר מחובר לשרת.</p>' : A.versions === null ? '' : A.versions.length ? `<div class="version-list">${A.versions.map((v, i) => `<div class="version"><div><b>${esc(when(v.createdAt))}${i === 0 ? ' <span class="pill gold">הגרסה שבאתר</span>' : ''}</b><small>${n2(v.episodes)} תוכניות${v.by ? ` · פורסם על ידי ${esc(v.by)}` : ''}</small></div><button type="button" class="btn small" data-op="restore-version" data-id="${esc(v.id)}">שחזור</button></div>`).join('')}</div>` : '<p class="help">עדיין אין גרסאות שמורות — הראשונה תישמר בפרסום הבא.</p>'}
   </div>
 </div>
@@ -727,7 +733,7 @@ ${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי י
   function renderAdmins() {
     if (!A.admins) return '';
     if (A.admins.error) return `<p class="problems" style="margin-top:8px">${esc(A.admins.error)}</p>`;
-    return `<ul class="admin-list">${A.admins.map((a) => `<li><span>${esc(a.email)}${a.you ? ' <span class="pill gold">אתם</span>' : ''}${a.fixed ? ' <span class="pill">קבוע</span>' : ''}</span>${a.you || a.fixed ? '' : `<button type="button" class="icon-btn del" data-op="admin-del" data-email="${esc(a.email)}" aria-label="הסרה">✕</button>`}</li>`).join('')}</ul><form class="admin-add" data-admin-add><input type="email" required placeholder="כתובת Gmail של מנהל חדש" class="ltr"><button type="submit" class="btn small">הוספה</button></form>`;
+    return `<p class="cue-hint" style="margin:8px 0 0">אותה רשימה כמו בלשונית "הרשאות" באתר הסקר. התנתקות במקום אחד מנתקת משניהם.</p><ul class="admin-list">${A.admins.map((a) => `<li><span>${esc(a.email)}${a.you ? ' <span class="pill gold">אתם</span>' : ''}${a.fixed ? ' <span class="pill">קבוע</span>' : ''}${a.lastSeen ? `<small class="seen">נכנס לאחרונה: ${esc(when(a.lastSeen))}</small>` : ''}</span>${a.you || a.fixed ? '' : `<button type="button" class="icon-btn del" data-op="admin-del" data-email="${esc(a.email)}" aria-label="הסרה">✕</button>`}</li>`).join('')}</ul><form class="admin-add" data-admin-add><input type="email" required placeholder="כתובת Gmail של מנהל חדש" class="ltr"><button type="submit" class="btn small">הוספה</button></form>`;
   }
 
   /* ---------- בדיקות: הקלטות, תמונות וקישורים ---------- */
@@ -822,6 +828,13 @@ ${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי י
     } catch (err) { box.innerHTML = `<span class="problems">${esc(err.message)}</span>`; }
   }
   $('#btn-publish-top').addEventListener('click', () => { const ch = changes(); if (ch && !ch.any) { U.notify('הכול כבר מפורסם.', 'info'); return; } setTab('publish'); });
+  /* מעבר בלחיצה לניהול אתר הסקר — כבר מחוברים, בלי כניסה נוספת */
+  $('#btn-survey').hidden = !CLOUD || EMBED;
+  $('#btn-survey').addEventListener('click', async () => {
+    const b = $('#btn-survey'); b.disabled = true;
+    try { if (A.saveTimer) persist(); location.href = await S.sb.handoff.toSurvey(); }
+    catch (err) { U.notify(`המעבר לא הצליח: ${err.message}`, 'error'); b.disabled = false; }
+  });
 
   /* ---------- העברת ההקלטות ---------- */
 
@@ -887,6 +900,8 @@ ${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי י
       l[lf] = t.value; touch(); schedulePreview();
     } else if (sf) {
       const b = A.data.settings.banner || (A.data.settings.banner = {}); b[sf] = t.value; touch();
+    } else if (t.dataset.bs) {
+      const b = A.data.settings.banner || (A.data.settings.banner = {}); b.sites = { program: true, survey: false, ...(b.sites || {}) }; b.sites[t.dataset.bs] = t.checked; touch();
     } else if (uf) {
       const u = A.data.settings.updates[Number(t.dataset.i)]; if (!u) return; u[uf] = t.value; touch();
     } else if (zf) {
@@ -1009,6 +1024,7 @@ ${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי י
   setTab(location.hash.slice(1) || 'programs', { push: false });
   paintStatus();
   if (S.state.authRedirect) U.notify(`התחברתם כ־${S.state.authRedirect.email}.`, 'success');
+  if (S.state.handoffError) U.notify(S.state.handoffError, 'error');
   const allowed = await checkAccess();
   if (allowed || !CLOUD) { await loadOrigin(); if (allowed) { maybeGuide(); loadListeners(); } }
 })();
