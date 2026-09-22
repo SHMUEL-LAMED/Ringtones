@@ -104,6 +104,12 @@
       return this.session;
     },
     signOut() { this.session = null; },
+    async isAdmin() {
+      await this.refresh();
+      if (!this.session?.access_token) return false;
+      const r = await fetch(this.base('/rest/v1/rpc/rosh_is_admin'), { method: 'POST', headers: this.headers(), body: '{}' });
+      return r.ok && await r.json() === true;
+    },
     /** התחברות עם Google: מעבר לדף ההרשאה של Supabase וחזרה לכאן עם הטוקן ב-hash */
     signInWithGoogle(returnTo = location.href.split('#')[0]) {
       location.href = this.base(`/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(returnTo)}`);
@@ -170,7 +176,7 @@
   async function load({ ignoreOverride = false } = {}) {
     state.error = null;
     try { state.site = await fetchJSON('data/site.json'); }
-    catch (e) { state.site = { name: 'ראש בראש', tagline: 'מצעד המוזיקה הגדול', storage: { provider: 'json' } }; }
+    catch (e) { state.site = { name: 'ראש בראש', tagline: 'מוזיקה ואקטואליה', storage: { provider: 'json' } }; }
     state.source = state.site.storage?.provider === 'supabase' && sb.configured ? 'supabase' : 'json';
     if (state.source === 'supabase') { try { state.authRedirect = await sb.handleRedirect(); } catch { state.authRedirect = null; } }
 

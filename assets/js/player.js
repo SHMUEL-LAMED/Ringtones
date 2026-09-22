@@ -126,6 +126,11 @@
   /* ---------- טעינת תוכנית ---------- */
 
   function load(ep, { at = null, autoplay = true, quiet = false } = {}) {
+    if (window.RoshUI.driveId(ep)) {
+      pause();
+      location.href = `episode.html?ep=${encodeURIComponent(ep.slug)}#drive-player`;
+      return true;
+    }
     if (!ep?.audio) { window.RoshUI.notify('לתוכנית הזו אין עדיין הקלטה להאזנה.', 'info'); return false; }
     open();
     const same = P.episode && P.episode.id === ep.id;

@@ -1,14 +1,12 @@
 {
   "name": "ראש בראש",
-  "tagline": "מצעד המוזיקה הגדול",
-  "description": "כל התוכניות של ראש בראש במקום אחד: התוכנית האחרונה, ארכיון מלא, ורשימת השירים של כל תוכנית עם קפיצה ישירה לרגע שבו הושמעו.",
-  "numeral": "25",
-  "numeralLabel": "שנות מוזיקה",
+  "tagline": "מוזיקה. אקטואליה. ראש בראש.",
+  "description": "קובי בלום וירמי סלייטר בשיחות, ראיונות ודיונים על המוזיקה החרדית ועל מה שקורה מסביב. תוכנית חדשה בכל שבועיים.",
   "url": "https://shmuel-lamed.github.io/Ringtones/",
   "links": [
     {
-      "label": "אתר המצעד",
-      "url": "https://shmuel-lamed.github.io/rosh-berosh/"
+      "label": "דרייב התוכנית",
+      "url": "https://drive.google.com/drive/folders/1bfFK9m1BGzJZGWcWymQ5Mgm_cflE9cNF"
     }
   ],
   "storage": {

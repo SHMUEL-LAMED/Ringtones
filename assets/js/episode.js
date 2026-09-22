@@ -35,6 +35,7 @@
   document.head.appendChild(ld);
 
   const isLater = S.later.has(ep.id);
+  const drive = U.driveId(ep);
   A.innerHTML = `
 <div class="section-title">
   <div><p class="kicker">${ep.number != null ? `תוכנית ${ep.number}` : 'תוכנית'}${season ? ` · ${esc(season.title)}` : ''}</p><h1>${esc(ep.title)}</h1></div>
@@ -52,9 +53,9 @@
     </div>
     ${ep.description ? `<p class="desc">${esc(ep.description)}</p>` : ''}
     <div class="actions">
-      ${ep.audio
+      ${ep.audio && !drive
         ? `<button type="button" class="btn primary" data-play>האזנה לתוכנית <span>▶</span></button>`
-        : `<span class="pill">אין עדיין הקלטה לתוכנית הזו</span>`}
+        : drive ? '<a class="btn primary" href="#drive-player">האזנה לתוכנית ▶</a>' : `<span class="pill">אין עדיין הקלטה לתוכנית הזו</span>`}
       <button type="button" class="btn" data-later aria-pressed="${isLater}">${isLater ? '✓ שמור לאחר כך' : '+ לאחר כך'}</button>
       <button type="button" class="btn" data-share>שיתוף</button>
       ${ep.audio ? `<a class="btn" href="${esc(ep.audio)}" download>הורדת ההקלטה</a>` : ''}
@@ -63,6 +64,7 @@
   </div>
 </div>
 <div class="now-playing-strip" id="now-strip" hidden></div>
+${drive ? `<section class="card-body drive-player" id="drive-player" aria-label="נגן התוכנית"><h2>האזנה לתוכנית</h2><button type="button" class="btn primary" data-open-drive>טעינת נגן Google Drive ▶</button><div id="drive-frame"></div><p>אם הנגן אינו זמין ברשת שלכם, <a href="https://drive.google.com/file/d/${drive}/view" target="_blank" rel="noopener">פתחו את ההקלטה ב־Drive</a>.</p></section>` : ''}
 ${ep.tracks.length ? `
 <div class="card-body">
   <div class="tracks"><fieldset>
@@ -77,7 +79,7 @@ ${ep.tracks.length ? `
       <button type="button" class="icon-btn gold" data-copy-at="${t.at}" aria-label="העתקת קישור לרגע ${fmtTime(t.at)}" title="קישור לרגע הזה">←</button>
     </div>`).join('')}
   </fieldset></div>
-</div>` : `<div class="card-body"><div class="state"><span class="mark">♫</span><h3>עדיין אין רשימת שירים</h3><p>רשימת השירים של התוכנית תתווסף בקרוב.</p></div></div>`}`;
+</div>` : ''}`;
 
   // קודמת / הבאה
   const nb = S.neighbors(ep.id);
@@ -94,6 +96,12 @@ ${nb.newer ? `<a href="episode.html?ep=${encodeURIComponent(nb.newer.slug)}"><sm
 
   /* ---------- אירועים ---------- */
   A.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-open-drive]') && drive) {
+      Pl.pause();
+      document.getElementById('drive-frame').innerHTML = `<iframe title="האזנה: ${esc(ep.title)}" src="https://drive.google.com/file/d/${drive}/preview" allow="autoplay" referrerpolicy="no-referrer"></iframe>`;
+      e.target.closest('[data-open-drive]').hidden = true;
+      return;
+    }
     if (e.target.closest('[data-play]')) { Pl.isCurrent(ep.id) ? Pl.toggle() : Pl.load(ep); return; }
     const later = e.target.closest('[data-later]');
     if (later) { const on = S.later.toggle(ep.id); later.setAttribute('aria-pressed', String(on)); later.textContent = on ? '✓ שמור לאחר כך' : '+ לאחר כך'; U.notify(on ? 'נשמר לרשימת "לאחר כך".' : 'הוסר מרשימת "לאחר כך".', 'success'); return; }

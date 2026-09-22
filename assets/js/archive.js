@@ -70,7 +70,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
   function filtered() {
     let list = all;
     if (state.season) list = list.filter((e) => e.season === state.season);
-    if (state.audio) list = list.filter((e) => e.audio);
+    if (state.audio) list = list.filter((e) => e.audio || U.driveId(e));
     if (state.later) { const l = S.later.list(); list = list.filter((e) => l.includes(e.id)); }
     list = S.searchEpisodes(state.q, list);
     const by = {
@@ -95,7 +95,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
 <a class="ep-card${Pl.isCurrent(e.id) ? ' current' : ''}" href="episode.html?ep=${encodeURIComponent(e.slug)}" data-ep="${esc(e.id)}">
   ${e.cover ? `<img class="ep-cover" src="${esc(e.cover)}" alt="" loading="lazy">` : `<span class="cover-fallback num" aria-hidden="true">${e.number ?? '♫'}</span>`}
   ${e.number != null ? `<span class="ep-num">תוכנית ${e.number}</span>` : ''}
-  ${e.audio ? '<i class="ep-badge" aria-hidden="true">▶</i>' : ''}
+  ${e.audio || U.driveId(e) ? '<i class="ep-badge" aria-hidden="true">▶</i>' : ''}
   <b>${mark(e.title, state.q)}</b>
   <small>${esc(fmtDate(e.date, true))}${e.duration ? ` · ${esc(fmtDuration(e.duration))}` : ''}</small>
   ${e.tracks.length ? `<span class="ep-meta">♫ ${e.tracks.length} שירים</span>` : ''}
@@ -111,7 +111,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
     <span class="txt"><b>${mark(e.title, state.q)}</b><small>${esc(fmtDate(e.date))}${e.tracks.length ? ` · ${e.tracks.length} שירים` : ''}${e.guests.length ? ` · עם ${esc(e.guests.join(', '))}` : ''}</small></span>
   </a>
   ${e.duration ? `<span class="time">${fmtTime(e.duration)}</span>` : ''}
-  ${e.audio ? `<button type="button" class="icon-btn" data-play="${esc(e.id)}" aria-label="האזנה ל${esc(e.title)}">▶</button>` : ''}
+  ${e.audio || U.driveId(e) ? `<button type="button" class="icon-btn" data-play="${esc(e.id)}" aria-label="האזנה ל${esc(e.title)}">▶</button>` : ''}
 </div>`;
   }
 
