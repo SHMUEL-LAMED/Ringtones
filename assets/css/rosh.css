@@ -542,6 +542,7 @@ body.is-playing .vinyl.live { animation-play-state: running; }
 .season-head { display: flex; align-items: center; gap: 14px; margin: 0 0 16px; }
 .season-head h2 { font-family: var(--display); font-weight: 700; font-size: clamp(32px, 4vw, 48px); line-height: 1; }
 .season-head .line { flex: 1; height: 1px; background: linear-gradient(90deg, var(--gold), transparent); }
+.season-note { color: #d5d2e0; line-height: 1.8; white-space: pre-line; font-size: 14.5px; max-width: 760px; margin: -6px 0 18px; padding-inline-start: 14px; border-inline-start: 2px solid hsl(var(--h, 45) 80% 60% / .5); }
 
 /* ---------- לוח מספרים ---------- */
 

@@ -457,6 +457,17 @@
     if (!confirm(`לייבא ${r.data.episodes.length} תוכניות מהקובץ? זה יחליף את הטיוטה הנוכחית.`)) return;
     applyData(r.data); U.notify('הקובץ יובא לטיוטה.', 'success'); ev.target.value = '';
   });
+  // "טעינה מהמאגר": הקובץ data/episodes.json שמתפרסם עם האתר נטען לטיוטה,
+  // כדי שעדכון שנעשה במאגר (למשל תיאורים ועונות) יגיע למקור הנתונים ב"פרסום".
+  $('#btn-load-repo').addEventListener('click', async () => {
+    let text;
+    try { const r = await fetch('data/episodes.json', { cache: 'no-cache' }); if (!r.ok) throw new Error(String(r.status)); text = await r.text(); }
+    catch (err) { U.notify(`טעינת הקובץ מהמאגר נכשלה (${err.message}).`, 'error'); return; }
+    const r = validateText(text);
+    if (r.errors.length) { U.notify(`הקובץ במאגר לא תקין: ${r.errors[0]}`, 'error'); return; }
+    if (!confirm(`לטעון ${r.data.episodes.length} תוכניות מהמאגר? זה יחליף את הטיוטה הנוכחית (לא את מה שמפורסם — עד שתלחצו "פרסום").`)) return;
+    applyData(r.data); U.notify('הנתונים מהמאגר נטענו לטיוטה. בדקו ולחצו "פרסום".', 'success');
+  });
 
   /* ---------- שמירה ופרסום ---------- */
 
