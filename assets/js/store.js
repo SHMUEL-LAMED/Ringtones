@@ -356,7 +356,11 @@
       state.preview = sessionStorage.getItem(LS.preview) || null;
     } catch { state.preview = null; }
 
-    const override = ignoreOverride ? null : read(LS.override, null);
+    // טיוטה ששמורה בדפדפן שייכת רק לאזור הניהול. הדפים הציבוריים תמיד מציגים
+    // את מה שפורסם (הטיוטות נשמרות היום בשרת, ותצוגה מקדימה עוברת בקישור),
+    // כדי שטיוטה ישנה במכשיר של מנהל לא תסתיר שינויים חדשים, כמו תמונה חדשה.
+    const onAdminPage = document.body?.dataset.page === 'admin';
+    const override = ignoreOverride || !onAdminPage ? null : read(LS.override, null);
     if (state.preview && state.source === 'cloudflare') {
       try { state.data = normalize((await sb.preview.open(state.preview)).data); state.loadedFrom = 'preview'; }
       catch (e) { state.error = e; state.preview = null; try { sessionStorage.removeItem(LS.preview); } catch { /* */ } state.data = normalize(await sb.pull().catch(() => ({}))); state.loadedFrom = state.source; }
