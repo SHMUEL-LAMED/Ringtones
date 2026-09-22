@@ -27,7 +27,15 @@
 
   // מזהי המקור — כדי לדעת מה למחוק ב־Cloudflare בפרסום
   async function loadOriginIds() {
-    try { const o = await S.admin.pullOrigin(); o.episodes.forEach((e) => A.originIds.add(e.id)); if (S.state.loadedFrom !== 'override') { A.data = clone(o); renderList(); } }
+    try {
+      const o = await S.admin.pullOrigin();
+      o.episodes.forEach((e) => A.originIds.add(e.id));
+      // כשהחיבור ל־D1 חדש והטבלה עדיין ריקה, שומרים בעורך את 86 התוכניות
+      // מהקטלוג המקומי. כך כפתור "פרסום" מעלה אותן למסד במקום להחליף את
+      // הרשימה במסך ריק.
+      const emptyCloudflare = S.state.source === 'cloudflare' && o.episodes.length === 0 && A.data.episodes.length > 0;
+      if (S.state.loadedFrom !== 'override' && !emptyCloudflare) { A.data = clone(o); renderList(); }
+    }
     catch { /* המקור לא זמין כרגע; נעבוד על מה שיש */ }
   }
 

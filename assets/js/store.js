@@ -157,8 +157,17 @@
     } else {
       try {
         const raw = state.source === 'cloudflare' ? await sb.pull() : await fetchJSON('data/episodes.json');
-        state.data = normalize(raw);
-        state.loadedFrom = state.source;
+        const remote = normalize(raw);
+        // חיבור חדש ל־D1 מחזיר קטלוג תקין אך ריק. במקרה כזה מציגים מיד את
+        // הקטלוג המלא שנבנה מתיקיית הדרייב של התוכנית, במקום אתר ריק. מנהל
+        // יכול לפרסם את אותה רשימה ל־D1 בלחיצה אחת מאזור הניהול.
+        if (state.source === 'cloudflare' && remote.episodes.length === 0) {
+          state.data = normalize(await fetchJSON('data/episodes.json'));
+          state.loadedFrom = 'json-empty-cloudflare';
+        } else {
+          state.data = remote;
+          state.loadedFrom = state.source;
+        }
       } catch (e) {
         state.error = e;
         // נפילה חזרה לקובץ המקומי אם Cloudflare לא זמין
