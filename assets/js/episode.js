@@ -1,4 +1,5 @@
-/* דף תוכנית: הקלטה, רשימת השירים עם קפיצה לרגע, שיתוף, קודמת/הבאה. */
+/* דף תוכנית: הקלטה בנגן של האתר, רשימת השירים עם קפיצה לרגע, שיתוף, קודמת/הבאה,
+   ועוד מאותה עונה. ההקלטה מוזרמת ישירות — בלי נגן חיצוני. */
 (async function () {
   'use strict';
   const U = window.RoshUI, S = window.RoshStore, Pl = window.RoshPlayer;
@@ -20,6 +21,7 @@
   }
 
   const season = S.seasons().find((s) => s.id === ep.season);
+  const stream = ep.stream;
   document.title = `${ep.title} — ${site.name || 'ראש בראש'}`;
   document.querySelector('meta[name="description"]').setAttribute('content', ep.description.slice(0, 160) || ep.title);
 
@@ -30,19 +32,20 @@
     '@context': 'https://schema.org', '@type': 'RadioEpisode', name: ep.title, datePublished: ep.date || undefined,
     episodeNumber: ep.number ?? undefined, description: ep.description || undefined, image: ep.cover || undefined,
     partOfSeries: { '@type': 'RadioSeries', name: site.name || 'ראש בראש' },
-    associatedMedia: ep.audio ? { '@type': 'AudioObject', contentUrl: new URL(ep.audio, location.href).href, duration: ep.duration ? `PT${ep.duration}S` : undefined } : undefined,
+    associatedMedia: stream ? { '@type': 'AudioObject', contentUrl: new URL(stream, location.href).href, duration: ep.duration ? `PT${ep.duration}S` : undefined } : undefined,
   });
   document.head.appendChild(ld);
 
   const isLater = S.later.has(ep.id);
-  const drive = U.driveId(ep);
+  const links = U.publicLinks(ep);
+  A.style.cssText = U.coverVars(ep);
   A.innerHTML = `
 <div class="section-title">
-  <div><p class="kicker">${ep.number != null ? `תוכנית ${ep.number}` : 'תוכנית'}${season ? ` · ${esc(season.title)}` : ''}</p><h1>${esc(ep.title)}</h1></div>
+  <div><p class="kicker">${ep.number != null ? `תוכנית ${ep.number}` : (ep.season === 'sets' ? 'סט' : 'תוכנית')}${season ? ` · ${esc(season.title)}` : ''}</p><h1>${esc(ep.title)}</h1></div>
   ${ep.date ? `<strong>${esc(fmtDate(ep.date, true))}</strong>` : ''}
 </div>
 <div class="ep-hero">
-  <div class="cover">${ep.cover ? `<img src="${esc(ep.cover)}" alt="">` : `<span class="cover-fallback num" aria-hidden="true">${ep.number ?? '♫'}</span>`}</div>
+  <div class="cover">${ep.cover ? `<img src="${esc(ep.cover)}" alt="">` : `<div class="vinyl" data-num="${ep.number ?? '♫'}" style="--label:${U.hue(ep)}" data-vinyl="${esc(ep.id)}"><i></i></div>`}</div>
   <div>
     <div class="meta">
       ${ep.date ? `<span class="pill">${esc(fmtWeekday(ep.date))}, ${esc(fmtDate(ep.date))}</span>` : ''}
@@ -53,25 +56,22 @@
     </div>
     ${ep.description ? `<p class="desc">${esc(ep.description)}</p>` : ''}
     <div class="actions">
-      ${ep.audio && !drive
-        ? `<button type="button" class="btn primary" data-play>האזנה לתוכנית <span>▶</span></button>`
-        : drive ? '<a class="btn primary" href="#drive-player">האזנה לתוכנית ▶</a>' : `<span class="pill">אין עדיין הקלטה לתוכנית הזו</span>`}
+      ${stream ? `<button type="button" class="btn xl primary" data-play>האזנה לתוכנית <span>▶</span></button>` : `<span class="pill">אין עדיין הקלטה לתוכנית הזו</span>`}
       <button type="button" class="btn" data-later aria-pressed="${isLater}">${isLater ? '✓ שמור לאחר כך' : '+ לאחר כך'}</button>
       <button type="button" class="btn" data-share>שיתוף</button>
-      ${ep.audio ? `<a class="btn" href="${esc(ep.audio)}" download>הורדת ההקלטה</a>` : ''}
-      ${ep.links.map((l) => `<a class="btn" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join('')}
+      ${U.downloadUrl(ep) ? `<a class="btn ghost" href="${esc(U.downloadUrl(ep))}" download="${esc(ep.title)}.mp3" rel="noopener">הורדת ההקלטה</a>` : ''}
+      ${links.map((l) => `<a class="btn ghost" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join('')}
     </div>
   </div>
 </div>
 <div class="now-playing-strip" id="now-strip" hidden></div>
-${drive ? `<section class="card-body drive-player" id="drive-player" aria-label="נגן התוכנית"><h2>האזנה לתוכנית</h2><button type="button" class="btn primary" data-open-drive>טעינת נגן Google Drive ▶</button><div id="drive-frame"></div><p>אם הנגן אינו זמין ברשת שלכם, <a href="https://drive.google.com/file/d/${drive}/view" target="_blank" rel="noopener">פתחו את ההקלטה ב־Drive</a>.</p></section>` : ''}
 ${ep.tracks.length ? `
 <div class="card-body">
   <div class="tracks"><fieldset>
-    <legend><b>מה השמענו בתוכנית</b><small>${ep.audio ? 'לחצו על שיר כדי לקפוץ אליו בהקלטה. Shift + חץ עובר בין שירים.' : 'רשימת השירים לפי סדר ההשמעה.'}</small></legend>
+    <legend><b>מה השמענו בתוכנית</b><small>${stream ? 'לחצו על שיר כדי לקפוץ אליו בהקלטה. Shift + חץ עובר בין שירים.' : 'רשימת השירים לפי סדר ההשמעה.'}</small></legend>
     ${ep.tracks.map((t, i) => `
     <div class="row" data-track="${i}">
-      <button type="button" class="row-main" data-at="${t.at}" ${ep.audio ? '' : 'disabled'} aria-label="${esc(t.title)}${t.artist ? `, ${esc(t.artist)}` : ''}, ${fmtTime(t.at)}">
+      <button type="button" class="row-main" data-at="${t.at}" ${stream ? '' : 'disabled'} aria-label="${esc(t.title)}${t.artist ? `, ${esc(t.artist)}` : ''}, ${fmtTime(t.at)}">
         <span class="n"><span>${i + 1}</span></span>
         <span class="txt"><b>${esc(t.title)}</b>${t.artist || t.note ? `<small>${esc(t.artist)}${t.note ? `${t.artist ? ' · ' : ''}${esc(t.note)}` : ''}</small>` : ''}</span>
       </button>
@@ -87,21 +87,24 @@ ${ep.tracks.length ? `
 ${nb.older ? `<a href="episode.html?ep=${encodeURIComponent(nb.older.slug)}"><small>התוכנית הקודמת</small><b>${esc(nb.older.title)}</b></a>` : '<span></span>'}
 ${nb.newer ? `<a href="episode.html?ep=${encodeURIComponent(nb.newer.slug)}"><small>התוכנית הבאה</small><b>${esc(nb.newer.title)}</b></a>` : '<span></span>'}`;
 
+  // עוד מאותה עונה
+  const more = S.episodes().filter((e) => e.id !== ep.id && e.season === ep.season).slice(0, 4);
+  const M = document.getElementById('more');
+  if (more.length) {
+    M.setAttribute('data-reveal', '');
+    M.innerHTML = `<div class="grid-head"><div><p class="kicker">${season ? esc(season.title) : 'עוד'}</p><h2>עוד מאותה תקופה</h2></div><a href="archive.html${ep.season ? `?season=${encodeURIComponent(ep.season)}` : ''}">לכל התוכניות ←</a></div><div class="ep-grid">${more.map((e) => U.epCard(e)).join('')}</div>`;
+  }
+  U.reveal();
+
   /* ---------- קישור עמוק לרגע ---------- */
   const tParam = Number(U.qs('t'));
-  if (ep.audio && tParam > 0) {
+  if (stream && tParam > 0) {
     Pl.load(ep, { at: tParam, autoplay: true, quiet: true });
     U.notify(`מתחילים מ־${fmtTime(tParam)}. אם הניגון לא התחיל, לחצו ▶.`, 'info');
   }
 
   /* ---------- אירועים ---------- */
   A.addEventListener('click', async (e) => {
-    if (e.target.closest('[data-open-drive]') && drive) {
-      Pl.pause();
-      document.getElementById('drive-frame').innerHTML = `<iframe title="האזנה: ${esc(ep.title)}" src="https://drive.google.com/file/d/${drive}/preview" allow="autoplay" referrerpolicy="no-referrer"></iframe>`;
-      e.target.closest('[data-open-drive]').hidden = true;
-      return;
-    }
     if (e.target.closest('[data-play]')) { Pl.isCurrent(ep.id) ? Pl.toggle() : Pl.load(ep); return; }
     const later = e.target.closest('[data-later]');
     if (later) { const on = S.later.toggle(ep.id); later.setAttribute('aria-pressed', String(on)); later.textContent = on ? '✓ שמור לאחר כך' : '+ לאחר כך'; U.notify(on ? 'נשמר לרשימת "לאחר כך".' : 'הוסר מרשימת "לאחר כך".', 'success'); return; }
@@ -120,6 +123,10 @@ ${nb.newer ? `<a href="episode.html?ep=${encodeURIComponent(nb.newer.slug)}"><sm
     const row = e.target.closest('[data-at]');
     if (row) { const at = Number(row.dataset.at); Pl.isCurrent(ep.id) ? (Pl.seek(at), Pl.play()) : Pl.load(ep, { at }); }
   });
+  document.addEventListener('click', (e) => {
+    const play = e.target.closest('#more [data-play]');
+    if (play) { const other = S.byId(play.dataset.play); if (other) Pl.load(other); }
+  });
 
   const strip = document.getElementById('now-strip');
   window.addEventListener('rosh:player', (ev) => {
@@ -129,6 +136,8 @@ ${nb.newer ? `<a href="episode.html?ep=${encodeURIComponent(nb.newer.slug)}"><sm
     A.querySelectorAll('[data-track]').forEach((r) => {
       if (mine && Number(r.dataset.track) === ev.detail.trackIndex) r.setAttribute('aria-current', 'true'); else r.removeAttribute('aria-current');
     });
+    A.querySelector('[data-vinyl]')?.classList.toggle('live', mine);
+    document.querySelectorAll('#more .ep-card').forEach((c) => c.classList.toggle('current', c.dataset.ep === ev.detail.episode?.id));
     if (mine && ev.detail.type !== 'close') {
       const tr = ep.tracks[ev.detail.trackIndex];
       strip.hidden = false;

@@ -49,12 +49,12 @@
   function renderFilters() {
     document.getElementById('filters').innerHTML = `
 <button type="button" class="chip" data-season="" aria-pressed="${!state.season}">כל העונות</button>
-${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" data-season="${esc(s.id)}" aria-pressed="${state.season === s.id}">${esc(s.title)} <span style="opacity:.6">${s.count}</span></button>`).join('')}
+${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" data-season="${esc(s.id)}" style="${U.seasonVars(s.id)}" aria-pressed="${state.season === s.id}">${esc(s.title)} <span style="opacity:.6">${s.count}</span></button>`).join('')}
 <button type="button" class="chip" data-audio aria-pressed="${state.audio}">עם הקלטה</button>
 <button type="button" class="chip" data-later aria-pressed="${state.later}">לאחר כך</button>
 <span class="spacer"></span>
 <label class="visually-hidden" for="sort">מיון</label>
-<select id="sort" class="input" style="width:auto;min-height:36px;padding:6px 10px;border-radius:99px;font-size:12px;font-weight:800">
+<select id="sort" class="input" style="width:auto;min-height:36px;padding-block:6px;border-radius:99px;font-size:12px;font-weight:800">
   <option value="new" ${state.sort === 'new' ? 'selected' : ''}>מהחדשה לישנה</option>
   <option value="old" ${state.sort === 'old' ? 'selected' : ''}>מהישנה לחדשה</option>
   <option value="num" ${state.sort === 'num' ? 'selected' : ''}>לפי מספר תוכנית</option>
@@ -70,7 +70,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
   function filtered() {
     let list = all;
     if (state.season) list = list.filter((e) => e.season === state.season);
-    if (state.audio) list = list.filter((e) => e.audio || U.driveId(e));
+    if (state.audio) list = list.filter((e) => e.stream);
     if (state.later) { const l = S.later.list(); list = list.filter((e) => l.includes(e.id)); }
     list = S.searchEpisodes(state.q, list);
     const by = {
@@ -88,30 +88,17 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
     return esc(text).replace(new RegExp(`(${terms.join('|')})`, 'gi'), '<mark>$1</mark>');
   };
 
-  function card(e) {
-    const pos = S.positions.get(e.id);
-    const pct = pos && e.duration ? Math.min(100, (pos.t / e.duration) * 100) : 0;
-    return `
-<a class="ep-card${Pl.isCurrent(e.id) ? ' current' : ''}" href="episode.html?ep=${encodeURIComponent(e.slug)}" data-ep="${esc(e.id)}">
-  ${e.cover ? `<img class="ep-cover" src="${esc(e.cover)}" alt="" loading="lazy">` : `<span class="cover-fallback num" aria-hidden="true">${e.number ?? '♫'}</span>`}
-  ${e.number != null ? `<span class="ep-num">תוכנית ${e.number}</span>` : ''}
-  ${e.audio || U.driveId(e) ? '<i class="ep-badge" aria-hidden="true">▶</i>' : ''}
-  <b>${mark(e.title, state.q)}</b>
-  <small>${esc(fmtDate(e.date, true))}${e.duration ? ` · ${esc(fmtDuration(e.duration))}` : ''}</small>
-  ${e.tracks.length ? `<span class="ep-meta">♫ ${e.tracks.length} שירים</span>` : ''}
-  ${pct ? `<span class="resume" aria-hidden="true"><i style="width:${pct}%"></i></span>` : ''}
-</a>`;
-  }
+  const card = (e) => U.epCard(e, { titleHtml: mark(e.title, state.q) });
 
   function rowItem(e) {
     return `
-<div class="row${Pl.isCurrent(e.id) ? ' selected' : ''}" data-ep="${esc(e.id)}">
+<div class="row${Pl.isCurrent(e.id) ? ' selected' : ''}" data-ep="${esc(e.id)}" style="${U.coverVars(e)}">
   <a class="row-main" href="episode.html?ep=${encodeURIComponent(e.slug)}">
-    <i aria-hidden="true">${e.number ?? '♫'}</i>
+    <i aria-hidden="true" style="background:hsl(var(--h) 70% 40% / .5);border-color:hsl(var(--h) 80% 60% / .6)">${e.number ?? '♫'}</i>
     <span class="txt"><b>${mark(e.title, state.q)}</b><small>${esc(fmtDate(e.date))}${e.tracks.length ? ` · ${e.tracks.length} שירים` : ''}${e.guests.length ? ` · עם ${esc(e.guests.join(', '))}` : ''}</small></span>
   </a>
   ${e.duration ? `<span class="time">${fmtTime(e.duration)}</span>` : ''}
-  ${e.audio || U.driveId(e) ? `<button type="button" class="icon-btn" data-play="${esc(e.id)}" aria-label="האזנה ל${esc(e.title)}">▶</button>` : ''}
+  ${e.stream ? `<button type="button" class="icon-btn solid" data-play="${esc(e.id)}" aria-label="האזנה ל${esc(e.title)}">▶</button>` : ''}
 </div>`;
   }
 
@@ -128,7 +115,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
 <div class="song-hits" style="margin-bottom:22px">
   ${hits.map(({ episode: e, track: tr }) => `
   <a class="song-hit" href="episode.html?ep=${encodeURIComponent(e.slug)}&t=${tr.at}" data-hit="${esc(e.id)}" data-at="${tr.at}">
-    <span class="icon-btn${e.audio ? '' : ' gold'}" aria-hidden="true">${e.audio ? '▶' : '♫'}</span>
+    <span class="icon-btn${e.stream ? ' solid' : ' gold'}" aria-hidden="true">${e.stream ? '▶' : '♫'}</span>
     <span class="txt"><b>${mark(tr.title, state.q)}${tr.artist ? ` — ${mark(tr.artist, state.q)}` : ''}</b><small>${esc(e.title)} · ${esc(fmtDate(e.date, true))}${tr.note ? ` · ${esc(tr.note)}` : ''}</small></span>
     <span class="time">${fmtTime(tr.at)}</span>
   </a>`).join('')}
@@ -145,7 +132,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
       for (const e of list) { const k = e.season || ''; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
       R.innerHTML = [...groups.entries()].map(([id, eps]) => {
         const s = seasons.find((x) => x.id === id);
-        return `<section class="season-block"><div class="season-head"><h2>${esc(s?.title || 'ללא עונה')}</h2><span class="line" aria-hidden="true"></span><span class="pill">${eps.length} תוכניות</span></div><div class="ep-grid">${eps.map(card).join('')}</div></section>`;
+        return `<section class="season-block" style="${U.seasonVars(id)}"><div class="season-head"><h2 style="color:hsl(var(--h) 90% 78%)">${esc(s?.title || 'ללא עונה')}</h2><span class="line" aria-hidden="true" style="background:linear-gradient(90deg,hsl(var(--h) 90% 65%),transparent)"></span><span class="pill">${eps.length} תוכניות</span></div><div class="ep-grid">${eps.map(card).join('')}</div></section>`;
       }).join('');
     } else R.innerHTML = `<div class="ep-grid">${list.map(card).join('')}</div>`;
     syncUrl();
@@ -167,7 +154,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
     const hit = e.target.closest('[data-hit]');
     if (hit) {
       const ep = S.byId(hit.dataset.hit);
-      if (ep?.audio) { e.preventDefault(); Pl.isCurrent(ep.id) ? (Pl.seek(Number(hit.dataset.at)), Pl.play()) : Pl.load(ep, { at: Number(hit.dataset.at) }); }
+      if (ep?.stream) { e.preventDefault(); Pl.isCurrent(ep.id) ? (Pl.seek(Number(hit.dataset.at)), Pl.play()) : Pl.load(ep, { at: Number(hit.dataset.at) }); }
     }
   });
   document.addEventListener('change', (e) => { if (e.target.id === 'sort') { state.sort = e.target.value; render(); } });

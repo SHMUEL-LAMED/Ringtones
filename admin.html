@@ -2,13 +2,15 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>ניהול — ראש בראש</title>
   <meta name="robots" content="noindex">
-  <meta name="theme-color" content="#fbf8f2">
+  <meta name="theme-color" content="#06080f">
   <link rel="icon" href="assets/img/medallion.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&family=Karantina:wght@300;400;700&display=swap">
   <link rel="stylesheet" href="assets/css/rosh.css">
-  <link rel="stylesheet" href="assets/css/program.css">
   <link rel="stylesheet" href="assets/css/admin.css">
 </head>
 <body class="admin-locked">
@@ -17,7 +19,7 @@
     <div id="site-header"></div>
 
     <main id="main">
-      <section id="admin-gate" class="card card-body" role="status"><h1>ניהול התוכניות</h1><p id="admin-gate-text">בודקים הרשאת מנהל…</p><button type="button" class="btn primary" id="gate-login">התחברות לניהול</button></section>
+      <section id="admin-gate" class="card" role="status"><p class="kicker">אזור מנהלים</p><h1>ניהול התוכניות</h1><p id="admin-gate-text">בודקים הרשאת מנהל…</p><div class="actions" style="justify-content:center;margin:0"><button type="button" class="btn primary" id="gate-login">התחברות לניהול</button><a class="btn" href="me.html">לאזור האישי</a></div></section>
       <div class="admin-bar" id="admin-bar">
         <span class="status"><span class="dot" id="src-dot"></span><span id="src-text">טוענים…</span></span>
         <span class="dirty" id="dirty" hidden>• שינויים שלא נשמרו</span>

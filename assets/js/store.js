@@ -14,6 +14,7 @@
     later: 'rosh:later',            // "לאחר כך"
     sb: 'rosh:cf:session',          // סשן מנהל Cloudflare
     prefs: 'rosh:prefs',            // מהירות, עוצמה, תצוגת ארכיון
+    history: 'rosh:history',        // היסטוריית האזנה (במכשיר הזה)
   };
 
   const read = (k, fb) => { try { const v = localStorage.getItem(k); return v == null ? fb : JSON.parse(v); } catch { return fb; } };
@@ -52,6 +53,9 @@
         .map((t) => ({ at: Math.max(0, Number(t.at) || 0), title: String(t.title || ''), artist: String(t.artist || ''), note: String(t.note || '') }))
         .sort((a, b) => a.at - b.at),
     };
+    // הכתובת שהנגן מנגן בפועל (קובץ ישיר או הזרמה ישירה מהדרייב). שדה מחושב —
+    // לא נכנס ל־JSON שמתפרסם, ולכן מוגדר כלא־ניתן־למנייה.
+    Object.defineProperty(ep, 'stream', { get() { return window.RoshUI?.streamUrl(this) || ''; }, enumerable: false, configurable: true });
     return ep;
   }
 
@@ -81,9 +85,9 @@
       if (auth && this.session?.token) h.Authorization = `Bearer ${this.session.token}`;
       return h;
     },
-    /* כניסה לניהול: חלון קטן בכתובת אתר הסקר. מי שכבר מחובר שם כמנהל מקבל
-       סשן לאתר התוכניות מיד, בלי כניסה נוספת; אחרת החלון מציע כניסה עם Google,
-       ואותה רשימת מנהלים של אתר הסקר מכריעה. אין כאן רשימת מנהלים משלנו. */
+    /* כניסה: חלון קטן בכתובת אתר הסקר. כל אחד יכול להתחבר עם Google ולקבל
+       אזור אישי; מי שמופיע ברשימת המנהלים של אתר הסקר מקבל גם גישה לניהול
+       (user.isAdmin). מי שכבר מחובר שם נכנס מיד, בלי כניסה נוספת. */
     async signIn() {
       const origin = new URL(this.cfg.apiBase).origin;
       const popup = window.open(this.base('/api/program/login'), 'rosh-program-login', 'popup,width=460,height=620');
@@ -94,21 +98,22 @@
         const watch = setInterval(() => { if (popup.closed) finish(() => reject(new Error('חלון ההתחברות נסגר לפני שההתחברות הושלמה.'))); }, 500);
         const receive = (event) => {
           if (event.origin !== origin || event.data?.type !== 'rosh-program-auth') return;
-          if (!event.data.token || !event.data.user?.isAdmin) return finish(() => reject(new Error('לחשבון הזה אין הרשאת ניהול באתר הסקר.')));
-          this.session = { token:event.data.token, user:event.data.user };
-          finish(() => resolve(event.data.user));
+          if (!event.data.token || !event.data.user) return finish(() => reject(new Error('ההתחברות לא הושלמה. נסו שוב.')));
+          this.session = { token:event.data.token, user:{ ...event.data.user, isAdmin: !!event.data.user.isAdmin } };
+          finish(() => resolve(this.user));
         };
         window.addEventListener('message', receive);
       });
     },
     async refresh() { return this.session; },
     signOut() { this.session = null; },
+    /** מרענן את פרטי המשתמש מהשרת; מחזיר true רק למנהל. סשן שפג נמחק. */
     async isAdmin() {
       if (!this.session?.token) return false;
       const r = await fetch(this.base('/api/program/me'), { headers:this.headers() });
       if (!r.ok) { if (r.status === 401) this.session = null; return false; }
       const j = await r.json();
-      this.session = { ...this.session, user:j.user };
+      if (j.user) this.session = { ...this.session, user:{ ...this.session.user, ...j.user, isAdmin: !!j.user.isAdmin } };
       return !!j.user?.isAdmin;
     },
     async pull(auth = false) {
@@ -250,6 +255,13 @@
     set(id, t) { write(LS.last, { id, t: Math.floor(t || 0) }); },
   };
 
+  /** היסטוריית האזנה: התוכניות שנוגנו במכשיר הזה, מהאחרונה. */
+  const history = {
+    list() { return read(LS.history, []); },
+    add(id) { const l = this.list().filter((x) => x.id !== id); l.unshift({ id, at: Date.now() }); write(LS.history, l.slice(0, 60)); },
+    clear() { write(LS.history, null); },
+  };
+
   const later = {
     list() { return read(LS.later, []); },
     has(id) { return this.list().includes(id); },
@@ -291,7 +303,7 @@
   };
 
   window.RoshStore = {
-    state, ready, load, sb, prefs, positions, last, later, admin,
+    state, ready, load, sb, prefs, positions, last, later, history, admin,
     episodes, seasons, bySlug, byId, latest, featured, neighbors, songIndex, searchEpisodes, searchSongs,
     get site() { return state.site; },
     get data() { return state.data; },

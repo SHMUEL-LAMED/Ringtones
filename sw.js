@@ -1,13 +1,12 @@
 /* Service Worker של ראש בראש: שומר את מעטפת האתר להפעלה מהירה ובלי רשת.
    נתוני התוכניות נטענים תמיד מהרשת קודם (ונופלים למטמון אם אין), וההקלטות
    עצמן לא נשמרות. */
-const VERSION = 'rosh-v3-fresh';
+const VERSION = 'rosh-v4-night';
 const SHELL = [
-  './', './index.html', './archive.html', './episode.html',
+  './', './index.html', './archive.html', './episode.html', './me.html',
   './assets/css/rosh.css', './assets/js/ui.js', './assets/js/store.js', './assets/js/player.js',
-  './assets/js/home.js', './assets/js/archive.js', './assets/js/episode.js',
+  './assets/js/home.js', './assets/js/archive.js', './assets/js/episode.js', './assets/js/me.js',
   './assets/img/medallion.svg', './manifest.webmanifest',
-  './assets/css/program.css',
 ];
 
 self.addEventListener('install', (e) => {
@@ -28,7 +27,7 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(fetch(req).then((r) => { const copy = r.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); return r; }).catch(() => caches.match(req)));
     return;
   }
-  // Always revalidate application files so deployments cannot mix old and new UI.
+  // קובצי האפליקציה: תמיד מאומתים מול הרשת כדי שפריסה חדשה לא תתערבב עם ישנה
   e.respondWith(fetch(req, { cache: 'no-cache' }).then((r) => {
     if (r.ok) {
       const copy = r.clone();
