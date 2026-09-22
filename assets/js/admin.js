@@ -739,6 +739,7 @@ ${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי י
     ${CLOUD ? `<div class="tool"><div><b>קישור לתצוגה מקדימה</b><small>שולחים למישהו קישור, והוא רואה את האתר עם הטיוטה — לפני שמפרסמים. הקישור עובד עד הפרסום הבא.</small><div id="preview-link"></div></div><button type="button" class="btn small" data-op="preview-link">יצירת קישור</button></div>` : ''}
     <div class="tool"><div><b>קובץ גיבוי</b><small>קובץ אחד עם כל התוכניות, העונות וההגדרות. כדאי לשמור עותק במחשב מדי פעם.</small></div><button type="button" class="btn small" data-op="backup">הורדת גיבוי</button></div>
     <div class="tool"><div><b>שחזור מקובץ גיבוי</b><small>מחליף את כל מה שכאן בתוכן של קובץ גיבוי ששמרתם בעבר. אחר כך לוחצים פרסום.</small></div><button type="button" class="btn small" data-op="restore">בחירת קובץ…</button></div>
+    <div class="tool"><div><b>טעינה מהמאגר</b><small>מחליף את כל מה שכאן בקובץ התוכניות שמפורסם עם האתר (data/episodes.json) — למשל אחרי עדכון של תיאורים ועונות במאגר. אחר כך לוחצים פרסום.</small></div><button type="button" class="btn small" data-op="load-repo">טעינה</button></div>
     ${CLOUD ? '<div class="tool"><div><b>העברת ההקלטות לאתר</b><small>מעתיק את ההקלטות מהדרייב לאחסון של האתר, כדי שינוגנו מהר יותר ולא יהיו תלויות בדרייב. אפשר לעצור ולהמשיך אחר כך.</small></div><button type="button" class="btn small" data-op="migrate">פתיחה</button></div>' : ''}
     ${CLOUD ? `<div class="tool"><div><b>מי מנהל</b><small>מי שמופיע כאן יכול להיכנס לניהול — גם באתר הסקר. זו אותה רשימה.</small><div id="admins-box">${renderAdmins()}</div></div><button type="button" class="btn small" data-op="admins">${A.admins ? 'רענון' : 'הצגה'}</button></div>` : ''}
     <div class="tool"><div><b>החשבון</b><small>${u ? `מחוברים כ־${esc(u.email || u.name || '')}` : 'לא מחוברים'}</small></div>${u ? '<button type="button" class="btn small" data-op="logout">התנתקות</button>' : ''}</div>
@@ -793,6 +794,17 @@ ${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי י
     if (!confirm(`לשחזר ${raw.episodes.length} תוכניות מהקובץ? כל מה שיש כאן עכשיו יוחלף (עד הפרסום זה נראה רק לכם).`)) return;
     applyData(raw); U.notify('הגיבוי שוחזר. בדקו את האתר ואז לחצו פרסום.', 'success');
   });
+  // "טעינה מהמאגר": הקובץ data/episodes.json שמתפרסם עם האתר נטען לטיוטה,
+  // כדי שעדכון שנעשה במאגר (למשל תיאורים ועונות) יגיע למקור הנתונים בפרסום.
+  async function loadFromRepo() {
+    let raw;
+    try { const r = await fetch('data/episodes.json', { cache: 'no-cache' }); if (!r.ok) throw new Error(String(r.status)); raw = await r.json(); }
+    catch (err) { U.notify(`טעינת הקובץ מהמאגר לא הצליחה (${err.message}).`, 'error'); return; }
+    const errs = S.admin.validate(raw);
+    if (errs.length) { U.notify(`הקובץ במאגר לא תקין: ${errs[0]}`, 'error'); return; }
+    if (!confirm(`לטעון ${raw.episodes.length} תוכניות מהמאגר? כל מה שיש כאן עכשיו יוחלף (עד הפרסום זה נראה רק לכם).`)) return;
+    applyData(raw); U.notify('הנתונים מהמאגר נטענו לטיוטה. בדקו את האתר ואז לחצו פרסום.', 'success');
+  }
   function applyData(raw) {
     A.data = S.admin.normalize(raw);
     if (!raw.settings && A.origin) A.data.settings = clone(A.origin.settings || S.admin.normSettings({}));
@@ -1013,6 +1025,7 @@ ${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי י
       case 'backup': backupFile(); U.notify('קובץ הגיבוי ירד למחשב.', 'success'); break;
       case 'restore': $('#file-restore').click(); break;
       case 'migrate': openMigrate(); break;
+      case 'load-repo': await loadFromRepo(); break;
       case 'admins': b.disabled = true; try { A.admins = (await S.sb.admins.list()).admins; } catch (err) { A.admins = { error: err.status === 404 ? 'השרת עדיין לא עודכן לגרסה שמנהלת מנהלים מכאן. בינתיים — בלשונית "הרשאות" באתר הסקר.' : err.message }; } renderPublish(); $('details.more-details').open = true; break;
       case 'admin-del': if (confirm(`להסיר את ${b.dataset.email} מרשימת המנהלים?`)) { try { A.admins = (await S.sb.admins.remove(b.dataset.email)).admins; $('#admins-box').innerHTML = renderAdmins(); } catch (err) { U.notify(err.message, 'error'); } } break;
       case 'logout': S.sb.signOut(); gateMounted = false; checkAccess(); U.notify('התנתקתם.', 'success'); break;

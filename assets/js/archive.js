@@ -114,11 +114,14 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
     }
     if (state.view === 'list') R.innerHTML = `<div class="row-list">${list.map(rowItem).join('')}</div>`;
     else if (state.view === 'seasons') {
+      // העונות מוצגות לפי סדר ההגדרה שלהן (סדר התיקיות בארכיון התוכנית),
+      // ובתוך כל עונה לפי המיון שנבחר. עונה עם הערה מציגה אותה מתחת לכותרת.
       const groups = new Map();
       for (const e of list) { const k = e.season || ''; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
-      R.innerHTML = [...groups.entries()].map(([id, eps]) => {
+      const order = (id) => { const i = seasons.findIndex((x) => x.id === id); return i < 0 ? seasons.length : i; };
+      R.innerHTML = [...groups.entries()].sort((a, b) => order(a[0]) - order(b[0])).map(([id, eps]) => {
         const s = seasons.find((x) => x.id === id);
-        return `<section class="season-block" style="${U.seasonVars(id)}"><div class="season-head"><h2 style="color:hsl(var(--h) 90% 78%)">${esc(s?.title || 'ללא עונה')}</h2><span class="line" aria-hidden="true" style="background:linear-gradient(90deg,hsl(var(--h) 90% 65%),transparent)"></span><span class="pill">${eps.length} תוכניות</span></div><div class="ep-grid">${eps.map(card).join('')}</div></section>`;
+        return `<section class="season-block" style="${U.seasonVars(id)}"><div class="season-head"><h2 style="color:hsl(var(--h) 90% 78%)">${esc(s?.title || 'ללא עונה')}</h2><span class="line" aria-hidden="true" style="background:linear-gradient(90deg,hsl(var(--h) 90% 65%),transparent)"></span><span class="pill">${eps.length} תוכניות</span></div>${s?.note ? `<p class="season-note">${esc(s.note)}</p>` : ''}<div class="ep-grid">${eps.map(card).join('')}</div></section>`;
       }).join('');
     } else R.innerHTML = `<div class="ep-grid">${list.map(card).join('')}</div>`;
     syncUrl();
