@@ -15,28 +15,28 @@ assert.equal(driveId({audio:'https://drive.google.com.evil.test/file/d/abc/view'
 assert.equal(driveId({audio:'javascript:alert(1)'}),null);
 assert.equal(driveId({audio:'https://cdn.example.com/song.mp3',links:data.episodes[0].links}),null);
 
-// Interrupt the transfer after the server stores a chunk, then reselect the
-// same file. The HEAD offset must prevent duplicate or missing bytes.
+// Cloudflare uploads must require an administrator, send the bearer token and
+// preserve the exact file bytes while reporting progress.
 async function uploadCheck() {
- const memory = new Map(); let offset=0, posts=0, fail=true; const received=[];
- const file=new Blob([new Uint8Array(7*1024*1024).fill(73)],{type:'audio/mpeg'});
+ const file=new Blob([new Uint8Array(1024).fill(73)],{type:'audio/mpeg'});
  file.name='test.mp3'; file.lastModified=123;
- const sb={cfg:{url:'https://test.supabase.co',anonKey:'public'},user:{id:'admin'},session:{access_token:'test'},isAdmin:async()=>true,refresh:async()=>{}};
- const ctx={window:{RoshStore:{sb}},crypto:webcrypto,TextEncoder,URL,Uint8Array,btoa,localStorage:{getItem:k=>memory.get(k)||null,setItem:(k,v)=>memory.set(k,v),removeItem:k=>memory.delete(k)},fetch:async(url,opts)=>{
-  if(opts.method==='POST'){posts++;return new Response(null,{status:201,headers:{Location:'https://test.supabase.co/storage/v1/upload/resumable/id'}});}
-  if(opts.method==='HEAD') return new Response(null,{headers:{'Upload-Offset':String(offset)}});
-  assert.equal(+opts.headers['Upload-Offset'],offset);
-  if(offset>0 && fail){fail=false;throw Error('Connection interrupted');}
-  received.push(Buffer.from(await opts.body.arrayBuffer())); offset+=opts.body.size;
-  return new Response(null,{status:204,headers:{'Upload-Offset':String(offset)}});
- }};
+ let request;
+ class XHR {
+  constructor(){this.headers={};this.upload={};}
+  open(method,url){this.method=method;this.url=url;}
+  setRequestHeader(k,v){this.headers[k]=v;}
+  async send(body){request={method:this.method,url:this.url,headers:this.headers,body:Buffer.from(await body.arrayBuffer())};this.upload.onprogress?.({lengthComputable:true,loaded:body.size,total:body.size});this.status=200;this.responseText=JSON.stringify({url:'https://api.example/media/program/ep-90/file.mp3'});this.onload();}
+ }
+ const sb={session:{token:'secret'},base:p=>'https://api.example'+p,isAdmin:async()=>true};
+ const ctx={window:{RoshStore:{sb}},XMLHttpRequest:XHR,encodeURIComponent,Promise};
  vm.runInNewContext(fs.readFileSync('assets/js/upload.js','utf8'),ctx);
- await assert.rejects(ctx.window.RoshUpload(file,'ep-90','audio',()=>{}),/interrupted/);
- const url=await ctx.window.RoshUpload(file,'ep-90','audio',()=>{});
- assert.equal(posts,1); assert.equal(memory.size,0); assert(url.includes('/object/public/rosh-media/episodes/ep-90/'));
- assert.deepEqual(Buffer.concat(received),Buffer.from(await file.arrayBuffer()));
+ const progress=[];
+ const url=await ctx.window.RoshUpload(file,'ep-90','audio',p=>progress.push(p));
+ assert.equal(url,'https://api.example/media/program/ep-90/file.mp3');
+ assert.equal(request.method,'POST'); assert.equal(request.headers.Authorization,'Bearer secret');
+ assert.deepEqual(request.body,Buffer.from(await file.arrayBuffer())); assert(progress.includes(100));
  sb.isAdmin=async()=>false;
  await assert.rejects(ctx.window.RoshUpload(file,'ep-90','audio',()=>{}),/מנהל/);
- console.log('Catalog, Drive URL validation, upload authorization and interrupted upload resume passed.');
+ console.log('Catalog, Drive URL validation, Cloudflare upload authorization and byte integrity passed.');
 }
 uploadCheck().catch(e=>{console.error(e);process.exitCode=1;});

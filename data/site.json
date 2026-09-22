@@ -10,12 +10,10 @@
     }
   ],
   "storage": {
-    "provider": "supabase",
-    "supabase": {
-      "url": "https://ydcfafijktzasrkkxyux.supabase.co",
-      "anonKey": "sb_publishable_hmcfter-RriY3pKrbZnJqg_2228WwCM",
-      "table": "rosh_episodes",
-      "settingsTable": "rosh_settings"
+    "provider": "cloudflare",
+    "cloudflare": {
+      "apiBase": "https://rosh-berosh.smwlyqswkwt232.workers.dev",
+      "googleClientId": "601586229891-tv0i3h3m526m9l0clffqghkspjptt2s2.apps.googleusercontent.com"
     }
   }
 }

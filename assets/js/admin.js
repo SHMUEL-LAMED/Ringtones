@@ -1,6 +1,6 @@
 /* אזור הניהול של ראש בראש.
    עובדים על טיוטה: כל שינוי נשמר בדפדפן (Ctrl+S) ומופיע באתר במכשיר הזה בלבד.
-   "פרסום" מעביר את הטיוטה למקור — Supabase (אם מחובר) או קובץ episodes.json להורדה. */
+   "פרסום" מעביר את הטיוטה למקור — Cloudflare (אם מחובר) או קובץ episodes.json להורדה. */
 (async function () {
   'use strict';
   const U = window.RoshUI, S = window.RoshStore;
@@ -25,7 +25,7 @@
     previewTimer: null,
   };
 
-  // מזהי המקור — כדי לדעת מה למחוק ב־Supabase בפרסום
+  // מזהי המקור — כדי לדעת מה למחוק ב־Cloudflare בפרסום
   async function loadOriginIds() {
     try { const o = await S.admin.pullOrigin(); o.episodes.forEach((e) => A.originIds.add(e.id)); if (S.state.loadedFrom !== 'override') { A.data = clone(o); renderList(); } }
     catch { /* המקור לא זמין כרגע; נעבוד על מה שיש */ }
@@ -35,10 +35,10 @@
 
   function paintStatus() {
     const dot = $('#src-dot'), txt = $('#src-text');
-    const src = S.state.source === 'supabase' ? 'Supabase' : 'קובץ episodes.json';
+    const src = S.state.source === 'cloudflare' ? 'Cloudflare D1' : 'קובץ episodes.json';
     if (S.admin.hasOverride) { dot.className = 'dot draft'; txt.textContent = `טיוטה מקומית · המקור: ${src}`; }
     else if (S.state.error && S.state.loadedFrom !== 'override') { dot.className = 'dot err'; txt.textContent = `המקור לא נטען · ${src}`; }
-    else { dot.className = 'dot on'; txt.textContent = `המקור: ${src}${S.state.source === 'supabase' && S.sb.user ? ` · ${S.sb.user.email}` : ''}`; }
+    else { dot.className = 'dot on'; txt.textContent = `המקור: ${src}${S.state.source === 'cloudflare' && S.sb.user ? ` · ${S.sb.user.email}` : ''}`; }
     $('#dirty').hidden = !A.dirty;
   }
   function markDirty() { A.dirty = true; $('#dirty').hidden = false; }
@@ -482,11 +482,11 @@
   function renderPublish() {
     const body = $('#publish-body'), foot = $('#publish-foot');
     const n = A.data.episodes.length, removed = A.removed.size;
-    if (S.state.source === 'supabase') {
+    if (S.state.source === 'cloudflare') {
       const u = S.sb.user;
       body.innerHTML = `
 <div class="sb-box">
-  <b>פרסום ל־Supabase</b>
+  <b>פרסום ל־Cloudflare D1</b>
   ${u ? `<span class="who">מחוברים כ־${esc(u.email)}</span>` : '<span style="color:var(--error);font-weight:800;font-size:12px">לא מחוברים. התחברו דרך "חיבור" כדי לפרסם.</span>'}
   <span style="font-size:13px">${n} תוכניות ו־${A.data.seasons.length} עונות יישמרו.${removed ? ` ${removed} תוכניות יימחקו מהמקור.` : ''}</span>
 </div>`;
@@ -498,7 +498,7 @@
   <li>החליפו איתו את <code>data/episodes.json</code> במאגר ב־GitHub (העלאה דרך האתר של GitHub או commit).</li>
   <li>אחרי שהאתר התעדכן, לחצו "ניקוי הטיוטה" כדי שהמכשיר הזה יחזור להציג את המקור.</li>
 </ol>
-<p class="cue-hint" style="margin:12px 0 0">רוצים לפרסם בלחיצה אחת? חברו את Supabase ב־<code>data/site.json</code> (ראו README).</p>`;
+<p class="cue-hint" style="margin:12px 0 0">רוצים לפרסם בלחיצה אחת? חברו את Cloudflare ב־<code>data/site.json</code> (ראו README).</p>`;
       foot.innerHTML = `<button type="button" class="btn" data-pub="copy">העתקת ה־JSON</button><button type="button" class="btn" data-pub="clear">ניקוי הטיוטה</button><button type="button" class="btn primary" data-pub="download">הורדת episodes.json <span>←</span></button>`;
     }
   }
@@ -529,39 +529,49 @@
     const u = S.sb.user, cfg = S.sb.cfg;
     $('#settings-body').innerHTML = `
 <div class="sb-box" style="margin-bottom:14px">
-  <b>מקור הנתונים: ${S.state.source === 'supabase' ? 'Supabase' : 'קובץ episodes.json במאגר'}</b>
-  <span style="font-size:12px;color:var(--muted)">${S.state.source === 'supabase' ? `פרויקט: <code style="direction:ltr">${esc(cfg.url)}</code>` : 'כדי לפרסם בלחיצה, הגדירו את Supabase ב־data/site.json (storage.provider = "supabase").'}</span>
+  <b>מקור הנתונים: ${S.state.source === 'cloudflare' ? 'Cloudflare D1' : 'קובץ episodes.json במאגר'}</b>
+  <span style="font-size:12px;color:var(--muted)">${S.state.source === 'cloudflare' ? `API: <code style="direction:ltr">${esc(cfg.apiBase)}</code>` : 'כדי לפרסם בלחיצה, הגדירו את Cloudflare ב־data/site.json.'}</span>
   ${S.admin.hasOverride ? '<span style="font-size:12px;color:var(--gold-ink);font-weight:800">במכשיר הזה יש טיוטה מקומית שמוצגת במקום המקור.</span>' : ''}
 </div>
-${S.state.source === 'supabase' ? (u ? `
+${S.state.source === 'cloudflare' ? (u ? `
 <div class="sb-box"><b>מחוברים</b><span class="who">${esc(u.email)}</span><button type="button" class="btn small" data-set="logout">התנתקות</button></div>` : `
-<form class="sb-box" data-set="login">
+<div class="sb-box">
   <b>התחברות למנהל</b>
-  <button type="button" class="btn" data-set="google">התחברות עם Google</button>
-  <span class="cue-hint">או עם דוא״ל וסיסמה של משתמש ב־Supabase Auth:</span>
-  <label class="field"><span>דוא״ל</span><input name="email" type="email" required autocomplete="username" style="direction:ltr;text-align:left"></label>
-  <label class="field"><span>סיסמה</span><input name="password" type="password" required autocomplete="current-password" style="direction:ltr;text-align:left"></label>
-  <button type="submit" class="btn primary">התחברות <span>←</span></button>
-</form>`) : ''}
+  <span class="cue-hint">אותו חשבון Google ואותן הרשאות של אתר הסקר.</span>
+  <div id="google-signin" class="google-signin"></div>
+</div>`) : ''}
 <div class="track-tools" style="margin-top:14px">
   <button type="button" class="btn small" data-set="reload">משיכה מחדש מהמקור</button>
   <button type="button" class="btn small danger" data-set="discard" ${S.admin.hasOverride ? '' : 'disabled'}>מחיקת הטיוטה המקומית</button>
 </div>`;
     dlgSettings.showModal();
+    if (!u && S.state.source === 'cloudflare') renderGoogleSignIn();
   }
   $('#btn-settings').addEventListener('click', openSettings);
   $('#gate-login').addEventListener('click', openSettings);
-  dlgSettings.addEventListener('submit', async (ev) => {
-    const f = ev.target.closest('[data-set="login"]'); if (!f) return; ev.preventDefault();
-    const btn = f.querySelector('button[type="submit"]'); btn.disabled = true;
-    try { await S.sb.signIn(f.email.value.trim(), f.password.value); await checkAccess(); U.notify('התחברתם.', 'success'); openSettings(); paintStatus(); loadOriginIds(); }
-    catch (err) { U.notify(`ההתחברות נכשלה: ${err.message}`, 'error'); btn.disabled = false; }
-  });
+  function renderGoogleSignIn() {
+    const target = $('#google-signin');
+    if (!target || !window.google?.accounts?.id) { setTimeout(renderGoogleSignIn, 150); return; }
+    window.google.accounts.id.initialize({
+      client_id: S.sb.cfg.googleClientId,
+      auto_select: false,
+      cancel_on_tap_outside: true,
+      callback: async ({ credential }) => {
+        try {
+          await S.sb.signInWithGoogleCredential(credential);
+          await checkAccess();
+          U.notify('התחברתם לניהול.', 'success');
+          dlgSettings.close(); paintStatus(); loadOriginIds();
+        } catch (err) { U.notify(`ההתחברות נכשלה: ${err.message}`, 'error'); }
+      },
+    });
+    window.google.accounts.id.renderButton(target, { theme:'outline', size:'large', shape:'pill', text:'continue_with', locale:'he', width:280 });
+  }
+
   dlgSettings.addEventListener('click', async (ev) => {
     const b = ev.target.closest('[data-set]'); if (!b || b.tagName === 'FORM') return;
     switch (b.dataset.set) {
       case 'logout': S.sb.signOut(); await checkAccess(); U.notify('התנתקתם.', 'success'); openSettings(); paintStatus(); break;
-      case 'google': S.sb.signInWithGoogle(); break;
       case 'reload': { if (A.dirty && !confirm('יש שינויים שלא נשמרו. להמשיך?')) return; const stop = U.notify('מושכים מהמקור…', 'progress'); try { const o = await S.admin.pullOrigin(); A.data = clone(o); A.originIds = new Set(o.episodes.map((e) => e.id)); A.removed.clear(); A.dirty = true; stop(); renderList(); renderEditor(); dlgSettings.close(); U.notify('נמשך מהמקור אל הטיוטה. שמרו כדי להחיל.', 'success'); } catch (err) { stop(); U.notify(`המשיכה נכשלה: ${err.message}`, 'error'); } break; }
       case 'discard': if (confirm('למחוק את הטיוטה המקומית? השינויים שלא פורסמו יאבדו.')) { S.admin.clearOverride(); location.reload(); } break;
     }
