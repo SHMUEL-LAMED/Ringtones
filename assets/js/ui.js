@@ -149,10 +149,12 @@
 
   function header(active, site) {
     const user = window.RoshStore?.sb?.user || null;
+    const S = window.RoshStore;
     const nav = [
       ['index.html', 'בית', 'home'],
       ['archive.html', 'הארכיון', 'archive'],
       ['index.html#sets', 'סטים', 'sets'],
+      ...(S?.settings?.updates?.length ? [['updates.html', 'עדכונים', 'updates']] : []),
       ['index.html#follow', 'הקהילה', 'community'],
     ].map(([href, label, key]) =>
       `<a href="${href}" ${active === key ? 'aria-current="page"' : ''}>${label}</a>`
@@ -175,7 +177,22 @@
     ${admin}
     ${me}
   </nav>
-</header>`;
+</header>${banner()}${previewBar()}`;
+  }
+
+  /** ההודעה בדף הבית (ובכל הדפים), אם מנהל הפעיל אותה ותאריך הסיום לא עבר */
+  function banner() {
+    const S = window.RoshStore;
+    const b = S?.settings?.banner;
+    if (!S?.bannerActive?.(b)) return '';
+    const link = b.link ? `<a class="btn small" href="${esc(b.link)}" ${/^https?:/.test(b.link) ? 'target="_blank" rel="noopener"' : ''}>${esc(b.linkLabel || 'לפרטים')} <span>←</span></a>` : '';
+    return `<div class="site-banner" role="status"><span class="site-banner-mark" aria-hidden="true">✦</span><p>${esc(b.text)}</p>${link}</div>`;
+  }
+  /** פס שמסמן שצופים בטיוטה דרך קישור תצוגה מקדימה */
+  function previewBar() {
+    const S = window.RoshStore;
+    if (!S?.state?.preview) return '';
+    return `<div class="site-banner preview" role="status"><span class="site-banner-mark" aria-hidden="true">👁</span><p>זו תצוגה מקדימה של טיוטה — כך האתר ייראה אחרי הפרסום.</p><a class="btn small" href="index.html?preview=">יציאה מהתצוגה</a></div>`;
   }
 
   function footer(site) {
@@ -376,5 +393,68 @@
 </a>`;
   }
 
-  window.RoshUI = { esc, fmtTime, parseTime, fmtDuration, fmtDate, fmtWeekday, slugify, qs, header, footer, notify, kbdHelp, isTyping, copy, driveId, isDriveUrl, streamUrl, streamCandidates, downloadUrl, publicLinks, coverVars, hue, seasonVars, epCard, reveal, countUp, eqBars, reduceMotion };
+  /* ---------- הודעה למגישים ---------- */
+
+  /** טופס "כתבו לנו": נשלח ל־Worker, בלי פרטים חובה מלבד הטקסט. */
+  function messageForm({ episodeId = '', title = 'כתבו לנו', hint = 'שאלה, תגובה או בקשה — המגישים קוראים הכול.' } = {}) {
+    const S = window.RoshStore;
+    if (!S?.sb?.configured) return '';
+    const u = S.sb.user;
+    return `
+<form class="message-form" data-message-form data-episode="${esc(episodeId)}">
+  <p class="kicker">${esc(title)}</p>
+  <p style="margin:0;color:#d5d2e0">${esc(hint)}</p>
+  ${u ? `<p class="cue-hint" style="margin:0;font-size:12px;color:var(--muted);font-weight:700">נשלח בשם ${esc(u.name || u.email)}</p>` : '<label class="field"><span>שם (לא חובה)</span><input name="name" maxlength="80" autocomplete="name"></label>'}
+  <label class="field"><span>ההודעה</span><textarea name="text" required maxlength="4000" placeholder="מה תרצו להגיד?"></textarea></label>
+  <div><button type="submit" class="btn primary">שליחה <span>←</span></button></div>
+</form>`;
+  }
+  document.addEventListener('submit', async (e) => {
+    const f = e.target.closest?.('[data-message-form]'); if (!f) return;
+    e.preventDefault();
+    const S = window.RoshStore, btn = f.querySelector('button[type="submit"]');
+    const text = f.elements.text.value.trim(); if (!text) return;
+    btn.disabled = true;
+    try {
+      await S.sb.messages.send({ text, name: f.elements.name?.value || '', episodeId: f.dataset.episode || '' });
+      f.innerHTML = '<p class="subscribe-state">✓ ההודעה נשלחה. תודה!</p>';
+    } catch (err) { notify(`השליחה לא הצליחה: ${err.message}`, 'error'); btn.disabled = false; }
+  });
+
+  /* ---------- רשימת התפוצה: בלחיצה אחת עם חשבון Google ---------- */
+
+  /** מציג את מצב ההרשמה בתוך אלמנט: מחוברים → כפתור הצטרפות/הסרה; אחרת כפתור Google. */
+  async function mountSubscribe(el) {
+    const S = window.RoshStore;
+    if (!el || !S?.sb?.configured) return;
+    const u = S.sb.user;
+    if (!u) {
+      el.innerHTML = '<div class="subscribe-google"><span>מתחברים עם Google, וההצטרפות היא בלחיצה אחת — בלי להקליד כתובת.</span><div class="google-slot" data-google></div><a class="btn ghost small" href="#" data-subscribe-fallback>בעיה עם הכפתור? כניסה דרך אתר הסקר</a></div>';
+      try { await S.sb.google(el.querySelector('[data-google]'), { onDone: () => { document.getElementById('site-header').innerHTML = header(document.body.dataset.page || '', S.site); mountSubscribe(el); }, onError: (err) => notify(`ההתחברות לא הצליחה: ${err.message}`, 'error') }); }
+      catch (err) { el.querySelector('[data-google]').innerHTML = `<span class="cue-hint">${esc(err.message)}</span>`; }
+      return;
+    }
+    el.innerHTML = '<span class="cue-hint">בודקים…</span>';
+    let subscribed = false;
+    try { subscribed = (await S.sb.subscribe.status()).subscribed; }
+    catch (err) { if (err.status === 401) { S.sb.signOut(); return mountSubscribe(el); } el.innerHTML = `<span class="cue-hint">${esc(err.message)}</span>`; return; }
+    el.innerHTML = subscribed
+      ? `<div class="subscribe-google"><span class="subscribe-state">✓ אתם ברשימת התפוצה (${esc(u.email)})</span><button type="button" class="btn ghost small" data-unsubscribe>הסרה מהרשימה</button></div>`
+      : `<div class="subscribe-google"><button type="button" class="continue btn xl primary" data-subscribe>הצטרפות לתפוצה <span>←</span></button><span class="cue-hint" style="font-size:12px;color:var(--muted);font-weight:700">הכתובת: ${esc(u.email)}. הלחיצה היא ההסכמה — בלי דואר מיותר.</span></div>`;
+  }
+  document.addEventListener('click', async (e) => {
+    const S = window.RoshStore;
+    const join = e.target.closest?.('[data-subscribe]'), leave = e.target.closest?.('[data-unsubscribe]'), fb = e.target.closest?.('[data-subscribe-fallback]');
+    if (!join && !leave && !fb) return;
+    e.preventDefault();
+    const host = (join || leave || fb).closest('[data-subscribe-host]');
+    try {
+      if (join) { join.disabled = true; await S.sb.subscribe.join(); notify('נרשמתם לרשימת התפוצה.', 'success'); }
+      else if (leave) { leave.disabled = true; await S.sb.subscribe.leave(); notify('הוסרתם מרשימת התפוצה.', 'success'); }
+      else { await S.sb.signIn(); document.getElementById('site-header').innerHTML = header(document.body.dataset.page || '', S.site); }
+    } catch (err) { notify(err.message, 'error'); }
+    mountSubscribe(host);
+  });
+
+  window.RoshUI = { banner, messageForm, mountSubscribe, esc, fmtTime, parseTime, fmtDuration, fmtDate, fmtWeekday, slugify, qs, header, footer, notify, kbdHelp, isTyping, copy, driveId, isDriveUrl, streamUrl, streamCandidates, downloadUrl, publicLinks, coverVars, hue, seasonVars, epCard, reveal, countUp, eqBars, reduceMotion };
 })();
