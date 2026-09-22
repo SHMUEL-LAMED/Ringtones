@@ -1,7 +1,7 @@
 /* Service Worker של ראש בראש: שומר את מעטפת האתר להפעלה מהירה ובלי רשת.
    נתוני התוכניות נטענים תמיד מהרשת קודם (ונופלים למטמון אם אין), וההקלטות
    עצמן לא נשמרות. */
-const VERSION = 'rosh-v5-full-catalog';
+const VERSION = 'rosh-v6-r2-migration';
 const SHELL = [
   './', './index.html', './archive.html', './episode.html', './me.html',
   './assets/css/rosh.css', './assets/js/ui.js', './assets/js/store.js', './assets/js/player.js',

@@ -528,6 +528,34 @@
 
   /* ---------- חיבור ---------- */
 
+  const dlgMigrate = $('#dlg-migrate');
+  let stopMigration = false;
+  $('#btn-migrate').addEventListener('click', () => dlgMigrate.showModal());
+  $('#migrate-stop').addEventListener('click', () => { stopMigration = true; $('#migrate-stop').disabled = true; });
+  $('#migrate-start').addEventListener('click', async () => {
+    const start = $('#migrate-start'), stop = $('#migrate-stop'), status = $('#migrate-status'), progress = $('#migrate-progress'), errors = $('#migrate-errors');
+    if (!await checkAccess()) { U.notify('צריך להתחבר עם חשבון מנהל.', 'error'); return; }
+    const episodes = A.data.episodes.filter((e) => U.driveId(e));
+    progress.max = episodes.length; progress.value = 0; errors.textContent = '';
+    start.disabled = true; stop.disabled = false; stopMigration = false;
+    let uploaded = 0, existing = 0, failed = 0;
+    for (let i = 0; i < episodes.length && !stopMigration; i++) {
+      const e = episodes[i];
+      status.innerHTML = `<b>${i + 1} מתוך ${episodes.length}: ${esc(e.title)}</b><span>${e.number != null ? `פרק ${e.number}` : 'הקלטה מיוחדת'} · מעבירים ל־R2…</span>`;
+      try {
+        const result = await S.sb.importDrive(e);
+        result.status === 'existing' ? existing++ : uploaded++;
+      } catch (err) {
+        failed++;
+        errors.insertAdjacentHTML('beforeend', `<div>✕ ${esc(e.title)}: ${esc(err.message)}</div>`);
+      }
+      progress.value = i + 1;
+    }
+    status.innerHTML = `<b>${stopMigration ? 'ההעברה נעצרה' : 'ההעברה הסתיימה'}</b><span>${uploaded} הועלו · ${existing} כבר היו באתר · ${failed} נכשלו</span>`;
+    start.disabled = false; start.textContent = failed || stopMigration ? 'המשך / ניסיון חוזר' : 'בדיקה חוזרת'; stop.disabled = true;
+    if (!failed && !stopMigration) U.notify('כל ההקלטות הועברו ל־R2.', 'success');
+  });
+
   const dlgSettings = $('#dlg-settings');
   function openSettings() {
     const u = S.sb.user, cfg = S.sb.cfg;

@@ -43,6 +43,11 @@
       cover: String(e.cover || ''),
       audio: String(e.audio || ''),
       duration: Number(e.duration) || 0,
+      sourceFileBytes: Number(e.sourceFileBytes) || 0,
+      r2Key: String(e.r2Key || ''),
+      audioSource: String(e.audioSource || ''),
+      audioSize: Number(e.audioSize) || 0,
+      audioMigratedAt: String(e.audioMigratedAt || ''),
       tags: Array.isArray(e.tags) ? e.tags.map(String).filter(Boolean) : [],
       guests: Array.isArray(e.guests) ? e.guests.map(String).filter(Boolean) : [],
       links: Array.isArray(e.links) ? e.links.filter((l) => l && l.url).map((l) => ({ label: String(l.label || l.url), url: String(l.url) })) : [],
@@ -128,6 +133,19 @@
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || `שמירת התוכניות נכשלה (${r.status})`);
+      return j;
+    },
+    async importDrive(episode) {
+      if (!await this.isAdmin()) throw new Error('צריך להתחבר עם חשבון מנהל כדי להעביר הקלטות');
+      const driveId = window.RoshUI?.driveId(episode);
+      if (!driveId) throw new Error('לא נמצא מזהה קובץ בדרייב');
+      const r = await fetch(this.base('/api/program/import-drive'), {
+        method:'POST', headers:this.headers(), body:JSON.stringify({
+          episodeId:episode.id, driveId, expectedSize:Number(episode.sourceFileBytes) || 0,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `העברת ההקלטה נכשלה (${r.status})`);
       return j;
     },
   };

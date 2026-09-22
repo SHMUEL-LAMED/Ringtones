@@ -26,7 +26,7 @@
         <span class="spacer"></span>
         <button type="button" class="btn small" id="btn-new">+ תוכנית חדשה</button>
         <button type="button" class="btn small" id="btn-seasons">עונות</button>
-        <details class="admin-advanced"><summary>כלים נוספים</summary><button type="button" class="btn small" id="btn-json">עריכת נתונים</button><button type="button" class="btn small" id="btn-import">ייבוא מקובץ</button></details>
+        <details class="admin-advanced"><summary>כלים נוספים</summary><button type="button" class="btn small" id="btn-json">עריכת נתונים</button><button type="button" class="btn small" id="btn-import">ייבוא מקובץ</button><button type="button" class="btn small gold" id="btn-migrate">העברת ההקלטות לאתר</button></details>
         <button type="button" class="btn small" id="btn-settings">החשבון שלי</button>
         <button type="button" class="btn small gold" id="btn-save" title="Ctrl+S">שמירת טיוטה</button>
         <button type="button" class="btn primary small" id="btn-publish">פרסום <span>←</span></button>
@@ -112,6 +112,17 @@
   <dialog class="sheet" id="dlg-settings">
     <div class="section-title"><div><p class="kicker">מקור הנתונים</p><h2>חיבור</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
     <div class="card-body" id="settings-body"></div>
+  </dialog>
+
+  <dialog class="sheet" id="dlg-migrate">
+    <div class="section-title"><div><p class="kicker">Google Drive ← Cloudflare R2</p><h2>העברת ההקלטות לאתר</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+    <div class="card-body">
+      <p class="cue-hint">הקבצים מועברים אחד־אחד. אפשר לעצור ולחזור מאוחר יותר — קבצים שכבר הועברו לא יועלו שוב.</p>
+      <div class="sb-box" id="migrate-status"><b>מוכן להתחלה</b><span>86 הקלטות, כ־7.52GB</span></div>
+      <progress id="migrate-progress" max="86" value="0" style="width:100%;margin-top:16px"></progress>
+      <div id="migrate-errors" class="cue-hint" style="margin-top:12px"></div>
+    </div>
+    <div class="card-foot"><button type="button" class="btn" id="migrate-stop" disabled>עצירה</button><button type="button" class="btn primary" id="migrate-start">התחלת ההעברה <span>←</span></button></div>
   </dialog>
 
   <script src="assets/js/ui.js"></script>
