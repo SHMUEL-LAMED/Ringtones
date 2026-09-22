@@ -16,6 +16,9 @@
     sleepEndOfTrack: false,
     dock: null,
     els: {},
+    candidates: null,   // כתובות ההזרמה של התוכנית הנוכחית, לפי עדיפות
+    candidateIndex: 0,
+    wantPlay: false,
     lastSaved: 0,
     dragging: false,
   };
@@ -34,10 +37,10 @@
     d.innerHTML = `
 <div class="dock-inner">
   <div class="dock-top">
-    <div class="dock-art" data-art>♫</div>
+    <div class="dock-art" data-art aria-hidden="true"><i></i></div>
     <div class="dock-text">
       <a data-link href="#"><b data-title>—</b></a>
-      <small class="now" data-now aria-live="polite"></small>
+      <small class="now"><span class="dock-live" aria-hidden="true"><i style="--d:0s"></i><i style="--d:.2s"></i><i style="--d:.1s"></i><i style="--d:.3s"></i></span><span data-now aria-live="polite"></span></small>
     </div>
     <div class="dock-controls" style="direction:ltr">
       <button type="button" class="icon-btn" data-prev aria-label="לשיר הקודם">◂◂</button>
@@ -65,6 +68,7 @@
     </select>
     <button type="button" class="chip hide-sm" data-mute aria-pressed="false">השתקה</button>
     <button type="button" class="chip" data-share>שיתוף הרגע הזה</button>
+    <a class="chip hide-sm" data-download href="#" download rel="noopener">הורדה</a>
     <span class="spacer"></span>
     <span class="dock-sleep-left" data-sleep-left style="color:var(--gold-ink);font-size:11px;font-weight:800"></span>
     <button type="button" class="icon-btn dock-close" data-close aria-label="סגירת הנגן">✕</button>
@@ -77,7 +81,7 @@
       art: q('[data-art]'), link: q('[data-link]'), title: q('[data-title]'), now: q('[data-now]'),
       toggle: q('[data-toggle]'), cur: q('[data-cur]'), dur: q('[data-dur]'),
       scrub: q('[data-scrub]'), segs: q('[data-segs]'), knob: q('[data-knob]'), tip: q('[data-tip]'),
-      speed: q('[data-speed]'), sleep: q('[data-sleep]'), sleepLeft: q('[data-sleep-left]'), mute: q('[data-mute]'),
+      speed: q('[data-speed]'), sleep: q('[data-sleep]'), sleepLeft: q('[data-sleep-left]'), mute: q('[data-mute]'), download: q('[data-download]'),
     };
 
     q('[data-toggle]').addEventListener('click', toggle);
@@ -125,25 +129,30 @@
 
   /* ---------- טעינת תוכנית ---------- */
 
+  /* ההקלטה מוזרמת ישירות לנגן של האתר (ep.stream) — גם כשהקובץ שמור בדרייב.
+     אין הפניה החוצה ואין נגן חיצוני. */
   function load(ep, { at = null, autoplay = true, quiet = false } = {}) {
-    if (window.RoshUI.driveId(ep)) {
-      pause();
-      location.href = `episode.html?ep=${encodeURIComponent(ep.slug)}#drive-player`;
-      return true;
-    }
-    if (!ep?.audio) { window.RoshUI.notify('לתוכנית הזו אין עדיין הקלטה להאזנה.', 'info'); return false; }
+    const candidates = window.RoshUI.streamCandidates(ep);
+    if (!candidates.length) { window.RoshUI.notify('לתוכנית הזו אין עדיין הקלטה להאזנה.', 'info'); return false; }
     open();
-    const same = P.episode && P.episode.id === ep.id;
+    const same = P.episode && P.episode.id === ep.id && P.candidates && audio.src === P.candidates[P.candidateIndex];
     P.episode = ep;
     P.tracks = ep.tracks.slice();
     P.trackIndex = -1;
     if (!same) {
-      audio.src = ep.audio;
+      P.candidates = candidates;
+      P.candidateIndex = 0;
+      audio.src = candidates[0];
       audio.load();
+      S.history.add(ep.id);
     }
     P.els.title.textContent = ep.title;
     P.els.link.href = `episode.html?ep=${encodeURIComponent(ep.slug)}`;
-    P.els.art.innerHTML = ep.cover ? `<img src="${esc(ep.cover)}" alt="">` : '♫';
+    P.els.art.style.setProperty('--h', String(window.RoshUI.hue(ep)));
+    const dl = window.RoshUI.downloadUrl(ep);
+    P.els.download.hidden = !dl;
+    if (dl) { P.els.download.href = dl; P.els.download.setAttribute('download', `${ep.title}.mp3`); }
+    P.els.art.innerHTML = ep.cover ? `<img src="${esc(ep.cover)}" alt=""><i></i>` : '<i></i>';
     P.els.dur.textContent = fmtTime(dur());
     renderSegments();
     updateNow(true);
@@ -165,12 +174,14 @@
 
   function play() {
     if (!P.episode) return;
+    P.wantPlay = true;
     audio.play().catch((err) => {
       if (err?.name === 'NotAllowedError') return; // דורש מחווה של המשתמש
-      window.RoshUI.notify('ניגון ההקלטה נכשל. בדקו את הקישור לקובץ ונסו שוב.', 'error');
+      if (err?.name === 'AbortError' || err?.name === 'NotSupportedError') return; // מקור הוחלף / נכשל — מטופל ב־error
+      window.RoshUI.notify('ניגון ההקלטה נכשל. בדקו את החיבור ונסו שוב.', 'error', { action: 'ניסיון חוזר', onAction: () => { audio.load(); play(); } });
     });
   }
-  function pause() { audio.pause(); }
+  function pause() { P.wantPlay = false; audio.pause(); }
   function toggle() { audio.paused ? play() : pause(); }
   function seek(t) {
     t = Math.min(Math.max(0, t), dur() ? dur() - 0.25 : t);
@@ -213,6 +224,14 @@
     play();
   }
   function nextTrack() { goTrack(Math.min(P.tracks.length - 1, trackAt(audio.currentTime) + 1)); }
+  /** תוכנית אקראית עם הקלטה — לא זו שמתנגנת עכשיו. */
+  function random() {
+    const pool = S.episodes().filter((e) => e.stream && e.id !== P.episode?.id);
+    if (!pool.length) return false;
+    const ep = pool[Math.floor(Math.random() * pool.length)];
+    window.RoshUI.notify(`✦ ${ep.title}`, 'info', { ttl: 5000 });
+    return load(ep, { at: 0 });
+  }
   function prevTrack() {
     const i = trackAt(audio.currentTime);
     // כמו בנגנים: לחיצה בתוך 3 השניות הראשונות של שיר חוזרת לשיר הקודם
@@ -322,10 +341,34 @@
   audio.addEventListener('timeupdate', () => { if (!P.dragging) { paint(); updateNow(); save(); } if (P.sleepAt && Date.now() >= P.sleepAt) { pause(); setSleep(''); P.els.sleep.value = ''; window.RoshUI.notify('הטיימר כיבה את הנגן. לילה טוב.', 'info'); } paintSleep(); emit('time'); });
   audio.addEventListener('loadedmetadata', () => { paint(); renderSegments(); paint(); });
   audio.addEventListener('durationchange', () => { renderSegments(); paint(); });
-  audio.addEventListener('play', () => { paint(); emit('play'); });
-  audio.addEventListener('pause', () => { paint(); save(true); emit('pause'); });
-  audio.addEventListener('ended', () => { if (P.episode) S.positions.clear(P.episode.id); paint(); emit('end'); const nb = S.neighbors(P.episode.id); if (nb.older?.audio) window.RoshUI.notify(`נגמר. להמשיך ל"${nb.older.title}"?`, 'info', { action: 'כן, נגנו', onAction: () => load(nb.older), ttl: 12000 }); });
-  audio.addEventListener('error', () => { if (P.episode && audio.src) window.RoshUI.notify('ההקלטה לא נטענה. בדקו את החיבור ונסו שוב.', 'error'); });
+  const paintPlaying = () => document.body.classList.toggle('is-playing', !audio.paused && !audio.ended);
+  audio.addEventListener('play', () => { paint(); paintPlaying(); emit('play'); });
+  audio.addEventListener('playing', paintPlaying);
+  audio.addEventListener('waiting', () => document.body.classList.remove('is-playing'));
+  audio.addEventListener('pause', () => { paint(); paintPlaying(); save(true); emit('pause'); });
+  audio.addEventListener('ended', () => { paintPlaying(); if (P.episode) S.positions.clear(P.episode.id); paint(); emit('end'); const nb = S.neighbors(P.episode.id); if (nb.older?.stream) window.RoshUI.notify(`נגמר. להמשיך ל"${nb.older.title}"?`, 'info', { action: 'כן, נגנו', onAction: () => load(nb.older), ttl: 12000 }); });
+  audio.addEventListener('error', () => {
+    paintPlaying();
+    if (!P.episode || !audio.src) return;
+    // מקור נוסף? (למשל הכתובת הישירה כשה־Worker לא זמין)
+    if (P.candidates && P.candidateIndex + 1 < P.candidates.length) {
+      const wasPlaying = !audio.paused || P.wantPlay;
+      const t = audio.currentTime;
+      P.candidateIndex += 1;
+      audio.src = P.candidates[P.candidateIndex];
+      audio.load();
+      if (t > 0) { try { audio.currentTime = t; } catch { /* */ } }
+      if (wasPlaying) play();
+      return;
+    }
+    const src = audio.src;
+    const dl = window.RoshUI.downloadUrl(P.episode);
+    window.RoshUI.notify('ההקלטה לא נטענה כרגע. אפשר לנסות שוב או להוריד אותה.', 'error', {
+      action: 'ניסיון חוזר', ttl: 15000,
+      onAction: () => { P.candidateIndex = 0; audio.src = P.candidates?.[0] || src; audio.load(); play(); },
+    });
+    if (dl) P.els.download.href = dl;
+  });
   audio.addEventListener('volumechange', () => S.prefs.set('volume', audio.volume));
   document.addEventListener('visibilitychange', () => { if (document.hidden) save(true); });
   window.addEventListener('pagehide', () => save(true));
@@ -334,7 +377,7 @@
 
   document.addEventListener('keydown', (e) => {
     if (window.RoshUI.isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-    if (!P.episode && e.key !== ' ') return;
+    if (!P.episode && e.key !== ' ' && e.key !== 'r' && e.key !== 'R') return;
     const open = document.querySelector('dialog[open]');
     if (open) return;
     switch (e.key) {
@@ -344,6 +387,7 @@
       case 'j': case 'J': seek(audio.currentTime - 15); break;
       case 'l': case 'L': seek(audio.currentTime + 15); break;
       case 'm': case 'M': P.els.mute.click(); break;
+      case 'r': case 'R': random(); break;
       case '+': case '=': setRate(Math.min(2, audio.playbackRate + 0.25)); break;
       case '-': setRate(Math.max(0.5, audio.playbackRate - 0.25)); break;
       default:
@@ -356,15 +400,16 @@
   S.ready.then(() => {
     const l = S.last.get();
     const ep = l && S.byId(l.id);
-    if (ep && ep.visible && ep.audio && !P.episode) load(ep, { at: l.t, autoplay: false, quiet: true });
+    if (ep && ep.visible && ep.stream && !P.episode) load(ep, { at: l.t, autoplay: false, quiet: true });
   });
 
   window.RoshPlayer = {
-    load, play, pause, toggle, seek, goTrack, nextTrack, prevTrack, close, setRate, shareMoment,
+    load, play, pause, toggle, seek, goTrack, nextTrack, prevTrack, random, close, setRate, shareMoment,
     get episode() { return P.episode; },
     get time() { return audio.currentTime; },
     get duration() { return dur(); },
     get paused() { return audio.paused; },
+    get src() { return audio.currentSrc || audio.src; },
     get trackIndex() { return P.trackIndex; },
     isCurrent(id) { return P.episode?.id === id; },
   };

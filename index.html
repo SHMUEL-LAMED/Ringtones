@@ -2,18 +2,20 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>ראש בראש — מוזיקה ואקטואליה</title>
   <meta name="description" content="ראש בראש: התוכנית האחרונה, הקלטות מהארכיון וסטים מיוחדים להאזנה.">
-  <meta name="theme-color" content="#fbf8f2">
+  <meta name="theme-color" content="#06080f">
   <meta property="og:title" content="ראש בראש — מוזיקה ואקטואליה">
   <meta property="og:description" content="כל התוכניות של ראש בראש במקום אחד.">
   <meta property="og:type" content="website">
   <link rel="icon" href="assets/img/medallion.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="assets/img/medallion.svg">
   <link rel="manifest" href="manifest.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&family=Karantina:wght@300;400;700&display=swap">
   <link rel="stylesheet" href="assets/css/rosh.css">
-  <link rel="stylesheet" href="assets/css/program.css">
 </head>
 <body>
   <a class="skip-link" href="#main">דילוג לתוכן</a>
@@ -22,22 +24,36 @@
 
     <main id="main">
       <section class="hero" aria-labelledby="hero-title">
-        <img class="hero-logo" src="assets/img/medallion.svg" alt="" width="150" height="150">
-        <p class="kicker"><span data-site-tagline>מוזיקה. אקטואליה. ראש בראש.</span></p>
-        <h1 class="parade-title" id="hero-title">
-          <span class="hero-line1" data-site-name>ראש בראש</span>
-        </h1>
-        <p class="lead" data-site-description>קובי בלום וירמי סלייטר — מוזיקה, אקטואליה וכל מה שביניהן.</p>
-        <div class="actions hero-actions"><a class="btn primary" href="#featured">לתוכנית האחרונה</a><a class="btn" href="archive.html">לארכיון התוכניות</a></div>
+        <div class="hero-copy">
+          <a class="hero-live" id="hero-live" href="#featured" hidden><i aria-hidden="true"></i>עכשיו באוויר · <b data-live-title></b></a>
+          <p class="kicker"><span data-site-tagline>מוזיקה. אקטואליה. ראש בראש.</span></p>
+          <h1 class="parade-title" id="hero-title">
+            <span class="hero-line1 hero-title" data-text="ראש בראש" data-site-name>ראש בראש</span>
+          </h1>
+          <p class="lead" data-site-description>קובי בלום וירמי סלייטר — מוזיקה, אקטואליה וכל מה שביניהן.</p>
+          <div class="actions hero-actions">
+            <button type="button" class="btn xl primary" data-play-latest>האזנה לתוכנית האחרונה <span>▶</span></button>
+            <a class="btn" href="archive.html">לארכיון התוכניות</a>
+            <button type="button" class="btn ghost" data-random title="תוכנית אקראית (R)">✦ הפתיעו אותי</button>
+          </div>
+        </div>
+        <div class="hero-visual" aria-hidden="true">
+          <span class="hero-orbit two"></span>
+          <span class="hero-orbit"></span>
+          <img class="hero-logo" src="assets/img/medallion.svg" alt="" width="250" height="250">
+        </div>
+        <div class="hero-eq" id="hero-eq" aria-hidden="true"></div>
       </section>
 
-      <section id="featured" aria-live="polite"></section>
+      <div class="ticker" id="ticker" aria-hidden="true"></div>
+
+      <section id="featured" aria-live="polite" data-reveal></section>
       <section id="resume"></section>
       <section id="recent" class="grid-section"></section>
       <section id="sets" class="grid-section"></section>
       <section id="stats"></section>
       <section id="follow"></section>
-      <section id="about" class="card about-section"><div class="card-body"><p class="kicker">מאחורי המיקרופון</p><h2>שתי דעות. שיחה אחת.</h2><p>ראש בראש היא תוכנית מוזיקה ואקטואליה בהגשת קובי בלום וירמי סלייטר. ראיונות עם אמנים, דיונים על המוזיקה החרדית, שיחות עם מאזינים ופרקים מיוחדים.</p><p>את התוכנית ייסד מיכאל לוי. בארכיון תמצאו גם את תקופת ההגשה שלו לצד קובי בלום, את גרסת השלישייה ואת ההקלטות המשוחזרות מקו המכלול.</p><a class="btn" href="archive.html">לגלות את הארכיון</a></div></section>
+      <section id="about" class="card about-section" data-reveal><div class="card-body"><p class="kicker">מאחורי המיקרופון</p><h2>שתי דעות. שיחה אחת.</h2><p>ראש בראש היא תוכנית מוזיקה ואקטואליה בהגשת קובי בלום וירמי סלייטר. ראיונות עם אמנים, דיונים על המוזיקה החרדית, שיחות עם מאזינים ופרקים מיוחדים.</p><p>את התוכנית ייסד מיכאל לוי. בארכיון תמצאו גם את תקופת ההגשה שלו לצד קובי בלום, את גרסת השלישייה ואת ההקלטות המשוחזרות מקו המכלול.</p><a class="btn" href="archive.html">לגלות את הארכיון</a></div></section>
     </main>
 
     <div id="site-footer"></div>

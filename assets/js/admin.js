@@ -48,8 +48,10 @@
     document.body.classList.toggle('admin-locked', !allowed);
     $('#admin-gate').hidden = allowed;
     $('#admin-gate-text').textContent = S.sb.user
-      ? 'לחשבון הזה אין הרשאת ניהול באתר הסקר, או שלא ניתן לאמת אותה כרגע.'
-      : 'מי שמנהל את אתר הסקר מנהל גם כאן. אם אתם כבר מחוברים שם, הכניסה מיידית; אחרת ייפתח חלון כניסה עם Google.';
+      ? `החשבון ${S.sb.user.email || ''} מחובר, אבל אינו מוגדר כמנהל באתר הסקר. האזור האישי פתוח לכם.`
+      : 'אזור הניהול פתוח למנהלי אתר הסקר בלבד. אם אתם כבר מחוברים שם, הכניסה מיידית; אחרת ייפתח חלון כניסה עם Google.';
+    $('#gate-login').hidden = !!S.sb.user && !allowed;
+    if (allowed) { $('#site-header').innerHTML = U.header('admin', site); }
     return allowed;
   }
   window.addEventListener('beforeunload', (e) => { if (A.dirty) { e.preventDefault(); e.returnValue = ''; } });
@@ -62,7 +64,7 @@
     let l = A.data.episodes.slice().sort(byDate);
     if (A.filter === 'visible') l = l.filter((e) => e.visible);
     if (A.filter === 'hidden') l = l.filter((e) => !e.visible);
-    if (A.filter === 'noaudio') l = l.filter((e) => !e.audio && !U.driveId(e));
+    if (A.filter === 'noaudio') l = l.filter((e) => !U.streamUrl(e));
     if (A.filter === 'notracks') l = l.filter((e) => !e.tracks.length);
     if (A.q) l = S.searchEpisodes(A.q, l);
     return l;
@@ -74,7 +76,7 @@
 <button type="button" class="ep-item${e.visible ? '' : ' hidden-ep'}" role="option" data-id="${esc(e.id)}" aria-current="${A.selected === e.id}" aria-selected="${A.selected === e.id}">
   <span class="num">${e.number ?? '♫'}</span>
   <span class="txt"><b>${esc(e.title || 'ללא כותרת')}</b><small>${esc(fmtDate(e.date, true) || 'ללא תאריך')}${e.tracks.length ? ` · ${e.tracks.length} שירים` : ''}</small></span>
-  <span class="flags">${e.featured ? '<span class="flag featured" title="מומלצת"></span>' : ''}${e.audio ? '<span class="flag audio" title="יש הקלטה"></span>' : ''}${e.visible ? '' : '<span class="flag hidden" title="מוסתרת"></span>'}</span>
+  <span class="flags">${e.featured ? '<span class="flag featured" title="מומלצת"></span>' : ''}${U.streamUrl(e) ? '<span class="flag audio" title="יש הקלטה"></span>' : ''}${e.visible ? '' : '<span class="flag hidden" title="מוסתרת"></span>'}</span>
 </button>`).join('') : '<div class="state" style="padding:24px"><p>אין תוכניות שמתאימות לסינון.</p></div>';
   }
   $('#ep-q').addEventListener('input', (e) => { A.q = e.target.value; renderList(); });
@@ -134,11 +136,11 @@
     <div class="form-grid">
       <div class="field">
         <label class="field"><span>העלאת הקלטה</span><input type="file" data-upload="audio" accept=".mp3,.m4a,.wav,.ogg,.flac,.aac"></label>
-        <small>עד 50MB. אפשר גם להדביק קישור ציבורי מ־Google Drive בשדה הבא.</small>
-        <label class="field"><span>קישור להקלטה או ל־Google Drive</span><input data-f="audio" value="${esc(e.audio)}" placeholder="https://…" spellcheck="false" style="direction:ltr;text-align:left"></label>
+        <small>עד 50MB. אפשר גם להדביק קישור ציבורי לקובץ (קישור שיתוף לקובץ בדרייב עובד — הנגן של האתר מנגן אותו ישירות, בלי ממשק חיצוני).</small>
+        <label class="field"><span>קישור להקלטה</span><input data-f="audio" value="${esc(e.audio)}" placeholder="https://…" spellcheck="false" style="direction:ltr;text-align:left"></label>
         <span class="upload-status" role="status" data-upload-status="audio"></span>
-        ${e.audio && !U.driveId(e) ? `<audio class="audio-preview" id="preview-audio" controls preload="metadata" src="${esc(e.audio)}"></audio>` : ''}
-        <label class="field" style="margin-top:10px"><span>אורך (דקות:שניות)</span><div class="slug-line"><input data-f="duration" value="${e.duration ? fmtTime(e.duration) : ''}" placeholder="58:30" style="direction:ltr;text-align:center"><button type="button" class="btn small" data-op="dur-auto" ${e.audio ? '' : 'disabled'}>מהקובץ</button></div></label>
+        ${U.streamUrl(e) ? `<audio class="audio-preview" id="preview-audio" controls preload="metadata" src="${esc(U.streamUrl(e))}"></audio>` : ''}
+        <label class="field" style="margin-top:10px"><span>אורך (דקות:שניות)</span><div class="slug-line"><input data-f="duration" value="${e.duration ? fmtTime(e.duration) : ''}" placeholder="58:30" style="direction:ltr;text-align:center"><button type="button" class="btn small" data-op="dur-auto" ${U.streamUrl(e) ? '' : 'disabled'}>מהקובץ</button></div></label>
       </div>
       <div class="field">
         <label class="field"><span>קישור לתמונה</span><input data-f="cover" value="${esc(e.cover)}" placeholder="https://…/cover.jpg" spellcheck="false" style="direction:ltr;text-align:left"></label>
@@ -156,7 +158,7 @@
     <div class="track-editor" id="track-editor">${renderTracks(e)}</div>
     <div class="track-tools">
       <button type="button" class="btn small gold" data-op="track-add">+ שיר</button>
-      <button type="button" class="btn small" data-op="track-cue" ${e.audio ? '' : 'disabled'} title="מוסיף שיר בזמן הנוכחי של הנגן">+ שיר מהנקודה בנגן</button>
+      <button type="button" class="btn small" data-op="track-cue" ${U.streamUrl(e) ? '' : 'disabled'} title="מוסיף שיר בזמן הנוכחי של הנגן">+ שיר מהנקודה בנגן</button>
       <button type="button" class="btn small" data-op="track-paste">הדבקת רשימה</button>
       <button type="button" class="btn small" data-op="track-sort">מיון לפי זמן</button>
       <span class="spacer"></span>
@@ -206,15 +208,7 @@
   }
   function renderPreview() {
     const e = cur(); if (!e) return;
-    $('#preview-card').innerHTML = `
-<span class="ep-card">
-  ${e.cover ? `<img class="ep-cover" src="${esc(e.cover)}" alt="">` : `<span class="cover-fallback num" aria-hidden="true">${e.number ?? '♫'}</span>`}
-  ${e.number != null ? `<span class="ep-num">תוכנית ${e.number}</span>` : ''}
-  ${e.audio ? '<i class="ep-badge" aria-hidden="true">▶</i>' : ''}
-  <b>${esc(e.title || 'ללא כותרת')}</b>
-  <small>${esc(fmtDate(e.date, true) || 'ללא תאריך')}${e.duration ? ` · ${esc(fmtDuration(e.duration))}` : ''}</small>
-  ${e.tracks.length ? `<span class="ep-meta">♫ ${e.tracks.length} שירים</span>` : ''}
-</span>`;
+    $('#preview-card').innerHTML = U.epCard(S.admin.normEpisode(e, 0), { href: '#' });
     $('#preview-json').textContent = JSON.stringify(e, null, 2);
     $('#ed-title-echo').textContent = e.title || 'ללא כותרת';
     $('#slug-echo').textContent = e.slug;
@@ -554,7 +548,7 @@ ${S.state.source === 'cloudflare' ? (u ? `
     const b = ev.target.closest('[data-set]'); if (!b || b.tagName === 'FORM') return;
     switch (b.dataset.set) {
       case 'logout': S.sb.signOut(); await checkAccess(); U.notify('התנתקתם.', 'success'); openSettings(); paintStatus(); break;
-      case 'google': try { await S.sb.signIn(); await checkAccess(); U.notify('התחברתם לניהול.', 'success'); dlgSettings.close(); paintStatus(); loadOriginIds(); } catch (err) { U.notify(`ההתחברות נכשלה: ${err.message}`, 'error'); } break;
+      case 'google': try { await S.sb.signIn(); const ok = await checkAccess(); U.notify(ok ? 'התחברתם לניהול.' : 'התחברתם, אבל החשבון אינו מוגדר כמנהל.', ok ? 'success' : 'info'); dlgSettings.close(); paintStatus(); if (ok) loadOriginIds(); } catch (err) { U.notify(`ההתחברות נכשלה: ${err.message}`, 'error'); } break;
       case 'reload': { if (A.dirty && !confirm('יש שינויים שלא נשמרו. להמשיך?')) return; const stop = U.notify('מושכים מהמקור…', 'progress'); try { const o = await S.admin.pullOrigin(); A.data = clone(o); A.originIds = new Set(o.episodes.map((e) => e.id)); A.removed.clear(); A.dirty = true; stop(); renderList(); renderEditor(); dlgSettings.close(); U.notify('נמשך מהמקור אל הטיוטה. שמרו כדי להחיל.', 'success'); } catch (err) { stop(); U.notify(`המשיכה נכשלה: ${err.message}`, 'error'); } break; }
       case 'discard': if (confirm('למחוק את הטיוטה המקומית? השינויים שלא פורסמו יאבדו.')) { S.admin.clearOverride(); location.reload(); } break;
     }

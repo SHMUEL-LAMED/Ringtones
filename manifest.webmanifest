@@ -9,14 +9,28 @@
   "id": "/Ringtones/",
   "display": "standalone",
   "orientation": "any",
-  "theme_color": "#fbf8f2",
-  "background_color": "#fbf8f2",
-  "categories": ["music", "entertainment"],
+  "theme_color": "#06080f",
+  "background_color": "#06080f",
+  "categories": [
+    "music",
+    "entertainment"
+  ],
   "icons": [
-    { "src": "./assets/img/medallion.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+    {
+      "src": "./assets/img/medallion.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
   ],
   "shortcuts": [
-    { "name": "ארכיון התוכניות", "url": "./archive.html" },
-    { "name": "ניהול", "url": "./admin.html" }
+    {
+      "name": "ארכיון התוכניות",
+      "url": "./archive.html"
+    },
+    {
+      "name": "האזור האישי",
+      "url": "./me.html"
+    }
   ]
 }
