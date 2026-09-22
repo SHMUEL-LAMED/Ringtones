@@ -73,6 +73,8 @@
     const nav = [
       ['index.html', 'בית', 'home'],
       ['archive.html', 'ארכיון התוכניות', 'archive'],
+      ['index.html#sets', 'סטים', 'sets'],
+      ['index.html#follow', 'הקהילה', 'community'],
     ].map(([href, label, key]) =>
       `<a href="${href}" ${active === key ? 'aria-current="page"' : ''}>${label}</a>`
     ).join('');
@@ -80,7 +82,7 @@
 <header class="site-header">
   <a class="brand" href="index.html">
     <img class="logo-mark" src="assets/img/medallion.svg" alt="" width="48" height="48">
-    <div><strong>${esc(site?.name || 'ראש בראש')}</strong><small>${esc(site?.tagline || 'מצעד המוזיקה הגדול')}</small></div>
+    <div><strong>${esc(site?.name || 'ראש בראש')}</strong><small>${esc(site?.tagline || 'מוזיקה ואקטואליה')}</small></div>
   </a>
   <nav class="site-nav" aria-label="ניווט ראשי">
     ${nav}
@@ -95,7 +97,7 @@
     ).join('');
     return `
 <footer class="site-footer">
-  <span>${esc(site?.name || 'ראש בראש')} · ${esc(site?.tagline || 'מצעד המוזיקה הגדול')}</span>
+  <span>${esc(site?.name || 'ראש בראש')} · ${esc(site?.tagline || 'מוזיקה ואקטואליה')}</span>
   <nav aria-label="קישורים">${links}<button type="button" class="chip" data-kbd-help>קיצורי מקלדת</button></nav>
 </footer>`;
   }
@@ -191,5 +193,20 @@
     catch { return false; }
   }
 
-  window.RoshUI = { esc, fmtTime, parseTime, fmtDuration, fmtDate, fmtWeekday, slugify, qs, header, footer, notify, kbdHelp, isTyping, copy };
+  function driveId(ep) {
+    if (ep?.audio) {
+      try { if (new URL(ep.audio, location.href).hostname !== 'drive.google.com') return null; } catch { return null; }
+    }
+    for (const value of [ep?.audio, ...(ep?.links || []).map(l => l.url)]) {
+      try {
+        const u = new URL(value);
+        if (u.protocol === 'https:' && u.hostname === 'drive.google.com') {
+          const id = u.pathname.match(/^\/file\/d\/([\w-]+)(?:\/|$)/)?.[1] || u.searchParams.get('id');
+          if (id && /^[\w-]+$/.test(id)) return id;
+        }
+      } catch { /* not a Drive URL */ }
+    }
+    return null;
+  }
+  window.RoshUI = { esc, fmtTime, parseTime, fmtDuration, fmtDate, fmtWeekday, slugify, qs, header, footer, notify, kbdHelp, isTyping, copy, driveId };
 })();
