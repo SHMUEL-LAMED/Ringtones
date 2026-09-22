@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>ארכיון התוכניות — ראש בראש</title>
-  <meta name="description" content="כל התוכניות של ראש בראש לפי עונות, עם חיפוש בשירים שהושמעו וקפיצה ישירה לרגע בהקלטה.">
+  <meta name="description" content="כל התוכניות של ראש בראש לפי עונות, עם חיפוש, סינון והאזנה ישירה באתר.">
   <meta name="theme-color" content="#06080f">
   <link rel="icon" href="assets/img/medallion.svg" type="image/svg+xml">
   <link rel="manifest" href="manifest.webmanifest">
@@ -26,12 +26,11 @@
         <div class="card-body">
           <form class="search-box" role="search" id="search-form">
             <span class="search-glyph" aria-hidden="true">♫</span>
-            <label for="q" class="visually-hidden">חיפוש תוכנית, שיר או זמר</label>
-            <input id="q" type="search" placeholder="חפשו תוכנית, שיר או זמר…" autocomplete="off">
+            <label for="q" class="visually-hidden">חיפוש תוכנית</label>
+            <input id="q" type="search" placeholder="חפשו תוכנית, נושא או אורח…" autocomplete="off">
             <kbd aria-hidden="true">/</kbd>
           </form>
           <div class="filters" id="filters"></div>
-          <section id="song-hits" aria-live="polite"></section>
           <section id="results" aria-live="polite"></section>
         </div>
       </section>

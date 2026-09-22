@@ -269,8 +269,8 @@
   <kbd>רווח</kbd><span>ניגון / השהיה</span>
   <kbd>→</kbd><span>קדימה 15 שניות</span>
   <kbd>←</kbd><span>אחורה 15 שניות</span>
-  <kbd>Shift + →</kbd><span>לשיר הבא</span>
-  <kbd>Shift + ←</kbd><span>לשיר הקודם</span>
+  <kbd>Shift + →</kbd><span>לתוכנית הבאה</span>
+  <kbd>Shift + ←</kbd><span>לתוכנית הקודמת</span>
   <kbd>0–9</kbd><span>קפיצה לאחוז מהתוכנית</span>
   <kbd>M</kbd><span>השתקה</span>
   <kbd>+ / −</kbd><span>מהירות</span>
@@ -388,7 +388,6 @@
   ${badge ? `<i class="ep-badge gold" aria-hidden="true">${badge}</i>` : (playable ? '<i class="ep-badge" aria-hidden="true">▶</i>' : '')}
   <b>${titleHtml ?? esc(e.title)}</b>
   <small>${esc(fmtDate(e.date, true))}${e.duration ? ` · ${esc(fmtDuration(e.duration))}` : ''}</small>
-  ${e.tracks?.length ? `<span class="ep-meta">♫ ${e.tracks.length} שירים</span>` : ''}
   ${pct ? `<span class="resume" aria-hidden="true"><i style="width:${pct}%"></i></span>` : ''}
 </a>`;
   }

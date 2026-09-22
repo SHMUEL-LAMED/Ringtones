@@ -1,4 +1,4 @@
-/* הנגן הקבוע של ראש בראש: נגן אחד לכל האתר, פס התקדמות מחולק לשירים,
+/* הנגן הקבוע של ראש בראש: נגן אחד לכל האתר, פס התקדמות,
    המשך מאיפה שעצרתם, מהירות, טיימר כיבוי, קיצורי מקלדת ו־Media Session. */
 (function () {
   'use strict';
@@ -10,10 +10,7 @@
 
   const P = {
     episode: null,
-    tracks: [],
-    trackIndex: -1,
     sleepAt: null,      // timestamp ms
-    sleepEndOfTrack: false,
     dock: null,
     els: {},
     candidates: null,   // כתובות ההזרמה של התוכנית הנוכחית, לפי עדיפות
@@ -23,7 +20,7 @@
     dragging: false,
   };
 
-  const emit = (type, detail = {}) => window.dispatchEvent(new CustomEvent('rosh:player', { detail: { type, episode: P.episode, time: audio.currentTime, trackIndex: P.trackIndex, ...detail } }));
+  const emit = (type, detail = {}) => window.dispatchEvent(new CustomEvent('rosh:player', { detail: { type, episode: P.episode, time: audio.currentTime, ...detail } }));
 
   /* ---------- בניית הנגן ---------- */
 
@@ -43,11 +40,11 @@
       <small class="now"><span class="dock-live" aria-hidden="true"><i style="--d:0s"></i><i style="--d:.2s"></i><i style="--d:.1s"></i><i style="--d:.3s"></i></span><span data-now aria-live="polite"></span></small>
     </div>
     <div class="dock-controls" style="direction:ltr">
-      <button type="button" class="icon-btn" data-prev aria-label="לשיר הקודם">◂◂</button>
+      <button type="button" class="icon-btn" data-prev aria-label="לתוכנית הקודמת">◂◂</button>
       <button type="button" class="icon-btn dock-skip" data-back aria-label="15 שניות אחורה">−15</button>
       <button type="button" class="icon-btn solid main" data-toggle aria-label="ניגון">▶</button>
       <button type="button" class="icon-btn dock-skip" data-fwd aria-label="15 שניות קדימה">+15</button>
-      <button type="button" class="icon-btn" data-next aria-label="לשיר הבא">▸▸</button>
+      <button type="button" class="icon-btn" data-next aria-label="לתוכנית הבאה">▸▸</button>
     </div>
   </div>
   <div class="dock-bar">
@@ -64,7 +61,7 @@
       <option value="0.75">0.75×</option><option value="1" selected>מהירות רגילה</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>
     </select>
     <select data-sleep aria-label="טיימר כיבוי">
-      <option value="">טיימר כיבוי</option><option value="15">בעוד 15 דקות</option><option value="30">בעוד 30 דקות</option><option value="45">בעוד 45 דקות</option><option value="60">בעוד שעה</option><option value="track">בסוף השיר הנוכחי</option>
+      <option value="">טיימר כיבוי</option><option value="15">בעוד 15 דקות</option><option value="30">בעוד 30 דקות</option><option value="45">בעוד 45 דקות</option><option value="60">בעוד שעה</option>
     </select>
     <button type="button" class="chip hide-sm" data-mute aria-pressed="false">השתקה</button>
     <button type="button" class="chip" data-share>שיתוף הרגע הזה</button>
@@ -87,8 +84,8 @@
     q('[data-toggle]').addEventListener('click', toggle);
     q('[data-back]').addEventListener('click', () => seek(audio.currentTime - 15));
     q('[data-fwd]').addEventListener('click', () => seek(audio.currentTime + 15));
-    q('[data-prev]').addEventListener('click', prevTrack);
-    q('[data-next]').addEventListener('click', nextTrack);
+    q('[data-prev]').addEventListener('click', prevEpisode);
+    q('[data-next]').addEventListener('click', nextEpisode);
     q('[data-close]').addEventListener('click', close);
     q('[data-share]').addEventListener('click', shareMoment);
     P.els.mute.addEventListener('click', () => { audio.muted = !audio.muted; P.els.mute.setAttribute('aria-pressed', String(audio.muted)); P.els.mute.textContent = audio.muted ? 'ביטול השתקה' : 'השתקה'; });
@@ -137,8 +134,6 @@
     open();
     const same = P.episode && P.episode.id === ep.id && P.candidates && audio.src === P.candidates[P.candidateIndex];
     P.episode = ep;
-    P.tracks = ep.tracks.slice();
-    P.trackIndex = -1;
     if (!same) {
       P.candidates = candidates;
       P.candidateIndex = 0;
@@ -202,31 +197,24 @@
     if (!silent) emit('rate', { rate: r });
   }
   function setSleep(v) {
-    P.sleepAt = null; P.sleepEndOfTrack = false;
-    if (v === 'track') P.sleepEndOfTrack = true;
-    else if (v) P.sleepAt = Date.now() + Number(v) * 60_000;
+    P.sleepAt = null;
+    if (v) P.sleepAt = Date.now() + Number(v) * 60_000;
     paintSleep();
   }
   function paintSleep() {
     if (!P.els.sleepLeft) return;
-    if (P.sleepEndOfTrack) P.els.sleepLeft.textContent = 'נכבה בסוף השיר';
-    else if (P.sleepAt) P.els.sleepLeft.textContent = `כיבוי בעוד ${Math.max(1, Math.ceil((P.sleepAt - Date.now()) / 60_000))} דק׳`;
+    if (P.sleepAt) P.els.sleepLeft.textContent = `כיבוי בעוד ${Math.max(1, Math.ceil((P.sleepAt - Date.now()) / 60_000))} דק׳`;
     else P.els.sleepLeft.textContent = '';
   }
 
-  /* ---------- שירים / פרקים ---------- */
+  /* ---------- תוכנית קודמת / הבאה ---------- */
 
-  function trackAt(t) {
-    let i = -1;
-    for (let k = 0; k < P.tracks.length; k++) { if (P.tracks[k].at <= t + 0.2) i = k; else break; }
-    return i;
+  /** בסדר הארכיון: "הבאה" היא החדשה יותר, "הקודמת" היא הישנה יותר. */
+  function nextEpisode() { const nb = P.episode && S.neighbors(P.episode.id); if (nb?.newer?.stream) load(nb.newer, { at: 0 }); else window.RoshUI.notify('זו התוכנית האחרונה.', 'info'); }
+  function prevEpisode() {
+    if (audio.currentTime > 3) { seek(0); return; }   // כמו בנגנים: לחיצה באמצע חוזרת להתחלה
+    const nb = P.episode && S.neighbors(P.episode.id); if (nb?.older?.stream) load(nb.older, { at: 0 }); else window.RoshUI.notify('זו התוכנית הראשונה.', 'info');
   }
-  function goTrack(i) {
-    if (i < 0 || i >= P.tracks.length) return;
-    seek(P.tracks[i].at);
-    play();
-  }
-  function nextTrack() { goTrack(Math.min(P.tracks.length - 1, trackAt(audio.currentTime) + 1)); }
   /** תוכנית אקראית עם הקלטה — לא זו שמתנגנת עכשיו. */
   function random() {
     const pool = S.episodes().filter((e) => e.stream && e.id !== P.episode?.id);
@@ -235,34 +223,15 @@
     window.RoshUI.notify(`✦ ${ep.title}`, 'info', { ttl: 5000 });
     return load(ep, { at: 0 });
   }
-  function prevTrack() {
-    const i = trackAt(audio.currentTime);
-    // כמו בנגנים: לחיצה בתוך 3 השניות הראשונות של שיר חוזרת לשיר הקודם
-    if (i >= 0 && audio.currentTime - P.tracks[i].at > 3) goTrack(i);
-    else goTrack(Math.max(0, i - 1));
-  }
   function updateNow(force) {
-    const i = trackAt(audio.currentTime);
-    if (i === P.trackIndex && !force) return;
-    const prev = P.trackIndex;
-    P.trackIndex = i;
-    const t = P.tracks[i];
-    P.els.now.textContent = t ? `♫ ${t.title}${t.artist ? ` — ${t.artist}` : ''}` : (P.tracks.length ? 'פתיחה' : (P.episode?.date ? window.RoshUI.fmtDate(P.episode.date) : ''));
-    if (P.sleepEndOfTrack && prev >= 0 && i !== prev) { pause(); setSleep(''); P.els.sleep.value = ''; window.RoshUI.notify('הטיימר כיבה את הנגן בסוף השיר.', 'info'); }
+    if (!force) return;
+    P.els.now.textContent = P.episode?.date ? window.RoshUI.fmtDate(P.episode.date) : '';
     mediaSession();
-    if (!force || prev !== i) emit('track');
   }
   function renderSegments() {
     const D = dur();
-    const segs = [];
-    if (!D) { segs.push({ from: 0, to: 1 }); }
-    else if (!P.tracks.length) segs.push({ from: 0, to: D });
-    else {
-      if (P.tracks[0].at > 1) segs.push({ from: 0, to: P.tracks[0].at, intro: true });
-      P.tracks.forEach((t, i) => segs.push({ from: t.at, to: i + 1 < P.tracks.length ? P.tracks[i + 1].at : D, track: t }));
-    }
-    P.segs = segs;
-    P.els.segs.innerHTML = segs.map((s) => `<span class="seg${s.track ? ' cue' : ''}" style="flex-grow:${Math.max(1, s.to - s.from)}"><i></i></span>`).join('');
+    P.segs = [{ from: 0, to: D || 1 }];
+    P.els.segs.innerHTML = '<span class="seg" style="flex-grow:1"><i></i></span>';
     P.els.scrub.setAttribute('aria-valuemax', String(Math.floor(D)));
   }
   function paint(ratioOverride) {
@@ -289,10 +258,8 @@
   function showTip(ratio) {
     const D = dur();
     const t = ratio * D;
-    const i = trackAt(t);
-    const tr = P.tracks[i];
     P.els.tip.style.left = `${ratio * 100}%`;
-    P.els.tip.textContent = tr ? `${fmtTime(t)} · ${tr.title}` : fmtTime(t);
+    P.els.tip.textContent = fmtTime(t);
     P.els.tip.style.opacity = '1';
   }
 
@@ -318,18 +285,17 @@
 
   function mediaSession() {
     if (!('mediaSession' in navigator) || !P.episode) return;
-    const t = P.tracks[P.trackIndex];
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
-        title: t ? t.title : P.episode.title,
-        artist: t ? (t.artist || P.episode.title) : (S.site?.name || 'ראש בראש'),
+        title: P.episode.title,
+        artist: S.site?.name || 'ראש בראש',
         album: P.episode.title,
         artwork: P.episode.cover ? [{ src: P.episode.cover, sizes: '512x512' }] : [],
       });
       const h = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession);
       h('play', play); h('pause', pause);
       h('seekbackward', () => seek(audio.currentTime - 15)); h('seekforward', () => seek(audio.currentTime + 15));
-      h('previoustrack', prevTrack); h('nexttrack', nextTrack);
+      h('previoustrack', prevEpisode); h('nexttrack', nextEpisode);
       h('seekto', (d) => seek(d.seekTime));
     } catch { /* */ }
   }
@@ -340,8 +306,7 @@
     if (!P.episode) return;
     const t = Math.floor(audio.currentTime);
     const url = new URL(`episode.html?ep=${encodeURIComponent(P.episode.slug)}${t > 5 ? `&t=${t}` : ''}`, location.href).href;
-    const tr = P.tracks[P.trackIndex];
-    const text = `${P.episode.title}${tr ? ` — ${tr.title}${tr.artist ? ` / ${tr.artist}` : ''}` : ''} (${fmtTime(t)})`;
+    const text = `${P.episode.title} (${fmtTime(t)})`;
     if (navigator.share) { try { await navigator.share({ title: P.episode.title, text, url }); return; } catch { /* בוטל */ } }
     (await window.RoshUI.copy(url)) ? window.RoshUI.notify('הקישור לרגע הזה הועתק.', 'success') : window.RoshUI.notify('ההעתקה נכשלה. העתיקו מהשורה: ' + url, 'error');
   }
@@ -392,8 +357,8 @@
     if (open) return;
     switch (e.key) {
       case ' ': case 'k': case 'K': if (P.episode) { e.preventDefault(); toggle(); } break;
-      case 'ArrowRight': e.preventDefault(); e.shiftKey ? nextTrack() : seek(audio.currentTime + 15); break;
-      case 'ArrowLeft': e.preventDefault(); e.shiftKey ? prevTrack() : seek(audio.currentTime - 15); break;
+      case 'ArrowRight': e.preventDefault(); e.shiftKey ? nextEpisode() : seek(audio.currentTime + 15); break;
+      case 'ArrowLeft': e.preventDefault(); e.shiftKey ? prevEpisode() : seek(audio.currentTime - 15); break;
       case 'j': case 'J': seek(audio.currentTime - 15); break;
       case 'l': case 'L': seek(audio.currentTime + 15); break;
       case 'm': case 'M': P.els.mute.click(); break;
@@ -414,13 +379,12 @@
   });
 
   window.RoshPlayer = {
-    load, play, pause, toggle, seek, goTrack, nextTrack, prevTrack, random, close, setRate, shareMoment,
+    load, play, pause, toggle, seek, nextEpisode, prevEpisode, random, close, setRate, shareMoment,
     get episode() { return P.episode; },
     get time() { return audio.currentTime; },
     get duration() { return dur(); },
     get paused() { return audio.paused; },
     get src() { return audio.currentSrc || audio.src; },
-    get trackIndex() { return P.trackIndex; },
     isCurrent(id) { return P.episode?.id === id; },
   };
 })();
