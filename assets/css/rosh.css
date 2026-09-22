@@ -743,7 +743,8 @@ textarea:focus-visible, [tabindex]:focus-visible, summary:focus-visible {
 }
 .dock-art img { width: 100%; height: 100%; object-fit: cover; }
 .dock-text { min-width: 0; flex: 1; display: grid; gap: 2px; }
-.dock-text a { color: inherit; text-decoration: none; }
+.dock-text > * { min-width: 0; }
+.dock-text a { display: block; color: inherit; text-decoration: none; overflow: hidden; }
 .dock-text b { display: block; font-size: 14px; font-weight: 900; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dock-text small { display: block; color: var(--muted); font-size: 11px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dock-text .now { color: var(--gold-ink); }
@@ -918,9 +919,10 @@ dialog.sheet .card-foot { padding: 16px 22px; }
   .card-foot { padding: 15px; }
   .card-foot .continue { flex: 1; }
   .prevnext { grid-template-columns: 1fr; }
-  .dock-controls .dock-skip { display: none; }
+  .dock-top { flex-wrap: wrap; }
+  .dock-controls { width: 100%; justify-content: center; order: 3; }
   .dock-extra .hide-sm { display: none; }
-  body.has-dock { --dock-height: 170px; }
+  body.has-dock { --dock-height: 230px; }
   .parade-title .hero-divider { display: none; }
   .hero { padding-top: 28px; }
 }

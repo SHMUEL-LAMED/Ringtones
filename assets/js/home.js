@@ -109,12 +109,13 @@
 
   /* ---------- מספרים ---------- */
   const songs = S.songIndex().length;
-  const hours = Math.round(list.reduce((a, e) => a + (e.duration || 0), 0) / 3600);
+  const totalSec = list.reduce((a, e) => a + (e.duration || 0), 0);
+  const listen = totalSec >= 3600 ? [Math.round(totalSec / 3600), 'שעות האזנה'] : [Math.max(1, Math.round(totalSec / 60)), 'דקות האזנה'];
   document.getElementById('stats').innerHTML = list.length ? `
 <div class="stats">
   <div class="stat"><b>${list.length}</b><small>תוכניות</small></div>
   <div class="stat"><b>${songs}</b><small>שירים ברשימות</small></div>
-  <div class="stat"><b>${hours}</b><small>שעות האזנה</small></div>
+  <div class="stat"><b>${listen[0]}</b><small>${listen[1]}</small></div>
   <div class="stat"><b>${S.seasons().filter((s) => s.count).length}</b><small>עונות</small></div>
 </div>` : '';
 
