@@ -1,6 +1,7 @@
 /* Program identity: midnight blue, warm gold, generous listening surfaces. */
 :root { --bg:#f3f5f8; --text:#14213b; --muted:#59667b; --border:#dce2ec; --gold:#b58a29; --gold-ink:#876212; --gold-deep:#76530c; --panel2:#edf1f7; }
 body { background:var(--bg); }
+[hidden] { display:none!important; }
 .shell { width:min(1280px,100%); }
 .site-header { background:#fff; border-color:var(--border); border-radius:18px; }
 .site-nav a,.site-nav button { font-size:14px; min-height:42px; display:inline-flex; align-items:center; }
