@@ -29,6 +29,8 @@
     error: null,
     loadedFrom: null,
     preview: null,   // טוקן תצוגה מקדימה כשצופים בטיוטה דרך קישור
+    embed: false,    // הניהול מוטמע בתוך ניהול אתר הסקר
+    handoffError: '',
   };
 
   /* ---------- נרמול ---------- */
@@ -58,6 +60,8 @@
       visible: e.visible !== false,
       // פרסום מתוזמן: התוכנית מוצגת לציבור רק מהמועד הזה (זמן מקומי, "2026-10-01T20:00")
       publishAt: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(e.publishAt || '')) ? String(e.publishAt).slice(0, 16) : '',
+      // תוכנית מקושרת לסקר (מזהה הסקר באתר הסקר)
+      surveyId: String(e.surveyId || ''),
       tracks: tracks
         .filter((t) => t && (t.title || t.artist))
         .map((t) => ({ at: Math.max(0, Number(t.at) || 0), title: String(t.title || ''), artist: String(t.artist || ''), note: String(t.note || '') }))
@@ -84,15 +88,18 @@
   /** ההגדרות שמתפרסמות עם הקטלוג: ההודעה בדף הבית ודף העדכונים */
   function normSettings(raw) {
     const b = raw?.banner && typeof raw.banner === 'object' ? raw.banner : {};
-    const banner = { enabled: !!b.enabled, text: String(b.text || ''), link: String(b.link || ''), linkLabel: String(b.linkLabel || ''), until: String(b.until || '').slice(0, 10) };
+    const sites = b.sites && typeof b.sites === 'object' ? b.sites : {};
+    const banner = { enabled: !!b.enabled, text: String(b.text || ''), link: String(b.link || ''), linkLabel: String(b.linkLabel || ''), until: String(b.until || '').slice(0, 10), sites: { program: sites.program !== false, survey: sites.survey === true } };
+    const sv = raw?.survey && typeof raw.survey === 'object' ? raw.survey : null;
+    const survey = sv ? { id: String(sv.id || ''), name: String(sv.name || ''), open: !!sv.open, url: String(sv.url || '') } : null;
     const updates = (Array.isArray(raw?.updates) ? raw.updates : []).map((u, i) => ({
       id: String(u?.id || `u${i}`), date: String(u?.date || '').slice(0, 10), title: String(u?.title || ''), text: String(u?.text || ''), link: String(u?.link || ''), pinned: !!u?.pinned,
     })).filter((u) => u.title || u.text);
-    return { banner, updates };
+    return { banner, updates, survey };
   }
-  /** ההודעה בדף הבית פעילה? (מסומנת, יש טקסט, והתאריך לא עבר) */
+  /** ההודעה בדף הבית פעילה? (מסומנת, יש טקסט, התאריך לא עבר, ומיועדת לאתר הזה) */
   function bannerActive(banner = state.data.settings?.banner) {
-    if (!banner?.enabled || !banner.text) return false;
+    if (!banner?.enabled || !banner.text || banner.sites?.program === false) return false;
     return !banner.until || banner.until >= new Date().toISOString().slice(0, 10);
   }
   /** תוכנית מתוזמנת שעדיין לא הגיע זמנה */
@@ -105,8 +112,10 @@
   const sb = {
     get cfg() { return state.site?.storage?.cloudflare || null; },
     get configured() { return !!this.cfg?.apiBase; },
-    get session() { return read(LS.sb, null); },
-    set session(v) { write(LS.sb, v); },
+    // כשהניהול מוטמע בתוך אתר הסקר, אחסון הדפדפן עלול להיות חסום — הסשן נשמר גם בזיכרון
+    _mem: null,
+    get session() { return read(LS.sb, null) ?? this._mem; },
+    set session(v) { this._mem = v; write(LS.sb, v); },
     get user() { return this.session?.user || null; },
     base(path) { return `${this.cfg.apiBase.replace(/\/$/, '')}${path}`; },
     headers(auth = true) {
@@ -135,7 +144,20 @@
       });
     },
     async refresh() { return this.session; },
-    signOut() { this.session = null; },
+    /** התנתקות מכל המקומות: גם הסשן של אתר הסקר לאותו חשבון נמחק בשרת. */
+    signOut() {
+      const token = this.session?.token;
+      this.session = null;
+      if (token && this.configured) fetch(this.base('/api/program/logout'), { method:'POST', headers:{ Authorization:`Bearer ${token}` } }).catch(() => {});
+    },
+    /* כניסה אחת לשני האתרים: קוד חד־פעמי שעובר בין אתר התוכניות לאתר הסקר */
+    handoff: {
+      create: () => sb.call('/api/program/handoff', { method:'POST', body:{} }),
+      redeem: (code) => sb.call('/api/program/auth/handoff', { method:'POST', body:{ code }, auth:false }),
+      /** כתובת המעבר לניהול אתר הסקר, כבר מחוברים */
+      async toSurvey() { const { code } = await sb.handoff.create(); return `${new URL(sb.cfg.apiBase).origin}/api/program/handoff/${code}`; },
+    },
+    surveys: () => sb.call('/api/program/surveys'),
     /* כניסה ישירה עם Google מתוך האתר (בלי דף ביניים): כפתור Google נטען
        לתוך אלמנט, והאישור נשלח ל־Worker שמחזיר סשן. */
     async google(el, { onDone, onError } = {}) {
@@ -268,6 +290,20 @@
     state.source = state.site.storage?.provider === 'cloudflare' && sb.configured ? 'cloudflare' : 'json';
 
 
+    // הגעה מניהול אתר הסקר: קוד מעבר חד־פעמי הופך לסשן כאן, בלי כניסה נוספת
+    try {
+      const params = new URLSearchParams(location.search);
+      state.embed = params.get('embed') === '1';
+      const code = params.get('handoff');
+      if (code) {
+        if (sb.configured) {
+          try { const j = await sb.handoff.redeem(code); sb.session = { token:j.token, user:{ ...j.user, isAdmin: !!j.user?.isAdmin } }; state.authRedirect = j.user; }
+          catch (e) { state.handoffError = e.message; }
+        }
+        params.delete('handoff');
+        window.history.replaceState(null, '', `${location.pathname}${params.toString() ? `?${params}` : ''}${location.hash}`);
+      }
+    } catch { /* */ }
     // תצוגה מקדימה של הטיוטה דרך קישור (?preview=טוקן) — נשמר לכל הביקור
     try {
       const fromUrl = new URLSearchParams(location.search).get('preview');
