@@ -461,10 +461,6 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
 
 /* ---------- רשימת שירים בתוך תוכנית ---------- */
 
-.tracks fieldset { margin: 0; padding: 0; border: 0; display: grid; gap: 8px; }
-.tracks legend { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 0; margin: 0 0 12px; }
-.tracks legend b { font-family: var(--display); font-size: 36px; font-weight: 700; line-height: 1; color: #fff; }
-.tracks legend small { font-size: 12.5px; font-weight: 700; color: var(--muted); }
 
 /* ---------- דף תוכנית ---------- */
 
@@ -526,17 +522,6 @@ body.is-playing .vinyl.live { animation-play-state: running; }
 .filters .spacer { flex: 1; }
 .filters .count { font-size: 12px; font-weight: 800; color: var(--muted); }
 
-.song-hits { display: grid; gap: 8px; }
-.song-hit {
-  display: flex; align-items: center; gap: 12px; padding: 8px 12px 8px 10px;
-  border: 1px solid var(--border); border-radius: 18px; background: rgba(255, 255, 255, .035);
-  transition: background .2s, border-color .2s, transform .25s var(--ease);
-}
-.song-hit:hover { background: rgba(255, 255, 255, .07); border-color: var(--gold); transform: translateX(-3px); }
-.song-hit .txt { flex: 1; min-width: 0; display: grid; gap: 2px; }
-.song-hit .txt b { font-size: 15px; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.song-hit .txt small { font-size: 12px; font-weight: 700; color: var(--muted); }
-.song-hit .time { font-family: var(--mono); font-size: 12px; color: var(--muted); direction: ltr; }
 
 .season-block { margin: 0 0 36px; }
 .season-head { display: flex; align-items: center; gap: 14px; margin: 0 0 16px; }
