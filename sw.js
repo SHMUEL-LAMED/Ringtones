@@ -1,12 +1,13 @@
 /* Service Worker של ראש בראש: שומר את מעטפת האתר להפעלה מהירה ובלי רשת.
    נתוני התוכניות נטענים תמיד מהרשת קודם (ונופלים למטמון אם אין), וההקלטות
    עצמן לא נשמרות. */
-const VERSION = 'rosh-v1';
+const VERSION = 'rosh-v2-archive';
 const SHELL = [
   './', './index.html', './archive.html', './episode.html',
   './assets/css/rosh.css', './assets/js/ui.js', './assets/js/store.js', './assets/js/player.js',
   './assets/js/home.js', './assets/js/archive.js', './assets/js/episode.js',
   './assets/img/medallion.svg', './manifest.webmanifest',
+  './assets/css/program.css',
 ];
 
 self.addEventListener('install', (e) => {
