@@ -12,7 +12,7 @@ const check = (ok, msg) => { console.log(`${ok ? '✓' : '✕'} ${msg}`); if (!o
 const catalog = JSON.parse(readFileSync(new URL('../data/episodes.json', import.meta.url), 'utf8'));
 let published = null; let draftPuts = 0; let events = []; let messagesSent = [];
 let settings = { banner: { enabled: false, text: '', link: '', linkLabel: '', until: '', sites: { program: true, survey: false } }, updates: [], survey: { id: 'main', name: 'מצעד האלבומים', open: true, url: 'https://rosh-berosh.smwlyqswkwt232.workers.dev/' } };
-let handoffs = 0; let logouts = 0;
+let handoffs = 0; let logouts = 0; let ssoBounces = 0; let ssoSignedIn = false;
 
 const browser = await chromium.launch(process.env.PW_EXECUTABLE ? { executablePath: process.env.PW_EXECUTABLE } : {});
 const ctx = await browser.newContext({ locale: 'he-IL', viewport: { width: 1280, height: 900 } });
@@ -45,6 +45,8 @@ await ctx.route(`${API}/**`, async (route) => {
   if (p === '/api/program/handoff' && m === 'POST') { handoffs++; return json({ code: 'c0ffee', toSurvey: `${API}/api/program/handoff/c0ffee` }); }
   if (p === '/api/program/auth/handoff') { const b = req.postDataJSON(); return b.code === 'c0ffee' ? json({ token: 'handed', user: { email: 'admin@example.com', name: 'בדיקה', isAdmin: true } }) : json({ error: 'קוד המעבר פג' }, 401); }
   if (p === '/api/program/logout') { logouts++; return json({ ok: true }); }
+  if (p === '/api/program/sso') { const back = new URL(url.searchParams.get('return')); back.searchParams.set('sso', ssoSignedIn ? 'c0ffee' : 'none'); ssoBounces++; return route.fulfill({ status: 302, headers: { location: back.toString() } }); }
+  if (p === '/api/program/banner') return json({ banner: null });
   if (p === '/api/program/handoff/c0ffee') return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>ניהול משותף</title>' });
   if (p.startsWith('/api/program/stream/')) return route.fulfill({ status: 206, headers: { 'access-control-allow-origin': '*', 'content-range': 'bytes 0-1/100', 'content-type': 'audio/mpeg' }, body: Buffer.from([0, 0]) });
   return json({ error: 'לא נמצא' }, 404);
@@ -195,6 +197,22 @@ check((await page.locator('#main').innerText()).includes('טיוטה לבדיק�
 await page.goto(`${BASE}/me.html`);
 await page.waitForSelector('#me-profile .profile-hero');
 check((await page.locator('#me-profile [data-google]').count()) === 1, 'האזור האישי: כפתור Google ישיר');
+
+/* ---------- כניסה אחת: מי שמחובר באתר הסקר מחובר גם כאן, בלי ללחוץ כלום ---------- */
+await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); localStorage.setItem('rosh:sso-test', '1'); });
+await page.goto(`${BASE}/index.html`);
+await page.waitForSelector('#featured .card');
+check(ssoBounces === 1 && !(await page.locator('.site-nav .me-link.signed').count()), 'לא מחוברים באתר הסקר: בדיקה אחת, ונשארים אורחים');
+await page.goto(`${BASE}/archive.html`);
+await page.waitForSelector('#results .ep-card');
+check(ssoBounces === 1, 'לא בודקים שוב בכל דף');
+ssoSignedIn = true;
+await page.evaluate(() => localStorage.removeItem('rosh:sso-checked'));
+await page.goto(`${BASE}/index.html`);
+await page.waitForSelector('#featured .card');
+check(ssoBounces === 2 && (await page.locator('.site-nav .me-link.signed').count()) === 1, 'מחוברים באתר הסקר: מחוברים גם כאן אוטומטית');
+check(!page.url().includes('sso='), 'הקוד נמחק מהכתובת');
+await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
 
 /* ---------- הגעה מניהול הסקר: קוד מעבר במקום כניסה, במצב מוטמע ---------- */
 await page.evaluate(() => { localStorage.removeItem('rosh:cf:session'); sessionStorage.clear(); });

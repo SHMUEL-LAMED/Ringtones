@@ -17,7 +17,9 @@
     history: 'rosh:history',        // היסטוריית האזנה (במכשיר הזה)
     overrideAt: 'rosh:override-at', // מתי הטיוטה המקומית נשמרה (להשוואה עם הטיוטה המשותפת)
     preview: 'rosh:preview',        // קישור תצוגה מקדימה (sessionStorage)
+    sso: 'rosh:sso-checked',        // מתי נבדק לאחרונה אם מחוברים באתר הסקר
   };
+  const SSO_TTL = 6 * 60 * 60 * 1000;
 
   const read = (k, fb) => { try { const v = localStorage.getItem(k); return v == null ? fb : JSON.parse(v); } catch { return fb; } };
   const write = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch { /* מצב פרטי */ } };
@@ -144,10 +146,21 @@
       });
     },
     async refresh() { return this.session; },
+    /** אחרי כניסה כאן: מעבר רגעי דרך אתר הסקר כדי שגם שם יהיו מחוברים. מחזיר true כשהדף עובר. */
+    async shareLogin() {
+      if (!this.configured || state.embed || !this.session?.token) return false;
+      try {
+        const { code } = await this.call('/api/program/handoff', { method: 'POST', body: {} });
+        write(LS.sso, Date.now());
+        location.href = `${this.base(`/api/program/handoff/${code}`)}?return=${encodeURIComponent(location.href)}`;
+        return true;
+      } catch { return false; }
+    },
     /** התנתקות מכל המקומות: גם הסשן של אתר הסקר לאותו חשבון נמחק בשרת. */
     signOut() {
       const token = this.session?.token;
       this.session = null;
+      write(LS.sso, Date.now());
       if (token && this.configured) fetch(this.base('/api/program/logout'), { method:'POST', headers:{ Authorization:`Bearer ${token}` } }).catch(() => {});
     },
     /* כניסה אחת לשני האתרים: קוד חד־פעמי שעובר בין אתר התוכניות לאתר הסקר */
@@ -181,6 +194,8 @@
             const j = await r.json().catch(() => ({}));
             if (!r.ok || !j.token) throw new Error(j.error || 'ההתחברות לא הצליחה.');
             this.session = { token: j.token, user: { ...j.user, isAdmin: !!j.user?.isAdmin } };
+            // כניסה אחת: מחברים מיד גם את אתר הסקר, והדף חוזר לכאן
+            if (await this.shareLogin()) return;
             onDone?.(this.user);
           } catch (err) { onError?.(err); }
         },
@@ -283,6 +298,20 @@
   let readyResolve;
   const ready = new Promise((res) => { readyResolve = res; });
 
+  /** צריך לבדוק באתר הסקר אם כבר מחוברים שם? רק באתר עצמו, בלי סשן כאן,
+      ולא יותר מפעם בכמה שעות (בדף האישי ובניהול — פעם בכל ביקור). */
+  async function needsSso(params) {
+    if (!sb.configured || sb.session?.token || state.embed || params.has('preview')) return false;
+    let here = false; try { here = location.origin === new URL(state.site.url).origin || !!localStorage.getItem('rosh:sso-test'); } catch { /* */ }
+    if (!here || /bot|crawl|spider|preview/i.test(navigator.userAgent || '')) return false;
+    const last = Number(read(LS.sso, 0)) || 0;
+    let fresh = Date.now() - last < SSO_TTL;
+    if (/(?:me|admin)\.html$/.test(location.pathname)) { try { fresh = fresh && !!sessionStorage.getItem('rosh:sso-visit'); sessionStorage.setItem('rosh:sso-visit', '1'); } catch { /* */ } }
+    if (fresh) return false;
+    // השרת זמין? (אחרת לא שולחים את הדפדפן לדף שגיאה)
+    try { const c = new AbortController(); const t = setTimeout(() => c.abort(), 2000); const r = await fetch(sb.base('/api/program/banner'), { signal: c.signal, cache: 'no-store' }); clearTimeout(t); return r.ok; } catch { return false; }
+  }
+
   async function load({ ignoreOverride = false } = {}) {
     state.error = null;
     try { state.site = await fetchJSON('data/site.json'); }
@@ -303,6 +332,22 @@
         params.delete('handoff');
         window.history.replaceState(null, '', `${location.pathname}${params.toString() ? `?${params}` : ''}${location.hash}`);
       }
+      // חזרה מבדיקת הכניסה באתר הסקר: קוד → מחוברים גם כאן; none → לא מחוברים שם
+      const sso = params.get('sso');
+      if (sso != null) {
+        write(LS.sso, Date.now());
+        if (sso !== 'none' && sb.configured && !sb.session?.token) {
+          try { const j = await sb.handoff.redeem(sso); sb.session = { token:j.token, user:{ ...j.user, isAdmin: !!j.user?.isAdmin } }; } catch { /* הקוד פג */ }
+        }
+        params.delete('sso');
+        window.history.replaceState(null, '', `${location.pathname}${params.toString() ? `?${params}` : ''}${location.hash}`);
+      } else if (await needsSso(params)) {
+        write(LS.sso, Date.now());
+        location.replace(`${sb.base('/api/program/sso')}?return=${encodeURIComponent(location.href)}`);
+        return new Promise(() => {});   // הדף עובר; לא ממשיכים לטעון
+      }
+      // מחוברים כאן? מוודאים מול השרת (התנתקות באתר הסקר מנתקת גם כאן)
+      if (sb.configured && sb.session?.token) await Promise.race([sb.isAdmin().catch(() => {}), new Promise((r) => setTimeout(r, 2500))]);
     } catch { /* */ }
     // תצוגה מקדימה של הטיוטה דרך קישור (?preview=טוקן) — נשמר לכל הביקור
     try {
