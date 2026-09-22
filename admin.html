@@ -8,23 +8,24 @@
   <meta name="theme-color" content="#fbf8f2">
   <link rel="icon" href="assets/img/medallion.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/css/rosh.css">
+  <link rel="stylesheet" href="assets/css/program.css">
   <link rel="stylesheet" href="assets/css/admin.css">
 </head>
-<body>
+<body class="admin-locked">
   <a class="skip-link" href="#main">דילוג לתוכן</a>
   <div class="shell">
     <div id="site-header"></div>
 
     <main id="main">
+      <section id="admin-gate" class="card card-body" role="status"><h1>ניהול התוכניות</h1><p id="admin-gate-text">בודקים הרשאת מנהל…</p><button type="button" class="btn primary" id="gate-login">התחברות לניהול</button></section>
       <div class="admin-bar" id="admin-bar">
         <span class="status"><span class="dot" id="src-dot"></span><span id="src-text">טוענים…</span></span>
         <span class="dirty" id="dirty" hidden>• שינויים שלא נשמרו</span>
         <span class="spacer"></span>
         <button type="button" class="btn small" id="btn-new">+ תוכנית חדשה</button>
         <button type="button" class="btn small" id="btn-seasons">עונות</button>
-        <button type="button" class="btn small" id="btn-json">JSON</button>
-        <button type="button" class="btn small" id="btn-import">ייבוא</button>
-        <button type="button" class="btn small" id="btn-settings">חיבור</button>
+        <details class="admin-advanced"><summary>כלים נוספים</summary><button type="button" class="btn small" id="btn-json">עריכת נתונים</button><button type="button" class="btn small" id="btn-import">ייבוא מקובץ</button></details>
+        <button type="button" class="btn small" id="btn-settings">החשבון שלי</button>
         <button type="button" class="btn small gold" id="btn-save" title="Ctrl+S">שמירת טיוטה</button>
         <button type="button" class="btn primary small" id="btn-publish">פרסום <span>←</span></button>
         <input type="file" id="file-import" accept="application/json,.json" hidden>
@@ -113,6 +114,7 @@
 
   <script src="assets/js/ui.js"></script>
   <script src="assets/js/store.js"></script>
+  <script src="assets/js/upload.js"></script>
   <script src="assets/js/admin.js"></script>
 </body>
 </html>
