@@ -14,6 +14,19 @@
   const site = S.site || {};
   const EMBED = !!S.state.embed;
   if (EMBED) document.body.classList.add('embed');
+
+  /* דף ניהול אחד: הניהול של אתר התוכניות הוא חלק מדף הניהול של אתר הסקר.
+     הכתובת הזו מעבירה לשם (עם אותו חשבון, בלי כניסה נוספת), ל"אתר התוכניות"
+     בתפריט הצד. ?standalone=1 משאיר את הדף כאן — לבדיקות ולמקרה חירום. */
+  if (S.state.source === 'cloudflare' && !EMBED && !new URLSearchParams(location.search).has('standalone')) {
+    const part = `#prog-${['programs', 'site', 'listeners', 'publish'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'programs'}`;
+    const shared = `${new URL(S.sb.cfg.apiBase).origin}/admin`;
+    $('#admin-gate-text').textContent = 'עוברים לדף הניהול…';
+    let target = `${shared}${part}`;
+    if (S.sb.session?.token) { try { target = `${await S.sb.handoff.toSurvey()}${part}`; } catch { /* ייכנסו שם עם Google */ } }
+    location.replace(target);
+    return;
+  }
   const paintHeader = () => { $('#site-header').innerHTML = EMBED ? '' : U.header('admin', site); };
   paintHeader();
   $('#site-footer').innerHTML = EMBED ? '' : U.footer(site);
@@ -173,6 +186,8 @@
     A.tab = tab;
     $$('#admin-tabs a').forEach((a) => a.setAttribute('aria-current', a.dataset.tab === tab ? 'page' : 'false'));
     if (push && location.hash !== `#${tab}`) history.replaceState(null, '', `#${tab}`);
+    // בדף המשותף: מעבר פנימי (למשל "פתיחה" מבדיקת התקינות) מסמן גם את תפריט הצד
+    if (EMBED && push && CLOUD) { try { window.parent.postMessage({ type: 'rosh-admin-tab-changed', tab }, new URL(S.sb.cfg.apiBase).origin); } catch { /* */ } }
     render();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -828,13 +843,11 @@ ${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי י
     } catch (err) { box.innerHTML = `<span class="problems">${esc(err.message)}</span>`; }
   }
   $('#btn-publish-top').addEventListener('click', () => { const ch = changes(); if (ch && !ch.any) { U.notify('הכול כבר מפורסם.', 'info'); return; } setTab('publish'); });
-  /* מעבר בלחיצה לניהול אתר הסקר — כבר מחוברים, בלי כניסה נוספת */
-  $('#btn-survey').hidden = !CLOUD || EMBED;
-  $('#btn-survey').addEventListener('click', async () => {
-    const b = $('#btn-survey'); b.disabled = true;
-    try { if (A.saveTimer) persist(); location.href = await S.sb.handoff.toSurvey(); }
-    catch (err) { U.notify(`המעבר לא הצליח: ${err.message}`, 'error'); b.disabled = false; }
-  });
+  /* בתוך דף הניהול המשותף, תפריט הצד של אתר הסקר בוחר את החלק */
+  if (EMBED && CLOUD) {
+    const parentOrigin = new URL(S.sb.cfg.apiBase).origin;
+    window.addEventListener('message', (e) => { if (e.origin === parentOrigin && e.data?.type === 'rosh-admin-tab') setTab(e.data.tab, { push: false }); });
+  }
 
   /* ---------- העברת ההקלטות ---------- */
 

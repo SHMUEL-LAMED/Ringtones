@@ -45,6 +45,7 @@ await ctx.route(`${API}/**`, async (route) => {
   if (p === '/api/program/handoff' && m === 'POST') { handoffs++; return json({ code: 'c0ffee', toSurvey: `${API}/api/program/handoff/c0ffee` }); }
   if (p === '/api/program/auth/handoff') { const b = req.postDataJSON(); return b.code === 'c0ffee' ? json({ token: 'handed', user: { email: 'admin@example.com', name: 'בדיקה', isAdmin: true } }) : json({ error: 'קוד המעבר פג' }, 401); }
   if (p === '/api/program/logout') { logouts++; return json({ ok: true }); }
+  if (p === '/api/program/handoff/c0ffee') return route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>ניהול משותף</title>' });
   if (p.startsWith('/api/program/stream/')) return route.fulfill({ status: 206, headers: { 'access-control-allow-origin': '*', 'content-range': 'bytes 0-1/100', 'content-type': 'audio/mpeg' }, body: Buffer.from([0, 0]) });
   return json({ error: 'לא נמצא' }, 404);
 });
@@ -56,7 +57,7 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.
 page.on('dialog', (d) => d.accept());
 
 /* ---------- השער בלי סשן ---------- */
-await page.goto(`${BASE}/admin.html`);
+await page.goto(`${BASE}/admin.html?standalone=1`);
 await page.waitForSelector('#admin-gate');
 await page.waitForTimeout(800);
 check(await page.evaluate(() => document.body.classList.contains('admin-locked')), 'הניהול נעול בלי מנהל מחובר');
@@ -65,7 +66,7 @@ check((await page.locator('#gate-login:visible').count()) === 1 || (await page.l
 
 /* ---------- מנהל מחובר ---------- */
 await page.evaluate(() => { localStorage.clear(); localStorage.setItem('rosh:cf:session', JSON.stringify({ token: 'test', user: { email: 'admin@example.com', name: 'בדיקה', isAdmin: true } })); });
-await page.goto(`${BASE}/admin.html`);
+await page.goto(`${BASE}/admin.html?standalone=1`);
 await page.waitForSelector('#panel .workspace', { timeout: 15000 });
 await page.evaluate(() => document.querySelector('#dlg-guide')?.close());
 check(!(await page.evaluate(() => document.body.classList.contains('admin-locked'))), 'מנהל מחובר רואה את הניהול');
@@ -76,7 +77,6 @@ check(!/רשימת השירים|זמר\/ת|הדבקת רשימה/.test(await pag
 await page.waitForFunction(() => document.querySelector('#status-text').textContent.includes('הכול מפורסם'), null, { timeout: 10000 }).catch(() => {});
 await page.waitForLoadState('networkidle');
 check((await page.locator('#status-text').innerText()).includes('הכול מפורסם'), 'המצב: הכול מפורסם');
-check(await page.locator('#btn-survey').isVisible(), 'כפתור מעבר לניהול הסקר');
 
 // תוכנית חדשה
 await page.click('[data-op="new"]');
@@ -160,11 +160,11 @@ check(published.episodes.some((e) => e.title === 'תוכנית בדיקה חדש
 check(settings.banner.enabled && settings.banner.text.includes('חמישי') && settings.updates.length === 1, 'ההודעה והעדכונים פורסמו');
 check(settings.banner.sites?.survey === true && settings.banner.sites?.program === true, 'ההודעה מסומנת לשני האתרים');
 check(published.episodes.some((e) => e.title === 'תוכנית בדיקה חדשה' && e.surveyId === 'main'), 'הקישור למצעד נשמר בתוכנית');
-// מעבר בלחיצה לניהול הסקר
-await page.click('#btn-survey');
-await page.waitForTimeout(600);
-check(handoffs === 1, 'המעבר לניהול הסקר ביקש קוד חד־פעמי');
-await page.goBack().catch(() => {});
+// דף ניהול אחד: הכתובת של ניהול התוכניות עוברת לדף הניהול המשותף, לאותו חלק, בלי כניסה נוספת
+await page.goto(`${BASE}/admin.html#site`);
+await page.waitForURL(/\/api\/program\/handoff\/c0ffee#prog-site$/, { timeout: 15000 }).catch(() => {});
+check(/\/api\/program\/handoff\/c0ffee#prog-site$/.test(page.url()) && handoffs === 1, 'ניהול התוכניות נפתח בתוך דף הניהול המשותף');
+await page.goto(`${BASE}/index.html`);
 check(!(await page.evaluate(() => localStorage.getItem('rosh:override'))), 'אחרי פרסום הטיוטה המקומית נמחקה');
 
 /* ---------- האתר הציבורי אחרי הפרסום ---------- */
@@ -204,14 +204,15 @@ await page.evaluate(() => document.querySelector('#dlg-guide')?.close());
 check(!(await page.evaluate(() => document.body.classList.contains('admin-locked'))), 'קוד המעבר מחבר לניהול בלי כניסה נוספת');
 check(await page.evaluate(() => document.body.classList.contains('embed') && !location.search.includes('handoff')), 'מצב מוטמע, והקוד נמחק מהכתובת');
 check(!(await page.locator('#site-header .site-header').count()), 'במצב מוטמע אין כותרת אתר');
+check(!(await page.locator('#admin-tabs').isVisible()), 'בדף המשותף אין תפריט לשוניות כפול');
 check(await page.evaluate(() => JSON.parse(localStorage.getItem('rosh:cf:session') || 'null')?.token === 'handed'), 'הסשן מהמעבר נשמר');
-await page.click('[data-tab="publish"]');
+await page.evaluate(() => { location.hash = 'publish'; });
 await page.waitForSelector('.pub-card');
 await page.click('summary');
 await page.click('[data-op="logout"]');
 await page.waitForTimeout(500);
 check(logouts === 1, 'התנתקות מנתקת גם בשרת (מכל המקומות)');
-await page.goto(`${BASE}/admin.html?handoff=bad000`);
+await page.goto(`${BASE}/admin.html?handoff=bad000&standalone=1`);
 await page.waitForSelector('#admin-gate');
 await page.waitForTimeout(800);
 check(await page.evaluate(() => document.body.classList.contains('admin-locked')), 'קוד מעבר שפג משאיר את הניהול נעול');
