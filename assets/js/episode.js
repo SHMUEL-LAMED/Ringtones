@@ -1,4 +1,4 @@
-/* דף תוכנית: הקלטה בנגן של האתר, רשימת השירים עם קפיצה לרגע, שיתוף, קודמת/הבאה,
+/* דף תוכנית: הקלטה בנגן של האתר, קישור לכל רגע, שיתוף, קודמת/הבאה,
    ועוד מאותה עונה. ההקלטה מוזרמת ישירות — בלי נגן חיצוני. */
 (async function () {
   'use strict';
@@ -50,7 +50,6 @@
     <div class="meta">
       ${ep.date ? `<span class="pill">${esc(fmtWeekday(ep.date))}, ${esc(fmtDate(ep.date))}</span>` : ''}
       ${ep.duration ? `<span class="pill teal">${esc(fmtDuration(ep.duration))}</span>` : ''}
-      ${ep.tracks.length ? `<span class="pill">♫ ${ep.tracks.length} שירים</span>` : ''}
       ${ep.guests.length ? `<span class="pill navy">עם ${esc(ep.guests.join(', '))}</span>` : ''}
       ${ep.tags.map((t) => `<a class="chip" href="archive.html?q=${encodeURIComponent(t)}">${esc(t)}</a>`).join('')}
     </div>
@@ -66,21 +65,7 @@
 </div>
 <div class="now-playing-strip" id="now-strip" hidden></div>
 ${U.messageForm({ episodeId: ep.id, title: 'תגובה על התוכנית', hint: 'מה חשבתם? ההודעה מגיעה למגישים.' }) ? `<div class="card-body" style="padding-top:0">${U.messageForm({ episodeId: ep.id, title: 'תגובה על התוכנית', hint: 'מה חשבתם? ההודעה מגיעה למגישים.' })}</div>` : ''}
-${ep.tracks.length ? `
-<div class="card-body">
-  <div class="tracks"><fieldset>
-    <legend><b>מה השמענו בתוכנית</b><small>${stream ? 'לחצו על שיר כדי לקפוץ אליו בהקלטה. Shift + חץ עובר בין שירים.' : 'רשימת השירים לפי סדר ההשמעה.'}</small></legend>
-    ${ep.tracks.map((t, i) => `
-    <div class="row" data-track="${i}">
-      <button type="button" class="row-main" data-at="${t.at}" ${stream ? '' : 'disabled'} aria-label="${esc(t.title)}${t.artist ? `, ${esc(t.artist)}` : ''}, ${fmtTime(t.at)}">
-        <span class="n"><span>${i + 1}</span></span>
-        <span class="txt"><b>${esc(t.title)}</b>${t.artist || t.note ? `<small>${esc(t.artist)}${t.note ? `${t.artist ? ' · ' : ''}${esc(t.note)}` : ''}</small>` : ''}</span>
-      </button>
-      <span class="time">${fmtTime(t.at)}</span>
-      <button type="button" class="icon-btn gold" data-copy-at="${t.at}" aria-label="העתקת קישור לרגע ${fmtTime(t.at)}" title="קישור לרגע הזה">←</button>
-    </div>`).join('')}
-  </fieldset></div>
-</div>` : ''}`;
+`;
 
   // קודמת / הבאה
   const nb = S.neighbors(ep.id);
@@ -115,14 +100,6 @@ ${nb.newer ? `<a href="episode.html?ep=${encodeURIComponent(nb.newer.slug)}"><sm
       (await U.copy(url)) ? U.notify('הקישור לתוכנית הועתק.', 'success') : U.notify('ההעתקה נכשלה. הכתובת: ' + url, 'error');
       return;
     }
-    const cp = e.target.closest('[data-copy-at]');
-    if (cp) {
-      const url = new URL(`episode.html?ep=${encodeURIComponent(ep.slug)}&t=${cp.dataset.copyAt}`, location.href).href;
-      (await U.copy(url)) ? U.notify(`הקישור לרגע ${fmtTime(cp.dataset.copyAt)} הועתק.`, 'success') : U.notify('ההעתקה נכשלה. הכתובת: ' + url, 'error');
-      return;
-    }
-    const row = e.target.closest('[data-at]');
-    if (row) { const at = Number(row.dataset.at); Pl.isCurrent(ep.id) ? (Pl.seek(at), Pl.play()) : Pl.load(ep, { at }); }
   });
   document.addEventListener('click', (e) => {
     const play = e.target.closest('#more [data-play]');
@@ -134,15 +111,11 @@ ${nb.newer ? `<a href="episode.html?ep=${encodeURIComponent(nb.newer.slug)}"><sm
     const mine = ev.detail.episode?.id === ep.id;
     const btn = A.querySelector('[data-play]');
     if (btn) btn.innerHTML = mine && !Pl.paused ? 'השהיה <span>■</span>' : 'האזנה לתוכנית <span>▶</span>';
-    A.querySelectorAll('[data-track]').forEach((r) => {
-      if (mine && Number(r.dataset.track) === ev.detail.trackIndex) r.setAttribute('aria-current', 'true'); else r.removeAttribute('aria-current');
-    });
     A.querySelector('[data-vinyl]')?.classList.toggle('live', mine);
     document.querySelectorAll('#more .ep-card').forEach((c) => c.classList.toggle('current', c.dataset.ep === ev.detail.episode?.id));
     if (mine && ev.detail.type !== 'close') {
-      const tr = ep.tracks[ev.detail.trackIndex];
       strip.hidden = false;
-      strip.innerHTML = `<span>${Pl.paused ? 'מושהה ב־' : 'מתנגן עכשיו ·'} ${fmtTime(ev.detail.time)}</span>${tr ? `<b>♫ ${esc(tr.title)}${tr.artist ? ` — ${esc(tr.artist)}` : ''}</b>` : ''}`;
+      strip.innerHTML = `<span>${Pl.paused ? 'מושהה ב־' : 'מתנגן עכשיו ·'} ${fmtTime(ev.detail.time)}</span>`;
     } else strip.hidden = true;
   });
 })();

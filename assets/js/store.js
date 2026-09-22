@@ -333,13 +333,6 @@
     return { newer: i > 0 ? list[i - 1] : null, older: i >= 0 && i < list.length - 1 ? list[i + 1] : null };
   }
 
-  /** אינדקס כל השירים בכל התוכניות — "איפה השמעתם את…" */
-  function songIndex() {
-    const out = [];
-    for (const e of episodes()) for (const t of e.tracks) out.push({ episode: e, track: t });
-    return out;
-  }
-
   const fold = (s) => String(s || '').toLowerCase().replace(/[֑-ׇ]/g, '').replace(/[״"'׳]/g, '').replace(/\s+/g, ' ').trim();
 
   function searchEpisodes(q, list = episodes()) {
@@ -347,18 +340,9 @@
     if (!q) return list;
     const terms = q.split(' ');
     return list.filter((e) => {
-      const hay = fold([e.title, e.description, e.number, e.date, ...e.tags, ...e.guests, ...e.tracks.map((t) => `${t.title} ${t.artist}`)].join(' '));
+      const hay = fold([e.title, e.description, e.number, e.date, ...e.tags, ...e.guests].join(' '));
       return terms.every((t) => hay.includes(t));
     });
-  }
-  function searchSongs(q, limit = 40) {
-    q = fold(q);
-    if (q.length < 2) return [];
-    const terms = q.split(' ');
-    return songIndex().filter(({ track }) => {
-      const hay = fold(`${track.title} ${track.artist} ${track.note}`);
-      return terms.every((t) => hay.includes(t));
-    }).slice(0, limit);
   }
 
   /* ---------- העדפות ומיקומי האזנה ---------- */
@@ -444,7 +428,7 @@
 
   window.RoshStore = {
     state, ready, load, sb, prefs, positions, last, later, history, admin,
-    episodes, seasons, bySlug, byId, latest, featured, neighbors, songIndex, searchEpisodes, searchSongs,
+    episodes, seasons, bySlug, byId, latest, featured, neighbors, searchEpisodes,
     bannerActive, scheduled,
     get site() { return state.site; },
     get data() { return state.data; },

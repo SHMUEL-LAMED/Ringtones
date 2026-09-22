@@ -1,4 +1,4 @@
-/* ארכיון התוכניות: חיפוש, סינון לפי עונה, מיון, תצוגות, וחיפוש שירים חוצה־תוכניות. */
+/* ארכיון התוכניות: חיפוש, סינון לפי עונה, מיון ותצוגות. */
 (async function () {
   'use strict';
   const U = window.RoshUI, S = window.RoshStore, Pl = window.RoshPlayer;
@@ -95,7 +95,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
 <div class="row${Pl.isCurrent(e.id) ? ' selected' : ''}" data-ep="${esc(e.id)}" style="${U.coverVars(e)}">
   <a class="row-main" href="episode.html?ep=${encodeURIComponent(e.slug)}">
     <i aria-hidden="true" style="background:hsl(var(--h) 70% 40% / .5);border-color:hsl(var(--h) 80% 60% / .6)">${e.number ?? '♫'}</i>
-    <span class="txt"><b>${mark(e.title, state.q)}</b><small>${esc(fmtDate(e.date))}${e.tracks.length ? ` · ${e.tracks.length} שירים` : ''}${e.guests.length ? ` · עם ${esc(e.guests.join(', '))}` : ''}</small></span>
+    <span class="txt"><b>${mark(e.title, state.q)}</b><small>${esc(fmtDate(e.date))}${e.guests.length ? ` · עם ${esc(e.guests.join(', '))}` : ''}</small></span>
   </a>
   ${e.duration ? `<span class="time">${fmtTime(e.duration)}</span>` : ''}
   ${e.stream ? `<button type="button" class="icon-btn solid" data-play="${esc(e.id)}" aria-label="האזנה ל${esc(e.title)}">▶</button>` : ''}
@@ -106,20 +106,6 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
     const list = filtered();
     document.getElementById('count').textContent = list.length === all.length ? `${all.length} תוכניות` : `${list.length} מתוך ${all.length}`;
     const R = document.getElementById('results');
-    const H = document.getElementById('song-hits');
-
-    // חיפוש שירים חוצה־תוכניות
-    const hits = state.q.trim().length >= 2 ? S.searchSongs(state.q) : [];
-    H.innerHTML = hits.length ? `
-<div class="grid-head" style="margin-top:4px"><div><p class="kicker">איפה השמענו את זה</p><h2>שירים שנמצאו</h2></div><span class="pill">${hits.length}</span></div>
-<div class="song-hits" style="margin-bottom:22px">
-  ${hits.map(({ episode: e, track: tr }) => `
-  <a class="song-hit" href="episode.html?ep=${encodeURIComponent(e.slug)}&t=${tr.at}" data-hit="${esc(e.id)}" data-at="${tr.at}">
-    <span class="icon-btn${e.stream ? ' solid' : ' gold'}" aria-hidden="true">${e.stream ? '▶' : '♫'}</span>
-    <span class="txt"><b>${mark(tr.title, state.q)}${tr.artist ? ` — ${mark(tr.artist, state.q)}` : ''}</b><small>${esc(e.title)} · ${esc(fmtDate(e.date, true))}${tr.note ? ` · ${esc(tr.note)}` : ''}</small></span>
-    <span class="time">${fmtTime(tr.at)}</span>
-  </a>`).join('')}
-</div>` : '';
 
     if (!list.length) {
       R.innerHTML = `<div class="state"><span class="mark">♫</span><h3>לא נמצאו תוכניות</h3><p>${state.q ? `אין תוכנית שמתאימה ל"${esc(state.q)}". נסו מילה אחרת או נקו את הסינון.` : 'עדיין אין תוכניות בעונה הזו.'}</p>${state.q || state.season || state.audio || state.later ? '<button type="button" class="btn" data-clear>ניקוי הסינון</button>' : ''}</div>`;

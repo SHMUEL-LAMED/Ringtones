@@ -39,7 +39,6 @@
   if (!feat) {
     F.innerHTML = `<div class="card"><div class="state"><span class="mark">♫</span><h3>עדיין אין תוכניות</h3><p>הוסיפו את התוכנית הראשונה מאזור הניהול.</p><a class="btn primary" href="admin.html">לאזור הניהול <span>←</span></a></div></div>`;
   } else {
-    const tracks = feat.tracks.slice(0, 6);
     const season = S.seasons().find((s) => s.id === feat.season);
     F.innerHTML = `
 <article class="card featured-card" style="${U.coverVars(feat)}">
@@ -53,7 +52,6 @@
       <div class="meta">
         ${feat.date ? `<span class="pill">${esc(U.fmtWeekday(feat.date))}, ${esc(fmtDate(feat.date))}</span>` : ''}
         ${feat.duration ? `<span class="pill teal">${esc(fmtDuration(feat.duration))}</span>` : ''}
-        ${feat.tracks.length ? `<span class="pill">♫ ${feat.tracks.length} שירים</span>` : ''}
         ${feat.guests.length ? `<span class="pill navy">עם ${esc(feat.guests.join(', '))}</span>` : ''}
         ${feat.tags.map((t) => `<a class="chip" href="archive.html?q=${encodeURIComponent(t)}">${esc(t)}</a>`).join('')}
       </div>
@@ -65,19 +63,6 @@
       </div>
     </div>
   </div>
-  ${tracks.length ? `
-  <div class="card-body" style="padding-top:0">
-    <div class="tracks"><fieldset><legend><b>מה השמענו</b><small>${feat.tracks.length > tracks.length ? `${tracks.length} מתוך ${feat.tracks.length} שירים — הרשימה המלאה בדף התוכנית` : 'לחצו על שיר כדי לקפוץ אליו בהקלטה'}</small></legend>
-      ${tracks.map((t, i) => `
-      <div class="row" data-track="${i}">
-        <button type="button" class="row-main" data-cue="${esc(feat.id)}" data-at="${t.at}" ${feat.stream ? '' : 'disabled'}>
-          <span class="n"><span>${i + 1}</span></span>
-          <span class="txt"><b>${esc(t.title)}</b>${t.artist ? `<small>${esc(t.artist)}</small>` : ''}</span>
-        </button>
-        <span class="time">${fmtTime(t.at)}</span>
-      </div>`).join('')}
-    </fieldset></div>
-  </div>` : ''}
 </article>`;
   }
 
@@ -119,14 +104,14 @@
   const St = document.getElementById('stats');
   const nShows = list.filter((e) => e.season !== 'sets' && e.season !== 'legacy').length;
   const nLegacy = list.filter((e) => e.season === 'legacy').length;
-  const nSongs = list.reduce((n, e) => n + e.tracks.length, 0);
+  const nAudio = list.filter((e) => e.stream).length;
   St.setAttribute('data-reveal', '');
   St.innerHTML = list.length ? `
 <div class="stats">
   <div class="stat"><b data-count="${nShows}">0</b><small>תוכניות ופרקי בונוס</small></div>
   <div class="stat"><b data-count="${nLegacy}">0</b><small>הקלטות מקו המכלול</small></div>
   <div class="stat"><b data-count="${sets.length}">0</b><small>סטים מיוחדים</small></div>
-  <div class="stat"><b data-count="${nSongs || list.length}">0</b><small>${nSongs ? 'שירים ברשימות' : 'הקלטות להאזנה'}</small></div>
+  <div class="stat"><b data-count="${nAudio}">0</b><small>הקלטות להאזנה</small></div>
 </div>` : '';
 
   /* ---------- הקהילה ---------- */
@@ -177,10 +162,9 @@
   });
 
   window.addEventListener('rosh:player', (ev) => {
-    const { episode, trackIndex } = ev.detail;
+    const { episode } = ev.detail;
     document.querySelectorAll('.ep-card').forEach((c) => c.classList.toggle('current', !!episode && c.dataset.ep === episode.id));
     if (feat && episode?.id === feat.id) {
-      F.querySelectorAll('[data-track]').forEach((r) => { if (Number(r.dataset.track) === trackIndex) r.setAttribute('aria-current', 'true'); else r.removeAttribute('aria-current'); });
       const btn = F.querySelector('[data-play]');
       if (btn) btn.innerHTML = Pl.paused ? 'האזנה לתוכנית <span>▶</span>' : 'השהיה <span>■</span>';
     }
