@@ -597,6 +597,7 @@ textarea:focus-visible, [tabindex]:focus-visible, summary:focus-visible {
   box-shadow: var(--shadow-card);
 }
 .search-box input { flex: 1; min-width: 0; border: 0; background: transparent; font-size: 15px; padding: 8px 0; }
+.search-box input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
 .search-box input:focus { outline: none; }
 .search-box .search-glyph { color: var(--gold-ink); font-weight: 900; font-size: 16px; }
 .search-box kbd {

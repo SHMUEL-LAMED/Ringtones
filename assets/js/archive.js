@@ -22,13 +22,35 @@
   };
 
   const qEl = document.getElementById('q');
+  const searchClearEl = document.getElementById('search-clear');
+  const kbdEl = document.querySelector('#search-form kbd');
   qEl.value = state.q;
   document.getElementById('search-form').addEventListener('submit', (e) => e.preventDefault());
+
+  function updateSearchClearBtn() {
+    const hasVal = Boolean(qEl.value.trim());
+    if (searchClearEl) searchClearEl.style.display = hasVal ? 'grid' : 'none';
+    if (kbdEl) kbdEl.style.display = hasVal ? 'none' : '';
+  }
+
   let t;
-  qEl.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { state.q = qEl.value; render(); }, 120); });
+  qEl.addEventListener('input', () => {
+    updateSearchClearBtn();
+    clearTimeout(t);
+    t = setTimeout(() => { state.q = qEl.value; render(); }, 120);
+  });
+  if (searchClearEl) {
+    searchClearEl.addEventListener('click', () => {
+      qEl.value = '';
+      state.q = '';
+      updateSearchClearBtn();
+      render();
+      qEl.focus();
+    });
+  }
   document.addEventListener('keydown', (e) => {
     if (e.key === '/' && !U.isTyping(e)) { e.preventDefault(); qEl.focus(); qEl.select(); }
-    if (e.key === 'Escape' && document.activeElement === qEl) { qEl.value = ''; state.q = ''; render(); }
+    if (e.key === 'Escape' && document.activeElement === qEl) { qEl.value = ''; state.q = ''; updateSearchClearBtn(); render(); }
   });
 
   const seasons = S.seasons();
@@ -152,6 +174,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
   }
 
   renderFilters();
+  updateSearchClearBtn();
   render();
 
   document.addEventListener('click', (e) => {
