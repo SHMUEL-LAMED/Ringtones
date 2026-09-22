@@ -47,7 +47,9 @@
     try { allowed = await S.sb.isAdmin(); } catch { /* show the sign-in gate */ }
     document.body.classList.toggle('admin-locked', !allowed);
     $('#admin-gate').hidden = allowed;
-    $('#admin-gate-text').textContent = S.sb.user ? 'לחשבון הזה אין הרשאת ניהול, או שלא ניתן לאמת אותה כרגע.' : 'התחברו עם חשבון המנהל כדי להעלות ולערוך תוכניות.';
+    $('#admin-gate-text').textContent = S.sb.user
+      ? 'לחשבון הזה אין הרשאת ניהול באתר הסקר, או שלא ניתן לאמת אותה כרגע.'
+      : 'מי שמנהל את אתר הסקר מנהל גם כאן. אם אתם כבר מחוברים שם, הכניסה מיידית; אחרת ייפתח חלון כניסה עם Google.';
     return allowed;
   }
   window.addEventListener('beforeunload', (e) => { if (A.dirty) { e.preventDefault(); e.returnValue = ''; } });
@@ -537,8 +539,8 @@ ${S.state.source === 'cloudflare' ? (u ? `
 <div class="sb-box"><b>מחוברים</b><span class="who">${esc(u.email)}</span><button type="button" class="btn small" data-set="logout">התנתקות</button></div>` : `
 <div class="sb-box">
   <b>התחברות למנהל</b>
-  <span class="cue-hint">אותו חשבון Google ואותן הרשאות של אתר הסקר.</span>
-  <button type="button" class="btn primary" data-set="google">התחברות עם Google</button>
+  <span class="cue-hint">מנהלי אתר הסקר מנהלים גם כאן. מי שכבר מחובר שם נכנס מיד; אחרת נפתח חלון כניסה עם Google, ורשימת המנהלים של אתר הסקר מכריעה.</span>
+  <button type="button" class="btn primary" data-set="google">התחברות דרך אתר הסקר</button>
 </div>`) : ''}
 <div class="track-tools" style="margin-top:14px">
   <button type="button" class="btn small" data-set="reload">משיכה מחדש מהמקור</button>
@@ -552,7 +554,7 @@ ${S.state.source === 'cloudflare' ? (u ? `
     const b = ev.target.closest('[data-set]'); if (!b || b.tagName === 'FORM') return;
     switch (b.dataset.set) {
       case 'logout': S.sb.signOut(); await checkAccess(); U.notify('התנתקתם.', 'success'); openSettings(); paintStatus(); break;
-      case 'google': try { await S.sb.signInWithGoogle(); await checkAccess(); U.notify('התחברתם לניהול.', 'success'); dlgSettings.close(); paintStatus(); loadOriginIds(); } catch (err) { U.notify(`ההתחברות נכשלה: ${err.message}`, 'error'); } break;
+      case 'google': try { await S.sb.signIn(); await checkAccess(); U.notify('התחברתם לניהול.', 'success'); dlgSettings.close(); paintStatus(); loadOriginIds(); } catch (err) { U.notify(`ההתחברות נכשלה: ${err.message}`, 'error'); } break;
       case 'reload': { if (A.dirty && !confirm('יש שינויים שלא נשמרו. להמשיך?')) return; const stop = U.notify('מושכים מהמקור…', 'progress'); try { const o = await S.admin.pullOrigin(); A.data = clone(o); A.originIds = new Set(o.episodes.map((e) => e.id)); A.removed.clear(); A.dirty = true; stop(); renderList(); renderEditor(); dlgSettings.close(); U.notify('נמשך מהמקור אל הטיוטה. שמרו כדי להחיל.', 'success'); } catch (err) { stop(); U.notify(`המשיכה נכשלה: ${err.message}`, 'error'); } break; }
       case 'discard': if (confirm('למחוק את הטיוטה המקומית? השינויים שלא פורסמו יאבדו.')) { S.admin.clearOverride(); location.reload(); } break;
     }
