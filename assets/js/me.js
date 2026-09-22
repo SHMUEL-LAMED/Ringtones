@@ -27,9 +27,12 @@
     <p class="kicker">האזור האישי</p>
     <h1>שלום, מאזין.</h1>
     <p class="desc">התחברו כדי שהאזור האישי יזהה אתכם: ממשיכים מאיפה שעצרתם, "לאחר כך", היסטוריית ההאזנה וההעדפות — הכול במקום אחד.${S.sb.configured ? '' : ' (ההתחברות אינה מוגדרת באתר הזה; הנתונים שלמטה נשמרים במכשיר.)'}</p>
-    <div class="actions">${S.sb.configured ? '<button type="button" class="btn xl primary" data-login>התחברות עם Google <span>←</span></button>' : ''}<a class="btn" href="archive.html">לארכיון</a></div>
+    <div class="actions">${S.sb.configured ? '<div class="google-slot" data-google></div>' : ''}<a class="btn" href="archive.html">לארכיון</a></div>
+    ${S.sb.configured ? '<p class="cue-hint" style="margin-top:10px;font-size:12px;color:var(--muted);font-weight:700"><a href="#" data-login>בעיה עם הכפתור? כניסה דרך אתר הסקר</a></p>' : ''}
   </div>
 </div>`;
+      if (S.sb.configured) S.sb.google(P.querySelector('[data-google]'), { onDone: async (u) => { await S.sb.isAdmin().catch(() => {}); renderProfile(false); paintHeader(); renderSubscription(); U.notify(`שלום, ${firstName(u) || 'מאזין'}. התחברתם.`, 'success'); }, onError: (err) => U.notify(`ההתחברות לא הצליחה: ${err.message}`, 'error') })
+        .catch((err) => { const g = P.querySelector('[data-google]'); if (g) g.innerHTML = `<button type="button" class="btn xl primary" data-login>התחברות עם Google <span>←</span></button><small class="cue-hint">${esc(err.message)}</small>`; });
       return;
     }
     const name = firstName(u);
@@ -47,6 +50,14 @@
     </div>
   </div>
 </div>`;
+  }
+
+  /** רשימת התפוצה באזור האישי: הצטרפות או הסרה בלחיצה */
+  function renderSubscription() {
+    const box = document.getElementById('me-subscribe'); if (!box) return;
+    if (!S.sb.configured || !S.sb.user) { box.innerHTML = ''; return; }
+    box.innerHTML = `<div class="section-title"><div><p class="kicker">רשימת התפוצה</p><h2>התוכנית החדשה במייל</h2></div></div><div class="card-body"><div data-subscribe-host></div></div>`;
+    U.mountSubscribe(box.querySelector('[data-subscribe-host]'));
   }
 
   function renderLists() {
@@ -115,6 +126,7 @@
   /* ---------- התחלה ---------- */
   renderProfile(!!S.sb.user);
   renderLists();
+  renderSubscription();
   if (S.sb.user) {
     try { await S.sb.isAdmin(); } catch { /* נשאר עם מה שיש */ }
     renderProfile(false); paintHeader();
@@ -123,12 +135,13 @@
   /* ---------- אירועים ---------- */
   document.addEventListener('click', async (e) => {
     if (e.target.closest('[data-login]')) {
+      e.preventDefault();
       const b = e.target.closest('[data-login]'); b.disabled = true;
-      try { const u = await S.sb.signIn(); await S.sb.isAdmin().catch(() => {}); renderProfile(false); paintHeader(); U.notify(`שלום, ${firstName(u) || 'מאזין'}. התחברתם.`, 'success'); }
+      try { const u = await S.sb.signIn(); await S.sb.isAdmin().catch(() => {}); renderProfile(false); paintHeader(); renderSubscription(); U.notify(`שלום, ${firstName(u) || 'מאזין'}. התחברתם.`, 'success'); }
       catch (err) { U.notify(`ההתחברות נכשלה: ${err.message}`, 'error'); b.disabled = false; }
       return;
     }
-    if (e.target.closest('[data-logout]')) { S.sb.signOut(); renderProfile(false); paintHeader(); U.notify('התנתקתם.', 'success'); return; }
+    if (e.target.closest('[data-logout]')) { S.sb.signOut(); renderProfile(false); paintHeader(); renderSubscription(); U.notify('התנתקתם.', 'success'); return; }
     const play = e.target.closest('[data-play]');
     if (play) { const ep = S.byId(play.dataset.play); if (ep) Pl.isCurrent(ep.id) ? Pl.toggle() : Pl.load(ep); return; }
     const cue = e.target.closest('[data-cue]');

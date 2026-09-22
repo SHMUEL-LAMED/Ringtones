@@ -1,606 +1,1014 @@
-/* אזור הניהול של ראש בראש.
-   עובדים על טיוטה: כל שינוי נשמר בדפדפן (Ctrl+S) ומופיע באתר במכשיר הזה בלבד.
-   "פרסום" מעביר את הטיוטה למקור — Cloudflare (אם מחובר) או קובץ episodes.json להורדה. */
+/* אזור הניהול של ראש בראש — ארבעה חלקים: תוכניות, האתר, מאזינים, פרסום.
+   כל שינוי נשמר מיד במכשיר הזה (טיוטה) וגם בטיוטה המשותפת בשרת, כך שאפשר
+   להתחיל במחשב ולהמשיך בטלפון. "פרסום לאתר" מעביר את הטיוטה לכולם.
+   בלי קודים, בלי מזהים, בלי JSON. */
 (async function () {
   'use strict';
   const U = window.RoshUI, S = window.RoshStore;
-  const { esc, fmtTime, parseTime, fmtDate, fmtDuration, slugify } = U;
+  const { esc, fmtDate, fmtDuration, slugify } = U;
   const clone = (o) => JSON.parse(JSON.stringify(o));
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
   await S.ready;
   const site = S.site || {};
-  $('#site-header').innerHTML = U.header('admin', site);
+  const paintHeader = () => { $('#site-header').innerHTML = U.header('admin', site); };
+  paintHeader();
   $('#site-footer').innerHTML = U.footer(site);
 
+  const TABS = ['programs', 'site', 'listeners', 'publish'];
+  const CLOUD = S.state.source === 'cloudflare';
   const A = {
-    data: clone(S.data),
-    originIds: new Set(),
-    removed: new Set(),
-    selected: null,
-    dirty: false,
+    data: clone(S.data),   // הטיוטה שעובדים עליה
+    origin: null,          // מה שמפורסם באתר כרגע (להשוואה)
+    originError: false,
+    selected: null,        // התוכנית שנבחרה
+    tab: 'programs',
     q: '',
     filter: 'all',
-    previewTimer: null,
+    bulk: false,           // מצב בחירה מרובה
+    picked: new Set(),
+    saveTimer: null, syncTimer: null, previewTimer: null,
+    syncState: '',         // '', 'saving', 'saved', 'error'
+    checks: { audio: null, media: null },  // תוצאות הבדיקות
+    versions: null,        // רשימת הגרסאות מהשרת
+    versionCache: new Map(),
+    stats: null, messages: null, admins: null, subs: null,
   };
+  if (!A.data.settings) A.data.settings = S.admin.normSettings({});
 
-  // מזהי המקור — כדי לדעת מה למחוק ב־Cloudflare בפרסום
-  async function loadOriginIds() {
-    try {
-      const o = await S.admin.pullOrigin();
-      o.episodes.forEach((e) => A.originIds.add(e.id));
-      // כשהחיבור ל־D1 חדש והטבלה עדיין ריקה, שומרים בעורך את 86 התוכניות
-      // מהקטלוג המקומי. כך כפתור "פרסום" מעלה אותן למסד במקום להחליף את
-      // הרשימה במסך ריק.
-      const emptyCloudflare = S.state.source === 'cloudflare' && o.episodes.length === 0 && A.data.episodes.length > 0;
-      if (S.state.loadedFrom !== 'override' && !emptyCloudflare) { A.data = clone(o); renderList(); }
+  /* ---------- שמירה אוטומטית: במכשיר ובטיוטה המשותפת ---------- */
+
+  function touch() {
+    clearTimeout(A.saveTimer);
+    A.saveTimer = setTimeout(persist, 400);
+    paintStatus();
+  }
+  function persist() {
+    clearTimeout(A.saveTimer); A.saveTimer = null;
+    S.admin.saveOverride(A.data);
+    if (CLOUD && S.sb.user?.isAdmin) { clearTimeout(A.syncTimer); A.syncTimer = setTimeout(sync, 1500); }
+    paintStatus();
+  }
+  async function sync() {
+    A.syncState = 'saving'; paintStatus();
+    try { const r = await S.sb.draft.put(A.data); S.admin.saveOverride(A.data, r.updatedAt); A.syncState = 'saved'; }
+    catch { A.syncState = 'error'; }
+    paintStatus();
+  }
+  window.addEventListener('beforeunload', () => { if (A.saveTimer) persist(); });
+
+  /** מה השתנה לעומת מה שמפורסם */
+  function changes() {
+    if (!A.origin) return null;
+    const key = (e) => JSON.stringify(e);
+    const om = new Map(A.origin.episodes.map((e) => [e.id, key(e)]));
+    let added = 0, changed = 0;
+    for (const e of A.data.episodes) {
+      if (!om.has(e.id)) added++;
+      else if (om.get(e.id) !== key(S.admin.normEpisode(e, 0))) changed++;
     }
-    catch { /* המקור לא זמין כרגע; נעבוד על מה שיש */ }
+    const removed = A.origin.episodes.filter((e) => !A.data.episodes.some((x) => x.id === e.id));
+    const seasons = key(S.admin.normalize({ seasons: A.origin.seasons }).seasons) !== key(S.admin.normalize({ seasons: A.data.seasons }).seasons);
+    const settings = key(S.admin.normSettings(A.origin.settings)) !== key(S.admin.normSettings(A.data.settings));
+    return { added, changed, removed, seasons, settings, any: !!(added || changed || removed.length || seasons || settings) };
   }
 
-  /* ---------- סטטוס ---------- */
+  /* ---------- בדיקת תקינות (בשפה פשוטה) ---------- */
+
+  function health() {
+    const must = [], should = [], dup = [];
+    const byNumber = new Map(), byTitle = new Map(), byDrive = new Map();
+    for (const e of A.data.episodes) {
+      const name = label(e);
+      if (!e.title.trim()) must.push({ id: e.id, text: `תוכנית בלי שם${e.number != null ? ` (תוכנית ${e.number})` : ''}${e.date ? ` מתאריך ${fmtDate(e.date, true)}` : ''}` });
+      if (!U.streamUrl(e)) should.push({ id: e.id, text: `"${name}" בלי הקלטה` });
+      if (!e.cover) should.push({ id: e.id, text: `"${name}" בלי תמונה`, fix: 'cover' });
+      if (!e.date) should.push({ id: e.id, text: `"${name}" בלי תאריך` });
+      if (!e.description.trim()) should.push({ id: e.id, text: `"${name}" בלי תיאור` });
+      if (e.publishAt && !S.scheduled(e) && !e.visible) should.push({ id: e.id, text: `"${name}" תוזמנה לפרסום אבל מוסתרת` });
+      if (e.number != null) { (byNumber.get(e.number) || byNumber.set(e.number, []).get(e.number)).push(e); }
+      const t = e.title.trim().toLowerCase(); if (t) (byTitle.get(t) || byTitle.set(t, []).get(t)).push(e);
+      const d = U.driveId(e); if (d) (byDrive.get(d) || byDrive.set(d, []).get(d)).push(e);
+    }
+    for (const [n, list] of byNumber) if (list.length > 1) dup.push({ ids: list.map((e) => e.id), text: `${list.length} תוכניות עם המספר ${n}` });
+    for (const [, list] of byTitle) if (list.length > 1) dup.push({ ids: list.map((e) => e.id), text: `${list.length} תוכניות בשם "${label(list[0])}"` });
+    for (const [, list] of byDrive) if (list.length > 1) dup.push({ ids: list.map((e) => e.id), text: `${list.length} תוכניות עם אותה הקלטה (${list.map(label).join(', ')})` });
+    return { must, should, dup };
+  }
 
   function paintStatus() {
-    const dot = $('#src-dot'), txt = $('#src-text');
-    const src = S.state.source === 'cloudflare' ? 'Cloudflare D1' : 'קובץ episodes.json';
-    if (S.admin.hasOverride) { dot.className = 'dot draft'; txt.textContent = `טיוטה מקומית · המקור: ${src}`; }
-    else if (S.state.error && S.state.loadedFrom !== 'override') { dot.className = 'dot err'; txt.textContent = `המקור לא נטען · ${src}`; }
-    else { dot.className = 'dot on'; txt.textContent = `המקור: ${src}${S.state.source === 'cloudflare' && S.sb.user ? ` · ${S.sb.user.email}` : ''}`; }
-    $('#dirty').hidden = !A.dirty;
+    const dot = $('#status-dot'), txt = $('#status-text');
+    const ch = changes();
+    const syncNote = A.syncState === 'saving' ? ' · שומרים בטיוטה המשותפת…' : A.syncState === 'error' ? ' · הטיוטה המשותפת לא נשמרה' : '';
+    if (!A.origin && A.originError) { dot.className = 'dot err'; txt.textContent = 'האתר לא זמין כרגע · השינויים נשמרים במכשיר הזה'; }
+    else if (!A.origin) { dot.className = 'dot'; txt.textContent = 'בודקים מה מפורסם באתר…'; }
+    else if (ch.any) { dot.className = 'dot draft'; txt.textContent = `יש שינויים שעדיין לא פורסמו${syncNote || ' · נשמרו'}`; }
+    else { dot.className = 'dot on'; txt.textContent = 'הכול מפורסם'; }
+    $('#btn-publish-top').classList.toggle('pulse', !!ch?.any);
   }
-  function markDirty() { A.dirty = true; $('#dirty').hidden = false; }
+
+  async function loadOrigin() {
+    try {
+      const o = await S.admin.pullOrigin();
+      A.origin = o; A.originError = false;
+      const emptyRemote = CLOUD && o.episodes.length === 0 && A.data.episodes.length > 0;
+      if (S.state.loadedFrom !== 'override' && !emptyRemote) { A.data = clone(o); }
+    } catch { A.originError = true; }
+    // הטיוטה המשותפת: אם במכשיר אחר עבדו אחרי השמירה האחרונה כאן — לוקחים אותה
+    if (CLOUD && S.sb.user?.isAdmin) {
+      try {
+        const { draft } = await S.sb.draft.get();
+        if (draft?.data && (!S.admin.hasOverride || String(draft.updatedAt) > String(S.admin.overrideAt || ''))) {
+          A.data = S.admin.normalize(draft.data);
+          S.admin.saveOverride(A.data, draft.updatedAt);
+          if (draft.by && draft.by !== S.sb.user.email) U.notify(`נטענה הטיוטה המשותפת (נשמרה על ידי ${draft.by}).`, 'info');
+          else if (S.state.loadedFrom !== 'override') U.notify('נטענה הטיוטה שלכם ממכשיר אחר.', 'info');
+        }
+      } catch { /* אין טיוטה משותפת או השרת הישן */ }
+    }
+    if (!A.data.settings) A.data.settings = S.admin.normSettings({});
+    paintStatus(); render();
+  }
+
   async function checkAccess() {
     let allowed = false;
-    try { allowed = await S.sb.isAdmin(); } catch { /* show the sign-in gate */ }
+    try { allowed = await S.sb.isAdmin(); } catch { /* מציגים את השער */ }
     document.body.classList.toggle('admin-locked', !allowed);
     $('#admin-gate').hidden = allowed;
-    $('#admin-gate-text').textContent = S.sb.user
-      ? `החשבון ${S.sb.user.email || ''} מחובר, אבל אינו מוגדר כמנהל באתר הסקר. האזור האישי פתוח לכם.`
-      : 'אזור הניהול פתוח למנהלי אתר הסקר בלבד. אם אתם כבר מחוברים שם, הכניסה מיידית; אחרת ייפתח חלון כניסה עם Google.';
-    $('#gate-login').hidden = !!S.sb.user && !allowed;
-    if (allowed) { $('#site-header').innerHTML = U.header('admin', site); }
+    const u = S.sb.user;
+    $('#admin-gate-text').textContent = u
+      ? `החשבון ${u.email || ''} מחובר, אבל אינו מוגדר כמנהל. האזור האישי פתוח לכם.`
+      : 'הניהול פתוח למנהלי התוכנית בלבד. היכנסו עם חשבון Google.';
+    $('#gate-login').hidden = true;
+    $('#gate-google').hidden = !!u;
+    $('#gate-fallback').hidden = !!u || !CLOUD;
+    if (!u && !allowed && CLOUD) mountGate();
+    paintHeader();
     return allowed;
   }
-  window.addEventListener('beforeunload', (e) => { if (A.dirty) { e.preventDefault(); e.returnValue = ''; } });
+  async function afterLogin() {
+    const ok = await checkAccess();
+    U.notify(ok ? 'ברוכים הבאים לניהול.' : 'התחברתם, אבל החשבון הזה אינו מוגדר כמנהל.', ok ? 'success' : 'info');
+    if (ok) { await loadOrigin(); maybeGuide(); loadListeners(); }
+  }
+  let gateMounted = false;
+  async function mountGate() {
+    if (gateMounted) return; gateMounted = true;
+    try { await S.sb.google($('#gate-google'), { onDone: afterLogin, onError: (err) => U.notify(`ההתחברות לא הצליחה: ${err.message}`, 'error') }); }
+    catch (err) { gateMounted = false; $('#gate-google').innerHTML = `<span class="cue-hint">${esc(err.message)}</span>`; $('#gate-login').hidden = false; }
+  }
+  const viaSite = async (e) => { e?.preventDefault(); try { await S.sb.signIn(); await afterLogin(); } catch (err) { U.notify(`ההתחברות לא הצליחה: ${err.message}`, 'error'); } };
+  $('#gate-login').addEventListener('click', viaSite);
+  $('#gate-login-site').addEventListener('click', viaSite);
 
-  /* ---------- רשימת התוכניות ---------- */
+  /* ---------- לשוניות ---------- */
+
+  function setTab(tab, { push = true } = {}) {
+    if (!TABS.includes(tab)) tab = 'programs';
+    A.tab = tab;
+    $$('#admin-tabs a').forEach((a) => a.setAttribute('aria-current', a.dataset.tab === tab ? 'page' : 'false'));
+    if (push && location.hash !== `#${tab}`) history.replaceState(null, '', `#${tab}`);
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  window.addEventListener('hashchange', () => setTab(location.hash.slice(1) || 'programs', { push: false }));
+  $('#admin-tabs').addEventListener('click', (e) => { const a = e.target.closest('[data-tab]'); if (!a) return; e.preventDefault(); setTab(a.dataset.tab); });
+
+  function render() {
+    ({ programs: renderPrograms, site: renderSite, listeners: renderListeners, publish: renderPublish })[A.tab]();
+  }
+
+  /* ---------- עזרים משותפים ---------- */
 
   const byDate = (a, b) => (b.date || '').localeCompare(a.date || '') || (b.number || 0) - (a.number || 0);
+  const cur = () => A.data.episodes.find((e) => e.id === A.selected) || null;
+  const label = (e) => (e.title || '').trim() || 'תוכנית בלי שם';
+  const splitList = (v) => String(v).split(/[,،]/).map((s) => s.trim()).filter(Boolean);
+  const when = (unix) => new Intl.DateTimeFormat('he-IL', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(typeof unix === 'number' ? unix * 1000 : unix));
+  const n2 = (n) => Number(n || 0).toLocaleString('he-IL');
+
+  function uniqueSlug(base, selfId) {
+    const root = slugify(base) || 'episode';
+    let s = root, n = 2;
+    while (A.data.episodes.some((x) => x.slug === s && x.id !== selfId)) s = `${root}-${n++}`;
+    return s;
+  }
+  function uniqueSeasonId(base) {
+    const root = slugify(base) || 'season';
+    let s = root, n = 2;
+    while (A.data.seasons.some((x) => x.id === s)) s = `${root}-${n++}`;
+    return s;
+  }
+  function seasonOptions(val, withNew = true) {
+    return `<option value="">בלי עונה</option>${A.data.seasons.map((s) => `<option value="${esc(s.id)}" ${s.id === val ? 'selected' : ''}>${esc(s.title)}</option>`).join('')}${withNew ? '<option value="__new">+ עונה חדשה…</option>' : ''}`;
+  }
+  function select(id, { tab } = {}) {
+    A.selected = id;
+    if (tab && tab !== A.tab) { setTab(tab); return; }
+    if (A.tab === 'programs') { renderList(); renderEditor(); $('#editor')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+    else render();
+  }
+  function stateOf(e) {
+    if (!e.visible) return { cls: 'hidden', text: 'מוסתרת' };
+    if (S.scheduled(e)) return { cls: 'scheduled', text: `תעלה ב־${when(e.publishAt)}` };
+    return { cls: 'live', text: 'מוצגת' };
+  }
+
+  /* ======================================================
+     1. תוכניות
+     ====================================================== */
+
+  function renderPrograms() {
+    $('#panel').innerHTML = `
+<div class="workspace">
+  <aside class="side" aria-label="רשימת התוכניות">
+    <div class="card">
+      <div class="side-head">
+        <button type="button" class="btn primary" data-op="new" style="width:100%">+ תוכנית חדשה</button>
+        <div class="search-box" role="search">
+          <span class="search-glyph" aria-hidden="true">♫</span>
+          <label for="ep-q" class="visually-hidden">חיפוש תוכנית</label>
+          <input id="ep-q" type="search" placeholder="חיפוש תוכנית…" autocomplete="off" value="${esc(A.q)}">
+        </div>
+        <div class="filters" style="margin:10px 0 0">
+          <label class="visually-hidden" for="ep-filter">סינון</label>
+          <select id="ep-filter" class="input small-select">
+            <option value="all">כל התוכניות</option>
+            <option value="visible">מוצגות באתר</option>
+            <option value="hidden">מוסתרות</option>
+            <option value="scheduled">מתוזמנות</option>
+            <option value="noaudio">בלי הקלטה</option>
+            <option value="nocover">בלי תמונה</option>
+          </select>
+          <span class="count" id="ep-count"></span>
+          <button type="button" class="chip" data-op="bulk" aria-pressed="${A.bulk}">${A.bulk ? '✕ סיום בחירה' : 'בחירה מרובה'}</button>
+        </div>
+        <div class="bulk-bar" id="bulk-bar" ${A.bulk ? '' : 'hidden'}></div>
+      </div>
+      <div class="ep-list" id="ep-list" role="listbox" aria-label="תוכניות"></div>
+    </div>
+  </aside>
+  <section class="editor" id="editor"></section>
+</div>`;
+    $('#ep-filter').value = A.filter;
+    renderList(); renderEditor();
+  }
 
   function listFiltered() {
     let l = A.data.episodes.slice().sort(byDate);
-    if (A.filter === 'visible') l = l.filter((e) => e.visible);
+    if (A.filter === 'visible') l = l.filter((e) => e.visible && !S.scheduled(e));
     if (A.filter === 'hidden') l = l.filter((e) => !e.visible);
+    if (A.filter === 'scheduled') l = l.filter((e) => S.scheduled(e));
     if (A.filter === 'noaudio') l = l.filter((e) => !U.streamUrl(e));
-    if (A.filter === 'notracks') l = l.filter((e) => !e.tracks.length);
+    if (A.filter === 'nocover') l = l.filter((e) => !e.cover);
     if (A.q) l = S.searchEpisodes(A.q, l);
     return l;
   }
   function renderList() {
+    const box = $('#ep-list'); if (!box) return;
     const l = listFiltered();
-    $('#ep-count').textContent = `${l.length} / ${A.data.episodes.length}`;
-    $('#ep-list').innerHTML = l.length ? l.map((e) => `
-<button type="button" class="ep-item${e.visible ? '' : ' hidden-ep'}" role="option" data-id="${esc(e.id)}" aria-current="${A.selected === e.id}" aria-selected="${A.selected === e.id}">
-  <span class="num">${e.number ?? '♫'}</span>
-  <span class="txt"><b>${esc(e.title || 'ללא כותרת')}</b><small>${esc(fmtDate(e.date, true) || 'ללא תאריך')}${e.tracks.length ? ` · ${e.tracks.length} שירים` : ''}</small></span>
-  <span class="flags">${e.featured ? '<span class="flag featured" title="מומלצת"></span>' : ''}${U.streamUrl(e) ? '<span class="flag audio" title="יש הקלטה"></span>' : ''}${e.visible ? '' : '<span class="flag hidden" title="מוסתרת"></span>'}</span>
-</button>`).join('') : '<div class="state" style="padding:24px"><p>אין תוכניות שמתאימות לסינון.</p></div>';
+    $('#ep-count').textContent = l.length === A.data.episodes.length ? `${l.length} תוכניות` : `${l.length} מתוך ${A.data.episodes.length}`;
+    box.innerHTML = l.length ? l.map((e) => {
+      const st = stateOf(e);
+      return `
+<button type="button" class="ep-item${e.visible ? '' : ' hidden-ep'}${A.picked.has(e.id) ? ' picked' : ''}" role="option" data-id="${esc(e.id)}" aria-current="${A.selected === e.id}" aria-selected="${A.bulk ? A.picked.has(e.id) : A.selected === e.id}">
+  ${A.bulk ? `<span class="pick-box" aria-hidden="true">${A.picked.has(e.id) ? '✓' : ''}</span>` : `<span class="num">${e.number ?? '♫'}</span>`}
+  <span class="txt"><b>${esc(label(e))}</b><small>${esc(fmtDate(e.date, true) || 'בלי תאריך')} · <i class="st ${st.cls}">${esc(st.text)}</i></small></span>
+  <span class="flags">${e.featured ? '<span class="flag featured" title="מומלצת בדף הבית"></span>' : ''}${U.streamUrl(e) ? '<span class="flag audio" title="יש הקלטה"></span>' : '<span class="flag none" title="בלי הקלטה"></span>'}</span>
+</button>`; }).join('') : '<div class="state" style="padding:24px"><p>אין תוכניות שמתאימות לחיפוש.</p></div>';
+    renderBulkBar();
   }
-  $('#ep-q').addEventListener('input', (e) => { A.q = e.target.value; renderList(); });
-  $('#ep-filter').addEventListener('change', (e) => { A.filter = e.target.value; renderList(); });
-  $('#ep-list').addEventListener('click', (e) => { const b = e.target.closest('[data-id]'); if (b) select(b.dataset.id); });
-
-  /* ---------- בחירה ועריכה ---------- */
-
-  const cur = () => A.data.episodes.find((e) => e.id === A.selected) || null;
-
-  function select(id) {
-    A.selected = id;
-    renderList();
-    renderEditor();
-    $('#editor')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }
-
-  function seasonOptions(val) {
-    return `<option value="">ללא עונה</option>${A.data.seasons.map((s) => `<option value="${esc(s.id)}" ${s.id === val ? 'selected' : ''}>${esc(s.title)}</option>`).join('')}<option value="__new">+ עונה חדשה…</option>`;
+  function renderBulkBar() {
+    const bar = $('#bulk-bar'); if (!bar) return;
+    bar.hidden = !A.bulk;
+    if (!A.bulk) return;
+    const n = A.picked.size;
+    bar.innerHTML = `
+<span class="cue-hint">${n ? `נבחרו ${n} תוכניות` : 'לחצו על תוכניות כדי לבחור'}</span>
+<button type="button" class="btn small" data-op="pick-all">${n === listFiltered().length && n ? 'ניקוי הבחירה' : 'בחירת כל המוצגות'}</button>
+<div class="bulk-actions" ${n ? '' : 'hidden'}>
+  <button type="button" class="btn small" data-op="bulk-show">הצגה באתר</button>
+  <button type="button" class="btn small" data-op="bulk-hide">הסתרה</button>
+  <select class="input small-select" data-op="bulk-season" aria-label="שיוך לעונה"><option value="">שיוך לעונה…</option>${A.data.seasons.map((s) => `<option value="${esc(s.id)}">${esc(s.title)}</option>`).join('')}<option value="__none">בלי עונה</option></select>
+  <button type="button" class="btn small danger" data-op="bulk-del">מחיקה</button>
+</div>`;
   }
 
   function renderEditor() {
+    const E = $('#editor'); if (!E) return;
     const e = cur();
-    const E = $('#editor');
-    if (!e) { E.innerHTML = '<div class="card"><div class="state empty-editor"><span class="mark">♫</span><h3>בחרו תוכנית או צרו חדשה</h3><p>כל שינוי נשמר כטיוטה בדפדפן הזה. "פרסום" מעביר את הטיוטה לאתר.</p></div></div>'; return; }
+    if (!e) {
+      E.innerHTML = `<div class="card"><div class="state empty-editor"><span class="mark">♫</span><h3>בחרו תוכנית מהרשימה</h3><p>או לחצו "+ תוכנית חדשה". כל שינוי נשמר מיד; כשמסיימים, לוחצים "פרסום לאתר".</p></div></div>`;
+      return;
+    }
+    const stream = U.streamUrl(e);
+    const st = stateOf(e);
     E.innerHTML = `
 <div class="card">
   <div class="section-title">
-    <div><p class="kicker">${e.number != null ? `תוכנית ${e.number}` : 'תוכנית'}</p><h2 id="ed-title-echo">${esc(e.title || 'ללא כותרת')}</h2></div>
+    <div><p class="kicker">${e.number != null ? `תוכנית ${e.number}` : 'תוכנית'} · <i class="st ${st.cls}">${esc(st.text)}</i></p><h2 id="ed-title-echo">${esc(label(e))}</h2></div>
     <div class="inline-toggles">
-      <button type="button" class="toggle${e.visible ? ' on' : ''}" data-op="visible" aria-pressed="${e.visible}">${e.visible ? 'פעיל' : 'מוסתר'}</button>
-      <a class="btn small" href="episode.html?ep=${encodeURIComponent(e.slug)}" target="_blank" rel="noopener">צפייה</a>
+      <a class="btn small" href="episode.html?ep=${encodeURIComponent(e.slug)}" target="_blank" rel="noopener">צפייה באתר</a>
+      <button type="button" class="btn small" data-op="share">טקסט לוואטסאפ</button>
       <button type="button" class="btn small" data-op="dup">שכפול</button>
+      <button type="button" class="btn small" data-op="history" ${CLOUD ? '' : 'disabled'}>גרסאות קודמות</button>
       <button type="button" class="btn small danger" data-op="del">מחיקה</button>
     </div>
   </div>
   <div class="card-body">
     <div class="form-grid">
-      <label class="field span2"><span>כותרת התוכנית *</span><input data-f="title" value="${esc(e.title)}" required placeholder="שם התוכנית"></label>
-      <label class="field"><span>מספר תוכנית</span><input data-f="number" type="number" inputmode="numeric" value="${e.number ?? ''}" placeholder="90"></label>
-      <label class="field"><span>תאריך שידור</span><input data-f="date" type="date" value="${esc(e.date)}"></label>
+      <label class="field span2"><span>שם התוכנית</span><input data-f="title" value="${esc(e.title)}" placeholder="למשל: שירי הסתיו" autocomplete="off"><small>כך התוכנית תופיע באתר.</small></label>
+      <label class="field"><span>תאריך השידור</span><input data-f="date" type="date" value="${esc(e.date)}"></label>
+      <label class="field"><span>מספר התוכנית</span><input data-f="number" type="number" inputmode="numeric" value="${e.number ?? ''}" placeholder="90"></label>
       <label class="field"><span>עונה</span><select data-f="season">${seasonOptions(e.season)}</select></label>
-      <label class="field"><span>כתובת הדף (slug)</span><div class="slug-line"><input data-f="slug" value="${esc(e.slug)}" spellcheck="false"><button type="button" class="btn small" data-op="slug-auto" title="לפי התאריך והמספר">אוטומטי</button></div><small>episode.html?ep=<span id="slug-echo">${esc(e.slug)}</span></small></label>
-      <label class="field span2"><span>תיאור</span><textarea data-f="description" placeholder="מה היה בתוכנית? שורה ריקה יוצרת פסקה חדשה.">${esc(e.description)}</textarea></label>
-      <div class="field"><span>תגיות ואורחים</span>
-        <input data-f="tags" value="${esc(e.tags.join(', '))}" placeholder="תגיות, מופרדות בפסיקים" aria-label="תגיות">
-        <input data-f="guests" value="${esc(e.guests.join(', '))}" placeholder="אורחים, מופרדים בפסיקים" aria-label="אורחים" style="margin-top:6px">
-        <label class="check" style="margin-top:10px"><input type="checkbox" data-f="featured" ${e.featured ? 'checked' : ''}> להציג כתוכנית המומלצת בדף הבית</label>
-      </div>
+      <label class="field"><span>אורחים</span><input data-f="guests" value="${esc(e.guests.join(', '))}" placeholder="שמות, מופרדים בפסיק"></label>
+      <label class="field span2"><span>על התוכנית</span><textarea data-f="description" placeholder="כמה משפטים על מה שהיה בתוכנית. שורה ריקה פותחת פסקה חדשה.">${esc(e.description)}</textarea></label>
+    </div>
+    <div class="switches">
+      <button type="button" class="toggle${e.visible ? ' on' : ''}" data-op="visible" aria-pressed="${e.visible}">${e.visible ? '✓ מוצגת באתר' : 'מוסתרת מהאתר'}</button>
+      <button type="button" class="toggle${e.featured ? ' on' : ''}" data-op="featured" aria-pressed="${e.featured}">${e.featured ? '★ התוכנית המומלצת בדף הבית' : 'להציג כמומלצת בדף הבית'}</button>
+    </div>
+    <div class="schedule">
+      <label class="field"><span>פרסום מתוזמן (לא חובה)</span><input data-f="publishAt" type="datetime-local" value="${esc(e.publishAt)}"><small>${e.publishAt ? (S.scheduled(e) ? `התוכנית תופיע באתר ב־${when(e.publishAt)}. עד אז המאזינים לא רואים אותה, גם אחרי פרסום.` : 'המועד עבר — התוכנית מוצגת כרגיל.') : 'ריק = מופיעה מיד אחרי הפרסום.'}</small></label>
+      ${e.publishAt ? '<button type="button" class="btn small" data-op="unschedule">ביטול התזמון</button>' : ''}
     </div>
   </div>
 </div>
 
 <div class="card">
-  <div class="section-title"><div><p class="kicker">מדיה</p><h2>הקלטה ותמונה</h2></div>${e.duration ? `<strong>${fmtDuration(e.duration)}</strong>` : ''}</div>
+  <div class="section-title"><div><p class="kicker">ההקלטה</p><h2>מה שומעים</h2></div>${e.duration ? `<strong>${esc(fmtDuration(e.duration))}</strong>` : ''}</div>
   <div class="card-body">
+    <div class="media-state${stream ? ' ok' : ''}">${stream ? '✓ יש הקלטה לתוכנית הזו. המאזינים שומעים אותה בנגן של האתר.' : 'עדיין אין הקלטה. העלו קובץ או הדביקו קישור.'}</div>
+    ${stream ? `<audio class="audio-preview" id="preview-audio" controls preload="metadata" src="${esc(stream)}"></audio>` : ''}
     <div class="form-grid">
-      <div class="field">
-        <label class="field"><span>העלאת הקלטה</span><input type="file" data-upload="audio" accept=".mp3,.m4a,.wav,.ogg,.flac,.aac"></label>
-        <small>עד 50MB. אפשר גם להדביק קישור ציבורי לקובץ (קישור שיתוף לקובץ בדרייב עובד — הנגן של האתר מנגן אותו ישירות, בלי ממשק חיצוני).</small>
-        <label class="field"><span>קישור להקלטה</span><input data-f="audio" value="${esc(e.audio)}" placeholder="https://…" spellcheck="false" style="direction:ltr;text-align:left"></label>
-        <span class="upload-status" role="status" data-upload-status="audio"></span>
-        ${U.streamUrl(e) ? `<audio class="audio-preview" id="preview-audio" controls preload="metadata" src="${esc(U.streamUrl(e))}"></audio>` : ''}
-        <label class="field" style="margin-top:10px"><span>אורך (דקות:שניות)</span><div class="slug-line"><input data-f="duration" value="${e.duration ? fmtTime(e.duration) : ''}" placeholder="58:30" style="direction:ltr;text-align:center"><button type="button" class="btn small" data-op="dur-auto" ${U.streamUrl(e) ? '' : 'disabled'}>מהקובץ</button></div></label>
-      </div>
-      <div class="field">
-        <label class="field"><span>קישור לתמונה</span><input data-f="cover" value="${esc(e.cover)}" placeholder="https://…/cover.jpg" spellcheck="false" style="direction:ltr;text-align:left"></label>
-        <label class="field"><span>העלאת תמונת התוכנית</span><input type="file" data-upload="cover" accept=".jpg,.jpeg,.png,.webp"></label>
-        <span class="upload-status" role="status" data-upload-status="cover"></span>
-        ${e.cover ? `<img class="cover-preview" src="${esc(e.cover)}" alt="" style="margin-top:8px">` : '<div class="cover-preview" style="margin-top:8px;display:grid;place-items:center;color:var(--gold-ink);font-size:32px">♫</div>'}
-      </div>
+      <label class="field"><span>${stream ? 'החלפת ההקלטה — העלאת קובץ' : 'העלאת קובץ ההקלטה'}</span><input type="file" data-upload="audio" accept=".mp3,.m4a,.wav,.ogg,.flac,.aac"><small>קובץ שמע עד 50MB. לקובץ גדול יותר — הדביקו קישור.</small><span class="upload-status" role="status" data-upload-status="audio"></span></label>
+      <label class="field"><span>או קישור להקלטה</span><input data-f="audio" value="${esc(e.audio)}" placeholder="https://…" spellcheck="false" class="ltr"><small>קישור שיתוף לקובץ בדרייב מספיק.</small></label>
     </div>
   </div>
 </div>
 
 <div class="card">
-  <div class="section-title"><div><p class="kicker">מה השמענו</p><h2>רשימת השירים</h2></div><strong id="tracks-count">${e.tracks.length}</strong></div>
+  <div class="section-title"><div><p class="kicker">התמונה</p><h2>מה רואים</h2></div></div>
   <div class="card-body">
-    <div class="track-editor" id="track-editor">${renderTracks(e)}</div>
-    <div class="track-tools">
-      <button type="button" class="btn small gold" data-op="track-add">+ שיר</button>
-      <button type="button" class="btn small" data-op="track-cue" ${U.streamUrl(e) ? '' : 'disabled'} title="מוסיף שיר בזמן הנוכחי של הנגן">+ שיר מהנקודה בנגן</button>
-      <button type="button" class="btn small" data-op="track-paste">הדבקת רשימה</button>
-      <button type="button" class="btn small" data-op="track-sort">מיון לפי זמן</button>
-      <span class="spacer"></span>
-      <span class="cue-hint">גררו את ⋮ כדי לסדר. "סמן" מעתיק את הזמן מהנגן. Enter בשורה האחרונה מוסיף שיר.</span>
+    <div class="cover-grid">
+      ${e.cover ? `<img class="cover-preview" src="${esc(e.cover)}" alt="">` : '<div class="cover-preview empty"><span>♫</span><small>בלי תמונה האתר מציג עטיפה צבעונית משלו</small></div>'}
+      <div class="cover-fields">
+        <div class="field"><span>יצירת תמונה אוטומטית</span><div class="actions" style="margin:0"><button type="button" class="btn gold" data-op="cover-auto">${e.cover ? 'יצירת תמונה חדשה' : 'ליצור תמונה עכשיו'}</button></div><small>עטיפה בסגנון האתר עם שם התוכנית, המספר ומשפט מהתיאור. אפשר ללחוץ שוב לגרסה אחרת.</small><span class="upload-status" role="status" data-upload-status="auto"></span></div>
+        <label class="field"><span>העלאת תמונה משלכם</span><input type="file" data-upload="cover" accept=".jpg,.jpeg,.png,.webp"><span class="upload-status" role="status" data-upload-status="cover"></span></label>
+        <label class="field"><span>או קישור לתמונה</span><input data-f="cover" value="${esc(e.cover)}" placeholder="https://…" spellcheck="false" class="ltr"></label>
+        ${e.cover ? '<button type="button" class="btn small" data-op="cover-clear">הסרת התמונה</button>' : ''}
+      </div>
     </div>
   </div>
 </div>
 
-<div class="card">
-  <div class="section-title"><div><p class="kicker">עוד</p><h2>קישורים</h2></div></div>
+<details class="card more-details">
+  <summary>עוד פרטים (לא חובה)</summary>
   <div class="card-body">
-    <div class="link-rows" id="link-rows">${renderLinks(e)}</div>
-    <div class="track-tools"><button type="button" class="btn small" data-op="link-add">+ קישור</button><span class="cue-hint">למשל: הפלייליסט בספוטיפיי, הפוסט בפייסבוק, קישור להורדה.</span></div>
+    <label class="field"><span>מילות חיפוש</span><input data-f="tags" value="${esc(e.tags.join(', '))}" placeholder="למשל: מצעד, ראיון, חנוכה"><small>עוזרות למאזינים למצוא את התוכנית בחיפוש. מופרדות בפסיק.</small></label>
+    <div class="field" style="margin-top:16px">
+      <span>קישורים שיופיעו בדף התוכנית</span>
+      <div class="link-rows" id="link-rows">${renderLinks(e)}</div>
+      <div><button type="button" class="btn small" data-op="link-add">+ קישור</button></div>
+    </div>
   </div>
-</div>
+</details>
 
 <div class="card">
-  <div class="section-title"><div><p class="kicker">כך זה ייראה</p><h2>תצוגה מקדימה</h2></div></div>
-  <div class="card-body"><div class="preview-wrap"><div id="preview-card"></div><pre class="preview-json" id="preview-json"></pre></div></div>
+  <div class="section-title"><div><p class="kicker">כך זה ייראה</p><h2>באתר</h2></div></div>
+  <div class="card-body"><div class="preview-wrap"><div id="preview-card"></div><p class="help">זה הכרטיס של התוכנית בדף הבית ובארכיון.</p></div></div>
 </div>`;
     renderPreview();
   }
 
-  function renderTracks(e) {
-    if (!e.tracks.length) return '<div class="state" style="padding:20px"><p>עדיין אין שירים. הוסיפו שיר, או הדביקו רשימה שלמה.</p></div>';
-    return `<div class="track-head"><span></span><span>זמן</span><span>שם השיר</span><span>זמר/ת</span><span>הערה</span><span></span></div>` + e.tracks.map((t, i) => `
-<div class="track-row" data-i="${i}" draggable="false">
-  <span class="handle" draggable="true" title="גרירה לסידור" aria-label="גרירה">⋮</span>
-  <input class="t" data-tf="at" data-i="${i}" value="${fmtTime(t.at)}" aria-label="זמן" inputmode="numeric">
-  <input class="s" data-tf="title" data-i="${i}" value="${esc(t.title)}" aria-label="שם השיר" placeholder="שם השיר">
-  <input class="a" data-tf="artist" data-i="${i}" value="${esc(t.artist)}" aria-label="זמר" placeholder="זמר/ת">
-  <input class="n" data-tf="note" data-i="${i}" value="${esc(t.note)}" aria-label="הערה" placeholder="הערה">
-  <span class="ops">
-    <button type="button" class="icon-btn gold" data-op="track-mark" data-i="${i}" title="סימון הזמן מהנגן" aria-label="סימון הזמן מהנגן">סמן</button>
-    <button type="button" class="icon-btn" data-op="track-play" data-i="${i}" title="ניגון מכאן" aria-label="ניגון מכאן">▶</button>
-    <button type="button" class="icon-btn" data-op="track-del" data-i="${i}" title="מחיקה" aria-label="מחיקת השיר" style="border-color:var(--error-border);color:var(--error);background:var(--error-bg)">✕</button>
-  </span>
-</div>`).join('');
-  }
   function renderLinks(e) {
     return e.links.map((l, i) => `
 <div class="link-row" data-i="${i}">
-  <input data-lf="label" data-i="${i}" value="${esc(l.label)}" placeholder="כותרת הקישור" aria-label="כותרת">
+  <input data-lf="label" data-i="${i}" value="${esc(l.label)}" placeholder="מה זה? (למשל: הפלייליסט)" aria-label="שם הקישור">
   <input class="u" data-lf="url" data-i="${i}" value="${esc(l.url)}" placeholder="https://…" aria-label="כתובת" spellcheck="false">
-  <button type="button" class="icon-btn" data-op="link-del" data-i="${i}" aria-label="מחיקת הקישור" style="border-color:var(--error-border);color:var(--error);background:var(--error-bg)">✕</button>
-</div>`).join('') || '<p class="cue-hint" style="margin:0">אין קישורים.</p>';
+  <button type="button" class="icon-btn del" data-op="link-del" data-i="${i}" aria-label="מחיקת הקישור">✕</button>
+</div>`).join('') || '<p class="cue-hint" style="margin:0 0 8px">אין קישורים.</p>';
   }
   function renderPreview() {
-    const e = cur(); if (!e) return;
-    $('#preview-card').innerHTML = U.epCard(S.admin.normEpisode(e, 0), { href: '#' });
-    $('#preview-json').textContent = JSON.stringify(e, null, 2);
-    $('#ed-title-echo').textContent = e.title || 'ללא כותרת';
-    $('#slug-echo').textContent = e.slug;
-    $('#tracks-count').textContent = e.tracks.length;
+    const e = cur(); const box = $('#preview-card'); if (!e || !box) return;
+    box.innerHTML = U.epCard(S.admin.normEpisode(e, 0), { href: '#' });
+    $('#ed-title-echo').textContent = label(e);
   }
   const schedulePreview = () => { clearTimeout(A.previewTimer); A.previewTimer = setTimeout(() => { renderPreview(); renderList(); }, 200); };
-
-  function uniqueSlug(slug, selfId) {
-    let s = slugify(slug) || 'episode', n = 2;
-    while (A.data.episodes.some((x) => x.slug === s && x.id !== selfId)) s = `${slugify(slug)}-${n++}`;
-    return s;
-  }
-  const splitList = (v) => String(v).split(/[,،]/).map((s) => s.trim()).filter(Boolean);
-
-  function bindEditor() {
-    const E = $('#editor');
-    // שדות התוכנית
-    E.addEventListener('input', (ev) => {
-      const e = cur(); if (!e) return;
-      const f = ev.target.dataset.f, tf = ev.target.dataset.tf, lf = ev.target.dataset.lf;
-      if (f) {
-        const v = ev.target.type === 'checkbox' ? ev.target.checked : ev.target.value;
-        switch (f) {
-          case 'number': e.number = v === '' ? null : Number(v); break;
-          case 'duration': { const s = parseTime(v); ev.target.closest('.field')?.classList.toggle('invalid', isNaN(s)); if (!isNaN(s)) e.duration = s; break; }
-          case 'tags': e.tags = splitList(v); break;
-          case 'guests': e.guests = splitList(v); break;
-          case 'featured': if (v) A.data.episodes.forEach((x) => { x.featured = x.id === e.id; }); else e.featured = false; break;
-          case 'slug': e.slug = v; break;
-          case 'season': if (v === '__new') { newSeasonInline(ev.target); return; } e.season = v; break;
-          default: e[f] = v;
-        }
-        markDirty(); schedulePreview();
-      } else if (tf) {
-        const t = e.tracks[Number(ev.target.dataset.i)]; if (!t) return;
-        if (tf === 'at') { const s = parseTime(ev.target.value); ev.target.closest('.track-row').classList.toggle('bad-time', isNaN(s)); if (!isNaN(s)) t.at = s; }
-        else t[tf] = ev.target.value;
-        markDirty(); schedulePreview();
-      } else if (lf) {
-        const l = e.links[Number(ev.target.dataset.i)]; if (!l) return;
-        l[lf] = ev.target.value; markDirty(); schedulePreview();
-      }
-    });
-    E.addEventListener('change', async (ev) => {
-      const e = cur(); if (!e) return;
-      if (ev.target.dataset.upload) {
-        const input = ev.target, kind = input.dataset.upload, file = input.files[0];
-        if (!file) return;
-        const status = E.querySelector(`[data-upload-status="${kind}"]`);
-        input.disabled = true;
-        try {
-          status.textContent = 'מתחברים להעלאה…';
-          e[kind] = await window.RoshUpload(file, e.id, kind, pct => { status.textContent = `מעלים ${file.name} — ${pct}%`; });
-          markDirty();
-          if (A.selected === e.id) renderEditor();
-          U.notify('הקובץ הועלה. לחצו פרסום כדי להציג אותו באתר.', 'success');
-        } catch (err) { status.textContent = err.message; input.disabled = false; input.value = ''; }
-        return;
-      }
-      if (ev.target.dataset.f === 'slug') { e.slug = uniqueSlug(ev.target.value, e.id); ev.target.value = e.slug; renderPreview(); }
-      if (ev.target.dataset.f === 'audio' || ev.target.dataset.f === 'cover') renderEditor();
-      if (ev.target.dataset.tf === 'at') { ev.target.value = fmtTime(parseTime(ev.target.value) || 0); }
-    });
-    E.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter' && ev.target.dataset.tf) {
-        ev.preventDefault();
-        const e = cur(); const i = Number(ev.target.dataset.i);
-        if (i === e.tracks.length - 1) { addTrack(); } else { $(`.track-row[data-i="${i + 1}"] input.s`, E)?.focus(); }
-      }
-    });
-    E.addEventListener('click', (ev) => {
-      const b = ev.target.closest('[data-op]'); if (!b) return;
-      const e = cur(); if (!e) return;
-      const i = Number(b.dataset.i);
-      switch (b.dataset.op) {
-        case 'visible': e.visible = !e.visible; markDirty(); renderEditor(); renderList(); break;
-        case 'dup': duplicate(e); break;
-        case 'del': remove(e); break;
-        case 'slug-auto': e.slug = uniqueSlug(e.date || (e.number != null ? `episode-${e.number}` : e.title), e.id); markDirty(); renderEditor(); break;
-        case 'dur-auto': { const a = $('#preview-audio'); if (a && isFinite(a.duration) && a.duration) { e.duration = Math.round(a.duration); markDirty(); renderEditor(); U.notify(`האורך עודכן: ${fmtTime(e.duration)}`, 'success'); } else U.notify('הקובץ עדיין לא נטען. נסו שוב בעוד רגע.', 'info'); break; }
-        case 'track-add': addTrack(); break;
-        case 'track-cue': { const a = $('#preview-audio'); addTrack(a ? Math.floor(a.currentTime) : 0); break; }
-        case 'track-paste': openPaste(); break;
-        case 'track-sort': e.tracks.sort((x, y) => x.at - y.at); markDirty(); refreshTracks(); break;
-        case 'track-del': e.tracks.splice(i, 1); markDirty(); refreshTracks(); break;
-        case 'track-mark': { const a = $('#preview-audio'); if (!a) { U.notify('אין הקלטה — הוסיפו קישור להקלטה למעלה.', 'info'); break; } e.tracks[i].at = Math.floor(a.currentTime); markDirty(); refreshTracks(); $(`.track-row[data-i="${i}"] input.s`, E)?.focus(); break; }
-        case 'track-play': { const a = $('#preview-audio'); if (!a) { U.notify('אין הקלטה — הוסיפו קישור להקלטה למעלה.', 'info'); break; } a.currentTime = e.tracks[i].at; a.play().catch(() => {}); break; }
-        case 'link-add': e.links.push({ label: '', url: '' }); markDirty(); $('#link-rows').innerHTML = renderLinks(e); $('#link-rows input[data-lf="label"]:last-of-type')?.focus(); break;
-        case 'link-del': e.links.splice(i, 1); markDirty(); $('#link-rows').innerHTML = renderLinks(e); renderPreview(); break;
-      }
-    });
-    // האורך מהקובץ באופן אוטומטי אם ריק (אירועי מדיה לא מבעבעים — לכן capture)
-    E.addEventListener('loadedmetadata', (ev) => { if (ev.target.id !== 'preview-audio') return; const e = cur(); if (e && !e.duration && isFinite(ev.target.duration)) { e.duration = Math.round(ev.target.duration); markDirty(); const f = $('[data-f="duration"]', E); if (f) f.value = fmtTime(e.duration); renderPreview(); } }, true);
-    bindDrag(E);
-  }
-
-  function refreshTracks() { const e = cur(); $('#track-editor').innerHTML = renderTracks(e); renderPreview(); }
-  function addTrack(at) {
-    const e = cur();
-    const last = e.tracks[e.tracks.length - 1];
-    e.tracks.push({ at: at ?? (last ? last.at + 180 : 0), title: '', artist: '', note: '' });
-    markDirty(); refreshTracks();
-    $(`.track-row[data-i="${e.tracks.length - 1}"] input.s`)?.focus();
-  }
-
-  /* גרירה לסידור השירים — האצלה על העורך כולו, פעם אחת */
-  function bindDrag(wrap) {
-    let from = null;
-    wrap.addEventListener('dragstart', (ev) => { const row = ev.target.closest('.track-row'); if (!row || !ev.target.classList.contains('handle')) { ev.preventDefault(); return; } from = Number(row.dataset.i); row.classList.add('dragging'); ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', String(from)); });
-    wrap.addEventListener('dragover', (ev) => { const row = ev.target.closest('.track-row'); if (!row || from == null) return; ev.preventDefault(); const r = row.getBoundingClientRect(); const before = ev.clientY < r.top + r.height / 2; $$('.track-row', wrap).forEach((x) => x.classList.remove('drop-before', 'drop-after')); row.classList.add(before ? 'drop-before' : 'drop-after'); });
-    wrap.addEventListener('dragleave', (ev) => { ev.target.closest?.('.track-row')?.classList.remove('drop-before', 'drop-after'); });
-    wrap.addEventListener('drop', (ev) => {
-      const row = ev.target.closest('.track-row'); if (!row || from == null) return; ev.preventDefault();
-      const e = cur(); const r = row.getBoundingClientRect(); let to = Number(row.dataset.i) + (ev.clientY < r.top + r.height / 2 ? 0 : 1);
-      const [moved] = e.tracks.splice(from, 1); if (to > from) to--; e.tracks.splice(to, 0, moved);
-      from = null; markDirty(); refreshTracks();
-    });
-    wrap.addEventListener('dragend', () => { from = null; $$('.track-row', wrap).forEach((x) => x.classList.remove('dragging', 'drop-before', 'drop-after')); });
-  }
-
-  /* ---------- יצירה, שכפול, מחיקה ---------- */
 
   function newEpisode() {
     const today = new Date().toISOString().slice(0, 10);
     const maxNum = A.data.episodes.reduce((m, e) => Math.max(m, e.number || 0), 0);
     const latestSeason = A.data.seasons.slice().sort((a, b) => (b.year || 0) - (a.year || 0))[0];
-    const base = { id: `ep-${Date.now().toString(36)}`, slug: '', number: maxNum + 1, season: latestSeason?.id || '', title: '', date: today, description: '', cover: '', audio: '', duration: 0, tags: [], guests: [], links: [], featured: false, visible: true, tracks: [] };
-    base.slug = uniqueSlug(today, base.id);
-    A.data.episodes.unshift(base);
-    markDirty(); select(base.id);
+    const e = { id: `ep-${Date.now().toString(36)}`, slug: '', number: maxNum + 1, season: latestSeason?.id || '', title: '', date: today, description: '', cover: '', audio: '', duration: 0, tags: [], guests: [], links: [], featured: false, visible: true, tracks: [], publishAt: '' };
+    e.slug = uniqueSlug(today, e.id);
+    A.data.episodes.unshift(e);
+    A.q = ''; A.filter = 'all'; A.bulk = false; A.picked.clear();
+    touch();
+    A.selected = e.id;
+    if (A.tab !== 'programs') setTab('programs'); else renderPrograms();
     $('[data-f="title"]')?.focus();
   }
   function duplicate(e) {
     const c = clone(e);
     c.id = `ep-${Date.now().toString(36)}`; c.slug = uniqueSlug(`${e.slug}-2`, c.id); c.number = e.number != null ? e.number + 1 : null; c.featured = false; c.title = `${e.title} (עותק)`;
-    A.data.episodes.unshift(c); markDirty(); select(c.id); U.notify('התוכנית שוכפלה.', 'success');
+    A.data.episodes.unshift(c); touch(); select(c.id); U.notify('התוכנית שוכפלה. זה העותק — ערכו אותו.', 'success');
   }
-  function remove(e) {
-    const i = A.data.episodes.findIndex((x) => x.id === e.id); if (i < 0) return;
-    const [gone] = A.data.episodes.splice(i, 1);
-    if (A.originIds.has(gone.id)) A.removed.add(gone.id);
-    A.selected = null; markDirty(); renderList(); renderEditor();
-    U.notify(`"${gone.title || 'התוכנית'}" נמחקה.`, 'success', { action: 'ביטול', ttl: 9000, onAction: () => { A.data.episodes.splice(i, 0, gone); A.removed.delete(gone.id); select(gone.id); } });
+  function removeMany(ids) {
+    const gone = [];
+    ids.forEach((id) => { const i = A.data.episodes.findIndex((x) => x.id === id); if (i >= 0) gone.push({ i, e: A.data.episodes.splice(i, 1)[0] }); });
+    if (gone.some((g) => g.e.id === A.selected)) A.selected = null;
+    A.picked.clear(); touch(); renderList(); renderEditor();
+    U.notify(gone.length === 1 ? `"${label(gone[0].e)}" נמחקה.` : `${gone.length} תוכניות נמחקו.`, 'success', { action: 'ביטול', ttl: 9000, onAction: () => { gone.sort((a, b) => a.i - b.i).forEach((g) => A.data.episodes.splice(g.i, 0, g.e)); touch(); renderList(); renderEditor(); } });
   }
-  $('#btn-new').addEventListener('click', newEpisode);
-
-  /* ---------- עונות ---------- */
-
   function newSeasonInline(sel) {
-    const title = prompt('שם העונה החדשה (למשל: עונת 2027):');
+    const title = prompt('איך לקרוא לעונה החדשה? (למשל: עונת 2027)');
     if (!title) { sel.value = cur()?.season || ''; return; }
     const year = (title.match(/\d{4}/) || [])[0];
-    const id = uniqueSeasonId(year || slugify(title));
-    A.data.seasons.push({ id, title, year: year ? Number(year) : null, note: '' });
-    cur().season = id; markDirty(); renderEditor();
+    const s = { id: uniqueSeasonId(year || title), title: title.trim(), year: year ? Number(year) : null, note: '' };
+    A.data.seasons.push(s);
+    const e = cur(); if (e) e.season = s.id;
+    touch(); renderEditor();
   }
-  function uniqueSeasonId(id) { let s = id || 's', n = 2; while (A.data.seasons.some((x) => x.id === s)) s = `${id}-${n++}`; return s; }
-
-  const dlgSeasons = $('#dlg-seasons');
-  function renderSeasons() {
-    const counts = {}; A.data.episodes.forEach((e) => { counts[e.season] = (counts[e.season] || 0) + 1; });
-    $('#season-rows').innerHTML = A.data.seasons.map((s, i) => `
-<div class="season-row" data-i="${i}">
-  <input class="id" data-sf="id" data-i="${i}" value="${esc(s.id)}" aria-label="מזהה" spellcheck="false">
-  <input data-sf="title" data-i="${i}" value="${esc(s.title)}" aria-label="שם" placeholder="עונת 2026">
-  <input data-sf="year" data-i="${i}" type="number" value="${s.year ?? ''}" aria-label="שנה" placeholder="2026" style="direction:ltr;text-align:center">
-  <input data-sf="note" data-i="${i}" value="${esc(s.note)}" aria-label="הערה" placeholder="הערה">
-  <span class="pill">${counts[s.id] || 0}</span>
-  <button type="button" class="icon-btn" data-sop="del" data-i="${i}" aria-label="מחיקת העונה" style="border-color:var(--error-border);color:var(--error);background:var(--error-bg)">✕</button>
-</div>`).join('') || '<p class="cue-hint" style="margin:0">אין עונות. הוסיפו אחת.</p>';
+  function shareText(e) {
+    const url = new URL(`episode.html?ep=${encodeURIComponent(e.slug)}`, site.url || location.href).href;
+    const first = (e.description || '').split(/\n+/)[0].trim().slice(0, 200);
+    return [`🎙️ ${site.name || 'ראש בראש'}${e.number != null ? ` · תוכנית ${e.number}` : ''}`, `*${label(e)}*`, e.date ? fmtDate(e.date) : '', first, `להאזנה: ${url}`].filter(Boolean).join('\n');
   }
-  $('#btn-seasons').addEventListener('click', () => { A.seasonsDraft = clone(A.data.seasons); renderSeasons(); dlgSeasons.showModal(); });
-  $('#season-add').addEventListener('click', () => { const y = new Date().getFullYear(); A.data.seasons.push({ id: uniqueSeasonId(String(y)), title: `עונת ${y}`, year: y, note: '' }); renderSeasons(); });
-  $('#season-rows').addEventListener('input', (ev) => { const s = A.data.seasons[Number(ev.target.dataset.i)]; const f = ev.target.dataset.sf; if (!s || !f) return; s[f] = f === 'year' ? (ev.target.value ? Number(ev.target.value) : null) : ev.target.value; });
-  $('#season-rows').addEventListener('click', (ev) => { const b = ev.target.closest('[data-sop="del"]'); if (!b) return; const s = A.data.seasons[Number(b.dataset.i)]; A.data.episodes.forEach((e) => { if (e.season === s.id) e.season = ''; }); A.data.seasons.splice(Number(b.dataset.i), 1); renderSeasons(); });
-  $('#season-save').addEventListener('click', () => {
-    // עדכון מזהים ששונו אצל התוכניות
-    A.seasonsDraft.forEach((old, i) => { const now = A.data.seasons[i]; if (now && now.id !== old.id) A.data.episodes.forEach((e) => { if (e.season === old.id) e.season = now.id; }); });
-    markDirty(); dlgSeasons.close(); renderEditor(); renderList(); U.notify('העונות נשמרו בטיוטה.', 'success');
-  });
 
-  /* ---------- הדבקת רשימה ---------- */
+  /* ---------- תמונה אוטומטית: עטיפה בסגנון האתר על קנבס ---------- */
 
-  const dlgPaste = $('#dlg-paste');
-  function parsePaste(text) {
-    const out = [];
-    for (let line of String(text).split(/\r?\n/)) {
-      line = line.trim().replace(/^\d+[.)]\s*/, '');
-      if (!line) continue;
-      let at = null;
-      let m = line.match(/^[\[(]?(\d{1,2}:\d{2}(?::\d{2})?)[\])]?\s*[-–—:]?\s*/);
-      if (m) { at = parseTime(m[1]); line = line.slice(m[0].length); }
-      else { m = line.match(/\s*[\[(]?(\d{1,2}:\d{2}(?::\d{2})?)[\])]?\s*$/); if (m) { at = parseTime(m[1]); line = line.slice(0, m.index); } }
-      const parts = line.split(/\s+[-–—|\/]\s+|\s*:\s+/);
-      const title = (parts[0] || '').trim(), artist = parts.slice(1).join(' — ').trim();
-      if (title) out.push({ at, title, artist, note: '' });
+  async function autoCover(e, status) {
+    status.textContent = 'מציירים…';
+    try { await document.fonts.load('700 120px Karantina'); await document.fonts.load('800 30px Heebo'); } catch { /* גופן ברירת מחדל */ }
+    const W = 1200, H = 828, c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d');
+    const words = (e.description || '').split(/\s+/).filter((w) => w.length > 3);
+    const seed = (e.id + e.title + words.slice(0, 6).join('')).split('').reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7 + A.coverTry || 0);
+    const h1 = U.hue(e), h2 = (h1 + 40 + (seed % 80)) % 360, h3 = (h1 + 200 + (seed % 60)) % 360;
+    const g = x.createLinearGradient(0, 0, W, H); g.addColorStop(0, `hsl(${h1} 60% 14%)`); g.addColorStop(.55, `hsl(${h2} 55% 22%)`); g.addColorStop(1, `hsl(${h3} 60% 12%)`);
+    x.fillStyle = g; x.fillRect(0, 0, W, H);
+    // הילות
+    for (let i = 0; i < 3; i++) { const r = x.createRadialGradient(W * ((seed >> (i * 3)) % 100) / 100, H * ((seed >> (i * 5)) % 100) / 100, 0, W * ((seed >> (i * 3)) % 100) / 100, H * ((seed >> (i * 5)) % 100) / 100, 520); r.addColorStop(0, `hsl(${[h1, h2, h3][i]} 90% 65% / .35)`); r.addColorStop(1, 'transparent'); x.fillStyle = r; x.fillRect(0, 0, W, H); }
+    // תקליט
+    const cx = 260 + (seed % 60), cy = H / 2 + 40;
+    for (let r = 300; r > 40; r -= 6) { x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.strokeStyle = r % 12 ? 'rgba(0,0,0,.35)' : 'rgba(255,255,255,.08)'; x.lineWidth = 3; x.stroke(); }
+    x.beginPath(); x.arc(cx, cy, 78, 0, Math.PI * 2); x.fillStyle = `hsl(${h1} 85% 62%)`; x.fill();
+    x.beginPath(); x.arc(cx, cy, 8, 0, Math.PI * 2); x.fillStyle = '#0b0d14'; x.fill();
+    // אקולייזר
+    for (let i = 0; i < 40; i++) { const bh = 30 + ((seed * (i + 3)) % 140); x.fillStyle = `hsl(${(h1 + i * 4) % 360} 90% 65% / .55)`; x.fillRect(W - 80 - i * 22, H - 60 - bh, 12, bh); }
+    // גרעיניות עדינה
+    x.fillStyle = 'rgba(255,255,255,.035)'; for (let i = 0; i < 2500; i++) x.fillRect((seed * (i + 1) * 7919) % W, (seed * (i + 7) * 104729) % H, 2, 2);
+    // טקסט (מימין לשמאל)
+    x.direction = 'rtl'; x.textAlign = 'right'; x.textBaseline = 'alphabetic';
+    x.fillStyle = '#f0c65a'; x.font = '800 30px Heebo, Arial'; x.fillText(`${site.name || 'ראש בראש'}${e.number != null ? `  ·  תוכנית ${e.number}` : ''}`, W - 70, 110);
+    x.fillStyle = '#fff'; x.shadowColor = 'rgba(0,0,0,.5)'; x.shadowBlur = 24;
+    const title = label(e);
+    let size = title.length > 34 ? 96 : title.length > 22 ? 120 : 150; x.font = `700 ${size}px Karantina, Impact, Arial`;
+    const lines = wrap(x, title, W - 560); if (lines.length > 2) { size = 92; x.font = `700 ${size}px Karantina, Impact, Arial`; }
+    wrap(x, title, W - 560).slice(0, 3).forEach((ln, i) => x.fillText(ln, W - 70, 250 + i * (size * .95)));
+    x.shadowBlur = 0;
+    const sub = (e.description || '').split(/[.\n!?]/)[0].trim().slice(0, 90);
+    x.fillStyle = 'rgba(255,255,255,.85)'; x.font = '700 30px Heebo, Arial';
+    wrap(x, sub, W - 560).slice(0, 2).forEach((ln, i) => x.fillText(ln, W - 70, H - 150 + i * 42));
+    x.fillStyle = '#f0c65a'; x.font = '800 26px Heebo, Arial'; x.fillText(e.date ? fmtDate(e.date) : (site.tagline || ''), W - 70, H - 60);
+    const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', .9));
+    const file = new File([blob], `cover-${e.slug || e.id}.jpg`, { type: 'image/jpeg' });
+    if (CLOUD) {
+      status.textContent = 'מעלים…';
+      e.cover = await window.RoshUpload(file, e.id, 'cover', (pct) => { status.textContent = `מעלים — ${pct}%`; });
+    } else {
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
+      e.cover = a.href; U.notify('התמונה ירדה למחשב. העלו אותה לאתר והדביקו את הקישור.', 'info');
     }
+    A.coverTry = (A.coverTry || 0) + 1;
+    touch(); renderEditor(); renderList();
+  }
+  function wrap(x, text, max) {
+    const out = []; let line = '';
+    for (const w of String(text).split(/\s+/).filter(Boolean)) { const t = line ? `${line} ${w}` : w; if (x.measureText(t).width > max && line) { out.push(line); line = w; } else line = t; }
+    if (line) out.push(line);
     return out;
   }
-  function openPaste() { $('#paste-area').value = ''; $('#paste-preview').textContent = ''; $('#paste-replace').checked = false; dlgPaste.showModal(); $('#paste-area').focus(); }
-  $('#paste-area').addEventListener('input', (ev) => { const p = parsePaste(ev.target.value); $('#paste-preview').textContent = p.length ? `זוהו ${p.length} שירים${p.some((t) => t.at == null) ? ' — לחלק אין זמן; יקבלו זמן משוער לפי הסדר' : ''}.` : ''; });
-  $('#paste-apply').addEventListener('click', () => {
+
+  /* ---------- גרסאות קודמות של תוכנית ---------- */
+
+  async function versionData(id) {
+    if (!A.versionCache.has(id)) A.versionCache.set(id, (await S.sb.versions.get(id)));
+    return A.versionCache.get(id);
+  }
+  async function openHistory(e) {
+    const dlg = $('#dlg-history'); $('#history-title').textContent = label(e); $('#history-body').innerHTML = '<p class="help">טוענים את הגרסאות…</p>'; dlg.showModal();
+    try {
+      if (!A.versions) A.versions = (await S.sb.versions.list()).versions;
+      const rows = [];
+      let prevKey = null;
+      for (const v of A.versions) {
+        const data = (await versionData(v.id)).data;
+        const found = (data.episodes || []).find((x) => x.id === e.id);
+        const k = found ? JSON.stringify(S.admin.normEpisode(found, 0)) : null;
+        if (k !== prevKey) rows.push({ v, found });
+        prevKey = k;
+      }
+      $('#history-body').innerHTML = rows.length ? `<p class="help">כל פרסום שבו התוכנית הזו השתנתה. "שחזור" מחזיר את התוכנית לטיוטה כפי שהייתה אז — ואז לוחצים פרסום.</p><div class="version-list">${rows.map(({ v, found }) => `
+<div class="version"><div><b>${esc(when(v.createdAt))}</b><small>${found ? `${esc(found.title || 'בלי שם')}${found.date ? ` · ${esc(fmtDate(found.date, true))}` : ''}${found.cover ? ' · עם תמונה' : ''}` : 'התוכנית לא הייתה קיימת בגרסה הזו'}${v.by ? ` · פורסם על ידי ${esc(v.by)}` : ''}</small></div>${found ? `<button type="button" class="btn small" data-restore-ep="${esc(v.id)}">שחזור</button>` : ''}</div>`).join('')}</div>` : '<p class="help">עדיין אין גרסאות קודמות — הן נשמרות מעכשיו בכל פרסום.</p>';
+    } catch (err) { $('#history-body').innerHTML = `<p class="problems">${esc(err.message)}</p>`; }
+  }
+  $('#history-body').addEventListener('click', async (ev) => {
+    const b = ev.target.closest('[data-restore-ep]'); if (!b) return;
     const e = cur(); if (!e) return;
-    const parsed = parsePaste($('#paste-area').value);
-    if (!parsed.length) { U.notify('לא זוהו שירים בטקסט.', 'error'); return; }
-    if ($('#paste-replace').checked) e.tracks = [];
-    let lastAt = e.tracks.length ? e.tracks[e.tracks.length - 1].at : -180;
-    for (const t of parsed) { if (t.at == null) t.at = lastAt + 180; lastAt = t.at; e.tracks.push(t); }
-    markDirty(); refreshTracks(); dlgPaste.close(); U.notify(`נוספו ${parsed.length} שירים.`, 'success');
+    const found = ((await versionData(b.dataset.restoreEp)).data.episodes || []).find((x) => x.id === e.id);
+    if (!found) return;
+    Object.assign(e, S.admin.normEpisode(found, 0));
+    touch(); renderEditor(); renderList(); $('#dlg-history').close(); U.notify('התוכנית שוחזרה לטיוטה. לחצו פרסום כדי להעלות לאתר.', 'success');
   });
 
-  /* ---------- JSON, ייבוא וייצוא ---------- */
+  /* ======================================================
+     2. האתר — הודעה, עדכונים, עונות
+     ====================================================== */
 
-  const dlgJson = $('#dlg-json');
-  $('#btn-json').addEventListener('click', () => { $('#json-area').value = S.admin.export(A.data); $('#json-msg').innerHTML = ''; dlgJson.showModal(); });
-  $('#json-validate').addEventListener('click', () => { const r = validateText($('#json-area').value); showJsonMsg(r); });
-  $('#json-apply').addEventListener('click', () => {
-    const r = validateText($('#json-area').value); showJsonMsg(r);
-    if (r.errors.length) return;
-    applyData(r.data); dlgJson.close(); U.notify('ה־JSON הוחל על הטיוטה.', 'success');
+  function renderSite() {
+    const b = A.data.settings.banner || {};
+    const ups = A.data.settings.updates || [];
+    $('#panel').innerHTML = `
+<div class="card">
+  <div class="section-title"><div><p class="kicker">הודעה</p><h2>הודעה בראש האתר</h2></div><span class="toggle${b.enabled ? ' on' : ''}" aria-hidden="true">${b.enabled ? 'מוצגת' : 'כבויה'}</span></div>
+  <div class="card-body">
+    <p class="help">פס הודעה שמופיע בראש כל הדפים — למשל "התוכנית הבאה ביום חמישי" או ברכה לחג. נעלם לבד בתאריך שתבחרו.</p>
+    <div class="form-grid">
+      <label class="field span2"><span>ההודעה</span><input data-sf="text" value="${esc(b.text || '')}" maxlength="300" placeholder="למשל: התוכנית הבאה — יום חמישי ב־20:00"></label>
+      <label class="field"><span>קישור (לא חובה)</span><input data-sf="link" value="${esc(b.link || '')}" placeholder="https://… או episode.html?ep=…" class="ltr"></label>
+      <label class="field"><span>טקסט הכפתור</span><input data-sf="linkLabel" value="${esc(b.linkLabel || '')}" placeholder="לפרטים"></label>
+      <label class="field"><span>להציג עד (לא חובה)</span><input data-sf="until" type="date" value="${esc(b.until || '')}"></label>
+    </div>
+    <div class="switches"><button type="button" class="toggle${b.enabled ? ' on' : ''}" data-op="banner-toggle" aria-pressed="${!!b.enabled}">${b.enabled ? '✓ ההודעה מוצגת באתר' : 'להציג את ההודעה'}</button></div>
+    ${b.enabled && b.text ? `<div class="banner-preview"><span class="kicker">כך זה נראה</span><div class="site-banner"><span class="site-banner-mark">✦</span><p>${esc(b.text)}</p>${b.link ? `<span class="btn small">${esc(b.linkLabel || 'לפרטים')} <span>←</span></span>` : ''}</div></div>` : ''}
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-title"><div><p class="kicker">דף העדכונים</p><h2>מה חדש</h2></div><strong>${ups.length}</strong></div>
+  <div class="card-body">
+    <p class="help">הודעות קצרות למאזינים בדף "עדכונים" באתר (הקישור מופיע בתפריט כשיש עדכונים). החדש ביותר למעלה; אפשר לנעוץ עדכון חשוב.</p>
+    <div class="update-rows" id="update-rows">${renderUpdates(ups)}</div>
+    <div class="track-tools"><button type="button" class="btn gold" data-op="update-add">+ עדכון חדש</button></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-title"><div><p class="kicker">עונות</p><h2>סידור הארכיון</h2></div><strong>${A.data.seasons.length}</strong></div>
+  <div class="card-body">
+    <p class="help">עונה היא קבוצה של תוכניות — לפי שנה, לפי תקופה או לפי המגישים. בארכיון אפשר לסנן לפי עונה, ולכל תוכנית בוחרים עונה בטופס שלה.</p>
+    <div class="season-rows" id="season-rows">${renderSeasonRows()}</div>
+    <div class="track-tools">
+      <button type="button" class="btn gold" data-op="season-add">+ עונה חדשה</button>
+      <span class="cue-hint">מחיקת עונה לא מוחקת תוכניות — הן פשוט יישארו בלי עונה.</span>
+    </div>
+  </div>
+</div>`;
+  }
+  function renderUpdates(ups) {
+    if (!ups.length) return '<div class="state" style="padding:20px"><p>עדיין אין עדכונים.</p></div>';
+    return ups.map((u, i) => `
+<div class="update-row${u.pinned ? ' pinned' : ''}" data-i="${i}">
+  <div class="update-head"><input data-uf="date" data-i="${i}" type="date" value="${esc(u.date)}" aria-label="תאריך" class="ltr"><input data-uf="title" data-i="${i}" value="${esc(u.title)}" placeholder="כותרת" aria-label="כותרת"><button type="button" class="chip" data-op="update-pin" data-i="${i}" aria-pressed="${!!u.pinned}">${u.pinned ? '📌 נעוץ' : 'נעיצה'}</button><button type="button" class="icon-btn del" data-op="update-del" data-i="${i}" aria-label="מחיקת העדכון">✕</button></div>
+  <textarea data-uf="text" data-i="${i}" placeholder="תוכן העדכון" aria-label="תוכן">${esc(u.text)}</textarea>
+  <input data-uf="link" data-i="${i}" value="${esc(u.link || '')}" placeholder="קישור (לא חובה)" aria-label="קישור" class="ltr">
+</div>`).join('');
+  }
+  function renderSeasonRows() {
+    const counts = {}; A.data.episodes.forEach((e) => { counts[e.season] = (counts[e.season] || 0) + 1; });
+    if (!A.data.seasons.length) return '<div class="state" style="padding:24px"><p>עדיין אין עונות. הוסיפו אחת.</p></div>';
+    return `<div class="season-head"><span>שם העונה</span><span>שנה</span><span>הערה</span><span>תוכניות</span><span></span></div>` + A.data.seasons.map((s, i) => `
+<div class="season-row" data-i="${i}">
+  <input data-zf="title" data-i="${i}" value="${esc(s.title)}" aria-label="שם העונה" placeholder="למשל: עונת 2026">
+  <input data-zf="year" data-i="${i}" type="number" value="${s.year ?? ''}" aria-label="שנה" placeholder="2026" class="ltr center">
+  <input data-zf="note" data-i="${i}" value="${esc(s.note)}" aria-label="הערה" placeholder="הערה (לא חובה)">
+  <span class="pill">${counts[s.id] || 0}</span>
+  <button type="button" class="icon-btn del" data-op="season-del" data-i="${i}" aria-label="מחיקת העונה">✕</button>
+</div>`).join('');
+  }
+
+  /* ======================================================
+     3. מאזינים — מספרים והודעות
+     ====================================================== */
+
+  async function loadListeners() {
+    if (!CLOUD || !S.sb.user?.isAdmin) return;
+    const [stats, messages, subs] = await Promise.allSettled([S.sb.stats(), S.sb.messages.list(), S.sb.subscribe.count()]);
+    A.stats = stats.status === 'fulfilled' ? stats.value : { error: stats.reason?.message };
+    A.messages = messages.status === 'fulfilled' ? messages.value : { error: messages.reason?.message };
+    A.subs = subs.status === 'fulfilled' ? subs.value : null;
+    const badge = $('#tab-unread'); const unread = A.messages?.unread || 0;
+    badge.hidden = !unread; badge.textContent = unread;
+    if (A.tab === 'listeners') renderListeners();
+  }
+  function renderListeners() {
+    if (!CLOUD) { $('#panel').innerHTML = '<div class="card"><div class="state"><span class="mark">☺</span><h3>המאזינים</h3><p>הסטטיסטיקות וההודעות עובדות רק כשהאתר מחובר לשרת.</p></div></div>'; return; }
+    const st = A.stats, ms = A.messages;
+    const notReady = (o) => o?.error && /404|לא נמצא/.test(o.error);
+    const epName = (id) => { const e = A.data.episodes.find((x) => x.id === id); return e ? label(e) : 'תוכנית שנמחקה'; };
+    const days = st?.days || [];
+    const max = Math.max(1, ...days.map((d) => Number(d.plays) || 0));
+    const dayName = (iso) => new Intl.DateTimeFormat('he-IL', { weekday: 'short', day: 'numeric' }).format(new Date(`${iso}T12:00:00`));
+    const statsHtml = !st ? '<p class="help">טוענים…</p>' : notReady(st) ? '<p class="problems">השרת עדיין לא עודכן לגרסה שאוספת סטטיסטיקות. אחרי העדכון המספרים יתחילו להצטבר כאן.</p>' : st.error ? `<p class="problems">${esc(st.error)}</p>` : `
+<div class="stats admin-stats">
+  <div class="stat"><b>${n2(st.week?.plays)}</b><small>האזנות בשבוע האחרון</small></div>
+  <div class="stat"><b>${n2(st.week?.listeners)}</b><small>מאזינים בשבוע האחרון</small></div>
+  <div class="stat"><b>${n2(st.totals?.plays)}</b><small>האזנות מאז ההתחלה</small></div>
+  <div class="stat"><b>${n2(Math.round((Number(st.totals?.seconds) || 0) / 3600))}</b><small>שעות האזנה בסך הכול</small></div>
+</div>
+<p class="kicker" style="margin-top:20px">30 הימים האחרונים</p>
+${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי יום">${days.map((d) => `<div class="bar" title="${esc(dayName(d.day))}: ${n2(d.plays)} האזנות, ${n2(d.listeners)} מאזינים"><i style="height:${Math.round((Number(d.plays) || 0) / max * 100)}%"></i><small>${esc(dayName(d.day).slice(0, 5))}</small></div>`).join('')}</div>` : '<p class="help">עדיין אין האזנות שנרשמו. המספרים מתחילים להצטבר מהאזנה הראשונה באתר.</p>'}
+<div class="two-col">
+  <div><p class="kicker">הכי נשמעות ב־30 הימים האחרונים</p>${(st.recent || []).length ? `<ol class="top-list">${st.recent.slice(0, 10).map((r) => `<li><span>${esc(epName(r.id))}</span><b>${n2(r.plays)}</b></li>`).join('')}</ol>` : '<p class="help">אין עדיין נתונים.</p>'}</div>
+  <div><p class="kicker">הכי נשמעות מאז ומעולם</p>${(st.episodes || []).length ? `<ol class="top-list">${st.episodes.slice(0, 10).map((r) => `<li><span>${esc(epName(r.id))}</span><b>${n2(r.plays)}</b></li>`).join('')}</ol>` : '<p class="help">אין עדיין נתונים.</p>'}</div>
+</div>
+<p class="cue-hint" style="margin-top:12px">מכשירים ב־30 הימים האחרונים: טלפון ${n2(st.devices?.phone)} · מחשב ${n2(st.devices?.desktop)}. הספירה אנונימית — בלי שמות ובלי כתובות.</p>`;
+    const msgsHtml = !ms ? '<p class="help">טוענים…</p>' : notReady(ms) ? '<p class="problems">השרת עדיין לא עודכן לגרסה שמקבלת הודעות מהמאזינים.</p>' : ms.error ? `<p class="problems">${esc(ms.error)}</p>` : (ms.messages || []).length ? `<div class="msg-list">${ms.messages.map((m) => `
+<div class="msg${m.readAt ? '' : ' unread'}" data-id="${esc(m.id)}">
+  <div class="msg-head"><b>${esc(m.name || 'מאזין/ה')}</b>${m.email ? `<a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : ''}<small>${esc(when(m.createdAt))}${m.episodeId ? ` · על "${esc(epName(m.episodeId))}"` : ''}</small></div>
+  <p>${esc(m.text)}</p>
+  <div class="msg-ops"><button type="button" class="btn small" data-op="msg-read" data-id="${esc(m.id)}" data-read="${m.readAt ? '0' : '1'}">${m.readAt ? 'סימון כלא נקרא' : '✓ נקרא'}</button>${m.email ? `<a class="btn small" href="mailto:${esc(m.email)}?subject=${encodeURIComponent('תשובה מראש בראש')}">תשובה במייל</a>` : ''}<button type="button" class="btn small danger" data-op="msg-del" data-id="${esc(m.id)}">מחיקה</button></div>
+</div>`).join('')}</div>` : '<div class="state" style="padding:20px"><p>עדיין לא הגיעו הודעות. המאזינים כותבים דרך "כתבו לנו" בדף הבית ובדפי התוכניות.</p></div>';
+    $('#panel').innerHTML = `
+<div class="card">
+  <div class="section-title"><div><p class="kicker">מספרים</p><h2>מי מאזין</h2></div><button type="button" class="btn small" data-op="reload-listeners">רענון</button></div>
+  <div class="card-body">${statsHtml}</div>
+</div>
+<div class="card">
+  <div class="section-title"><div><p class="kicker">הודעות</p><h2>מה המאזינים כותבים</h2></div>${ms?.unread ? `<strong>${ms.unread}</strong>` : ''}</div>
+  <div class="card-body">${msgsHtml}</div>
+</div>
+<div class="card">
+  <div class="section-title"><div><p class="kicker">רשימת התפוצה</p><h2>נשארים בראש</h2></div>${A.subs ? `<strong>${n2(A.subs.active)}</strong>` : ''}</div>
+  <div class="card-body"><p class="help">${A.subs ? `${n2(A.subs.active)} נרשמים פעילים, מהם ${n2(A.subs.fromProgram)} שנרשמו דרך אתר התוכניות. זו אותה רשימה של אתר הסקר — ניהול הרשימה והורדה לאקסל נעשים שם, בלשונית "רשימת תפוצה".` : 'המאזינים מצטרפים בלחיצה אחת עם חשבון Google בדף הבית ובאזור האישי. הרשימה משותפת עם אתר הסקר.'}</p>${site.storage?.cloudflare?.apiBase ? `<a class="btn small" href="${esc(new URL(site.storage.cloudflare.apiBase).origin)}/admin" target="_blank" rel="noopener">לניהול הרשימה באתר הסקר</a>` : ''}</div>
+</div>`;
+  }
+
+  /* ======================================================
+     4. פרסום — בדיקה, העברה לאתר, גרסאות, כלים מתקדמים
+     ====================================================== */
+
+  function renderPublish() {
+    const ch = changes(), hc = health();
+    const u = S.sb.user;
+    const list = [];
+    if (ch) {
+      if (ch.added) list.push(ch.added === 1 ? 'תוכנית אחת חדשה' : `${ch.added} תוכניות חדשות`);
+      if (ch.changed) list.push(ch.changed === 1 ? 'תוכנית אחת עודכנה' : `${ch.changed} תוכניות עודכנו`);
+      if (ch.removed.length) list.push(ch.removed.length === 1 ? `תוכנית אחת תימחק מהאתר (${esc(label(ch.removed[0]))})` : `${ch.removed.length} תוכניות יימחקו מהאתר`);
+      if (ch.seasons) list.push('העונות השתנו');
+      if (ch.settings) list.push('ההודעה או העדכונים השתנו');
+    }
+    let title, text;
+    if (!A.origin && A.originError) { title = 'האתר לא זמין כרגע'; text = 'לא הצלחנו לקרוא מה מפורסם באתר. השינויים שלכם שמורים — נסו שוב בעוד רגע.'; }
+    else if (!A.origin) { title = 'רגע…'; text = 'בודקים מה מפורסם באתר.'; }
+    else if (!ch.any) { title = 'הכול מפורסם'; text = 'האתר מציג בדיוק את מה שיש כאן. אין מה לפרסם.'; }
+    else { title = 'יש שינויים שמחכים לפרסום'; text = 'עד הפרסום, השינויים נראים רק לכם (ולמי שקיבל קישור תצוגה מקדימה).'; }
+    const canPublish = !!ch?.any && !hc.must.length && (CLOUD ? !!u : true);
+    const checkRow = (kind, titleText, hint) => {
+      const r = A.checks[kind];
+      return `<div class="tool"><div><b>${titleText}</b><small>${r ? (r.running ? `בודקים… ${r.done}/${r.total}` : r.problems.length ? `${r.problems.length} בעיות נמצאו:` : `✓ הכול תקין (${r.total} נבדקו)`) : hint}</small>${r && !r.running && r.problems.length ? `<ul class="check-list">${r.problems.map((p) => `<li><button type="button" class="link-btn" data-op="open" data-id="${esc(p.id)}">${esc(p.text)}</button></li>`).join('')}</ul>` : ''}</div><button type="button" class="btn small" data-op="check-${kind}" ${r?.running ? 'disabled' : ''}>${r ? 'בדיקה חוזרת' : 'בדיקה'}</button></div>`;
+    };
+    $('#panel').innerHTML = `
+<div class="card pub-card${ch?.any ? ' pending' : ''}">
+  <div class="card-body">
+    <p class="kicker">פרסום</p>
+    <h2 class="display">${title}</h2>
+    <p class="help">${text}</p>
+    ${list.length ? `<ul class="change-list">${list.map((x) => `<li>${x}</li>`).join('')}</ul>` : ''}
+    ${hc.must.length ? `<div class="problems"><b>לפני שמפרסמים, צריך לתקן:</b><ul>${hc.must.map((p) => `<li><button type="button" class="link-btn" data-op="open" data-id="${esc(p.id)}">${esc(p.text)}</button></li>`).join('')}</ul></div>` : ''}
+    ${CLOUD && !u ? '<p class="problems">כדי לפרסם צריך להיות מחוברים. רעננו את הדף והיכנסו שוב.</p>' : ''}
+    <div class="actions">
+      <button type="button" class="btn xl primary" data-op="publish" ${canPublish ? '' : 'disabled'}>${CLOUD ? 'פרסום לאתר' : 'הורדת הקובץ לפרסום'} <span>←</span></button>
+      ${ch?.any ? '<button type="button" class="btn" data-op="discard">ביטול כל השינויים</button>' : ''}
+      ${!A.origin ? '<button type="button" class="btn" data-op="reload">בדיקה חוזרת</button>' : ''}
+    </div>
+    ${CLOUD ? '' : '<p class="cue-hint" style="margin-top:14px">האתר הזה לא מחובר לשרת. הפרסום מוריד קובץ אחד — מוסרים אותו למי שמתחזק את האתר.</p>'}
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-title"><div><p class="kicker">בדיקת תקינות</p><h2>מה כדאי להשלים</h2></div><strong>${hc.should.length + hc.dup.length}</strong></div>
+  <div class="card-body">
+    ${hc.should.length || hc.dup.length ? `
+    ${hc.dup.length ? `<div class="problems soft"><b>כפילויות:</b><ul>${hc.dup.map((d) => `<li>${esc(d.text)} — ${d.ids.map((id, i) => `<button type="button" class="link-btn" data-op="open" data-id="${esc(id)}">פתיחה ${i + 1}</button>`).join(' · ')}</li>`).join('')}</ul></div>` : ''}
+    <ul class="check-list">${hc.should.slice(0, 40).map((p) => `<li><button type="button" class="link-btn" data-op="open" data-id="${esc(p.id)}">${esc(p.text)}</button></li>`).join('')}${hc.should.length > 40 ? `<li>ועוד ${hc.should.length - 40}…</li>` : ''}</ul>
+    <p class="cue-hint">אלה לא חוסמים פרסום — רק הצעות. תוכניות בלי הקלטה ובלי תמונה עדיין מופיעות באתר.</p>` : '<p class="help">✓ לכל התוכניות יש שם, תאריך, תיאור, הקלטה ותמונה, ואין כפילויות.</p>'}
+    <div class="tool-list" style="margin-top:14px">
+      ${checkRow('audio', 'בדיקת ההקלטות', 'עובר על כל ההקלטות ומוודא שהן נטענות בנגן.')}
+      ${checkRow('media', 'בדיקת תמונות וקישורים', 'מוודא שכל התמונות נטענות ושהקישורים בדפי התוכניות עונים.')}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="section-title"><div><p class="kicker">גיבוי אוטומטי</p><h2>גרסאות קודמות</h2></div><button type="button" class="btn small" data-op="versions" ${CLOUD ? '' : 'disabled'}>${A.versions ? 'רענון' : 'הצגת הגרסאות'}</button></div>
+  <div class="card-body">
+    <p class="help">כל פרסום נשמר אוטומטית כגרסה. אם משהו השתבש, בוחרים גרסה, לוחצים "שחזור" — והכול חוזר לטיוטה כפי שהיה. אחר כך לוחצים פרסום.</p>
+    ${!CLOUD ? '<p class="cue-hint">עובד רק כשהאתר מחובר לשרת.</p>' : A.versions === null ? '' : A.versions.length ? `<div class="version-list">${A.versions.map((v, i) => `<div class="version"><div><b>${esc(when(v.createdAt))}${i === 0 ? ' <span class="pill gold">הגרסה שבאתר</span>' : ''}</b><small>${n2(v.episodes)} תוכניות${v.by ? ` · פורסם על ידי ${esc(v.by)}` : ''}</small></div><button type="button" class="btn small" data-op="restore-version" data-id="${esc(v.id)}">שחזור</button></div>`).join('')}</div>` : '<p class="help">עדיין אין גרסאות שמורות — הראשונה תישמר בפרסום הבא.</p>'}
+  </div>
+</div>
+
+<details class="card more-details">
+  <summary>כלים מתקדמים</summary>
+  <div class="card-body tool-list">
+    ${CLOUD ? `<div class="tool"><div><b>קישור לתצוגה מקדימה</b><small>שולחים למישהו קישור, והוא רואה את האתר עם הטיוטה — לפני שמפרסמים. הקישור עובד עד הפרסום הבא.</small><div id="preview-link"></div></div><button type="button" class="btn small" data-op="preview-link">יצירת קישור</button></div>` : ''}
+    <div class="tool"><div><b>קובץ גיבוי</b><small>קובץ אחד עם כל התוכניות, העונות וההגדרות. כדאי לשמור עותק במחשב מדי פעם.</small></div><button type="button" class="btn small" data-op="backup">הורדת גיבוי</button></div>
+    <div class="tool"><div><b>שחזור מקובץ גיבוי</b><small>מחליף את כל מה שכאן בתוכן של קובץ גיבוי ששמרתם בעבר. אחר כך לוחצים פרסום.</small></div><button type="button" class="btn small" data-op="restore">בחירת קובץ…</button></div>
+    ${CLOUD ? '<div class="tool"><div><b>העברת ההקלטות לאתר</b><small>מעתיק את ההקלטות מהדרייב לאחסון של האתר, כדי שינוגנו מהר יותר ולא יהיו תלויות בדרייב. אפשר לעצור ולהמשיך אחר כך.</small></div><button type="button" class="btn small" data-op="migrate">פתיחה</button></div>' : ''}
+    ${CLOUD ? `<div class="tool"><div><b>מי מנהל</b><small>מי שמופיע כאן יכול להיכנס לניהול — גם באתר הסקר. זו אותה רשימה.</small><div id="admins-box">${renderAdmins()}</div></div><button type="button" class="btn small" data-op="admins">${A.admins ? 'רענון' : 'הצגה'}</button></div>` : ''}
+    <div class="tool"><div><b>החשבון</b><small>${u ? `מחוברים כ־${esc(u.email || u.name || '')}` : 'לא מחוברים'}</small></div>${u ? '<button type="button" class="btn small" data-op="logout">התנתקות</button>' : ''}</div>
+  </div>
+</details>`;
+  }
+  function renderAdmins() {
+    if (!A.admins) return '';
+    if (A.admins.error) return `<p class="problems" style="margin-top:8px">${esc(A.admins.error)}</p>`;
+    return `<ul class="admin-list">${A.admins.map((a) => `<li><span>${esc(a.email)}${a.you ? ' <span class="pill gold">אתם</span>' : ''}${a.fixed ? ' <span class="pill">קבוע</span>' : ''}</span>${a.you || a.fixed ? '' : `<button type="button" class="icon-btn del" data-op="admin-del" data-email="${esc(a.email)}" aria-label="הסרה">✕</button>`}</li>`).join('')}</ul><form class="admin-add" data-admin-add><input type="email" required placeholder="כתובת Gmail של מנהל חדש" class="ltr"><button type="submit" class="btn small">הוספה</button></form>`;
+  }
+
+  /* ---------- בדיקות: הקלטות, תמונות וקישורים ---------- */
+
+  async function runCheck(kind) {
+    const items = kind === 'audio'
+      ? A.data.episodes.filter((e) => U.streamUrl(e)).map((e) => ({ e, url: U.streamUrl(e), what: 'ההקלטה' }))
+      : A.data.episodes.flatMap((e) => [...(e.cover ? [{ e, url: e.cover, what: 'התמונה', img: true }] : []), ...U.publicLinks(e).map((l) => ({ e, url: l.url, what: `הקישור "${l.label}"` }))]);
+    const r = A.checks[kind] = { running: true, total: items.length, done: 0, problems: [] };
+    renderPublish();
+    const probe = async (it) => {
+      if (it.img) return new Promise((res) => { const im = new Image(); const t = setTimeout(() => res(false), 15000); im.onload = () => { clearTimeout(t); res(true); }; im.onerror = () => { clearTimeout(t); res(false); }; im.src = it.url; });
+      try {
+        const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 15000);
+        const res = await fetch(it.url, { method: kind === 'audio' ? 'GET' : 'HEAD', headers: kind === 'audio' ? { Range: 'bytes=0-1' } : {}, mode: kind === 'audio' ? 'cors' : 'no-cors', signal: ctrl.signal, cache: 'no-store' });
+        clearTimeout(t);
+        if (res.type === 'opaque') return true;   // אתר אחר שלא מאפשר לבדוק — ענה, וזה מספיק
+        return res.ok || res.status === 206;
+      } catch { return false; }
+    };
+    let i = 0;
+    const worker = async () => { while (i < items.length) { const it = items[i++]; const ok = await probe(it); if (!ok) r.problems.push({ id: it.e.id, text: `${it.what} של "${label(it.e)}" לא נטענת` }); r.done++; if (A.tab === 'publish' && r.done % 5 === 0) renderPublish(); } };
+    await Promise.all([worker(), worker(), worker()]);
+    r.running = false; if (A.tab === 'publish') renderPublish();
+    U.notify(r.problems.length ? `הבדיקה הסתיימה: ${r.problems.length} בעיות.` : 'הבדיקה הסתיימה: הכול תקין.', r.problems.length ? 'info' : 'success');
+  }
+
+  /* ---------- גיבוי, שחזור, פרסום ---------- */
+
+  function backupFile() {
+    const text = S.admin.export(A.data);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    a.download = CLOUD ? `rosh-berosh-backup-${new Date().toISOString().slice(0, 10)}.json` : 'episodes.json';
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  $('#file-restore').addEventListener('change', async (ev) => {
+    const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
+    let raw; try { raw = JSON.parse(await f.text()); } catch { U.notify('זה לא קובץ גיבוי של האתר.', 'error'); return; }
+    const errs = S.admin.validate(raw);
+    if (errs.length) { U.notify(`הקובץ לא תקין: ${errs[0]}`, 'error'); return; }
+    if (!confirm(`לשחזר ${raw.episodes.length} תוכניות מהקובץ? כל מה שיש כאן עכשיו יוחלף (עד הפרסום זה נראה רק לכם).`)) return;
+    applyData(raw); U.notify('הגיבוי שוחזר. בדקו את האתר ואז לחצו פרסום.', 'success');
   });
-  $('#json-copy').addEventListener('click', async () => { (await U.copy($('#json-area').value)) ? U.notify('ה־JSON הועתק.', 'success') : U.notify('ההעתקה נכשלה.', 'error'); });
-  $('#json-download').addEventListener('click', () => download('episodes.json', $('#json-area').value));
-  function validateText(text) {
-    let data; try { data = JSON.parse(text); } catch (err) { return { errors: [`JSON לא תקין: ${err.message}`] }; }
-    const errors = S.admin.validate(data); return { errors, data };
-  }
-  function showJsonMsg({ errors, data }) {
-    $('#json-msg').innerHTML = errors.length ? `<ul class="err-list">${errors.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : `<p class="ok-line">✓ תקין — ${data.episodes.length} תוכניות, ${(data.seasons || []).length} עונות.</p>`;
-  }
   function applyData(raw) {
     A.data = S.admin.normalize(raw);
-    A.data.episodes.forEach((e) => A.originIds.has(e.id) && A.removed.delete(e.id));
-    A.originIds.forEach((id) => { if (!A.data.episodes.some((e) => e.id === id)) A.removed.add(id); });
+    if (!raw.settings && A.origin) A.data.settings = clone(A.origin.settings || S.admin.normSettings({}));
     A.selected = A.data.episodes.some((e) => e.id === A.selected) ? A.selected : null;
-    markDirty(); renderList(); renderEditor();
+    A.picked.clear(); touch(); render();
   }
-  function download(name, text) {
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  }
-  $('#btn-import').addEventListener('click', () => $('#file-import').click());
-  $('#file-import').addEventListener('change', async (ev) => {
-    const f = ev.target.files[0]; if (!f) return;
-    const r = validateText(await f.text());
-    if (r.errors.length) { U.notify(`הקובץ לא תקין: ${r.errors[0]}`, 'error'); return; }
-    if (!confirm(`לייבא ${r.data.episodes.length} תוכניות מהקובץ? זה יחליף את הטיוטה הנוכחית.`)) return;
-    applyData(r.data); U.notify('הקובץ יובא לטיוטה.', 'success'); ev.target.value = '';
-  });
 
-  /* ---------- שמירה ופרסום ---------- */
-
-  function save(silent) {
+  async function publish(btn) {
+    const hc = health();
+    if (hc.must.length) { U.notify(hc.must[0].text, 'error'); setTab('publish'); return; }
     const errs = S.admin.validate(A.data);
-    if (errs.length) { U.notify(errs[0], 'error'); return false; }
-    S.admin.saveOverride(A.data);
-    A.dirty = false; paintStatus();
-    if (!silent) U.notify('הטיוטה נשמרה. האתר במכשיר הזה מציג אותה.', 'success');
-    return true;
+    if (errs.length) { U.notify(errs[0], 'error'); return; }
+    persist();
+    if (!CLOUD) { backupFile(); U.notify('הקובץ ירד. מסרו אותו למי שמתחזק את האתר.', 'success'); return; }
+    if (btn) btn.disabled = true;
+    const stop = U.notify('מפרסמים…', 'progress');
+    try {
+      const removedIds = A.origin ? A.origin.episodes.filter((o) => !A.data.episodes.some((e) => e.id === o.id)).map((o) => o.id) : [];
+      await S.sb.push(A.data, { removedIds });
+      clearTimeout(A.syncTimer); A.syncState = '';
+      S.admin.clearOverride();
+      A.origin = S.admin.normalize(clone(A.data)); A.originError = false; A.versions = null; A.versionCache.clear();
+      stop(); U.notify('פורסם! האתר מציג עכשיו את הגרסה החדשה.', 'success');
+      paintStatus(); if (A.tab === 'publish') render();
+    } catch (err) { stop(); U.notify(`הפרסום לא הצליח: ${err.message}`, 'error'); }
+    finally { if (btn) btn.disabled = false; }
   }
-  $('#btn-save').addEventListener('click', () => save());
-  document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
-    if (e.key === 'n' && !U.isTyping(e) && !document.querySelector('dialog[open]')) { e.preventDefault(); newEpisode(); }
-  });
-
-  const dlgPublish = $('#dlg-publish');
-  function renderPublish() {
-    const body = $('#publish-body'), foot = $('#publish-foot');
-    const n = A.data.episodes.length, removed = A.removed.size;
-    if (S.state.source === 'cloudflare') {
-      const u = S.sb.user;
-      body.innerHTML = `
-<div class="sb-box">
-  <b>פרסום ל־Cloudflare D1</b>
-  ${u ? `<span class="who">מחוברים כ־${esc(u.email)}</span>` : '<span style="color:var(--error);font-weight:800;font-size:12px">לא מחוברים. התחברו דרך "חיבור" כדי לפרסם.</span>'}
-  <span style="font-size:13px">${n} תוכניות ו־${A.data.seasons.length} עונות יישמרו.${removed ? ` ${removed} תוכניות יימחקו מהמקור.` : ''}</span>
-</div>`;
-      foot.innerHTML = `${u ? '' : '<button type="button" class="btn" data-pub="login">התחברות</button>'}<button type="button" class="btn primary" data-pub="push" ${u ? '' : 'disabled'}>פרסום עכשיו <span>←</span></button>`;
-    } else {
-      body.innerHTML = `
-<ol class="publish-steps">
-  <li>הורידו את הקובץ המעודכן (${n} תוכניות).</li>
-  <li>החליפו איתו את <code>data/episodes.json</code> במאגר ב־GitHub (העלאה דרך האתר של GitHub או commit).</li>
-  <li>אחרי שהאתר התעדכן, לחצו "ניקוי הטיוטה" כדי שהמכשיר הזה יחזור להציג את המקור.</li>
-</ol>
-<p class="cue-hint" style="margin:12px 0 0">רוצים לפרסם בלחיצה אחת? חברו את Cloudflare ב־<code>data/site.json</code> (ראו README).</p>`;
-      foot.innerHTML = `<button type="button" class="btn" data-pub="copy">העתקת ה־JSON</button><button type="button" class="btn" data-pub="clear">ניקוי הטיוטה</button><button type="button" class="btn primary" data-pub="download">הורדת episodes.json <span>←</span></button>`;
-    }
+  async function discard() {
+    if (!confirm('לבטל את כל השינויים שלא פורסמו ולחזור למה שמפורסם באתר?')) return;
+    S.admin.clearOverride();
+    if (CLOUD) { try { await S.sb.draft.clear(); } catch { /* */ } }
+    location.reload();
   }
-  $('#btn-publish').addEventListener('click', () => { if (A.dirty && !save(true)) return; renderPublish(); dlgPublish.showModal(); });
-  dlgPublish.addEventListener('click', async (ev) => {
-    const b = ev.target.closest('[data-pub]'); if (!b) return;
-    switch (b.dataset.pub) {
-      case 'download': download('episodes.json', S.admin.export(A.data)); U.notify('הקובץ ירד. העלו אותו ל־data/episodes.json במאגר.', 'success'); break;
-      case 'copy': (await U.copy(S.admin.export(A.data))) ? U.notify('ה־JSON הועתק.', 'success') : U.notify('ההעתקה נכשלה.', 'error'); break;
-      case 'clear': if (confirm('לנקות את הטיוטה המקומית ולחזור לנתוני המקור?')) { S.admin.clearOverride(); location.reload(); } break;
-      case 'login': dlgPublish.close(); openSettings(); break;
-      case 'push': {
-        b.disabled = true; const stop = U.notify('מפרסמים…', 'progress');
-        try {
-          await S.sb.push(A.data, { removedIds: [...A.removed] });
-          S.admin.clearOverride(); A.removed.clear(); A.dirty = false; A.originIds = new Set(A.data.episodes.map((e) => e.id));
-          stop(); U.notify('פורסם. האתר מציג עכשיו את הנתונים החדשים.', 'success'); dlgPublish.close(); paintStatus();
-        } catch (err) { stop(); U.notify(`הפרסום נכשל: ${err.message}`, 'error'); b.disabled = false; }
-        break;
-      }
-    }
-  });
+  async function restoreVersion(id) {
+    const v = A.versions?.find((x) => x.id === id);
+    if (!confirm(`לשחזר את הגרסה מ־${v ? when(v.createdAt) : 'התאריך הזה'}? כל מה שבטיוטה יוחלף. אחר כך לוחצים פרסום.`)) return;
+    const stop = U.notify('משחזרים…', 'progress');
+    try { const { data } = await versionData(id); applyData(data); stop(); U.notify('הגרסה שוחזרה לטיוטה. בדקו ולחצו פרסום.', 'success'); }
+    catch (err) { stop(); U.notify(err.message, 'error'); }
+  }
+  async function previewLink() {
+    const box = $('#preview-link'); box.innerHTML = '<span class="cue-hint">מכינים…</span>';
+    try {
+      persist(); await sync();
+      const { preview } = await S.sb.preview.create();
+      const url = new URL(`index.html?preview=${preview.token}`, site.url || location.href).href;
+      box.innerHTML = `<div class="preview-url"><input readonly value="${esc(url)}" class="ltr" aria-label="קישור"><button type="button" class="btn small gold" data-op="copy" data-text="${esc(url)}">העתקה</button><button type="button" class="btn small" data-op="preview-revoke">ביטול הקישור</button></div>`;
+    } catch (err) { box.innerHTML = `<span class="problems">${esc(err.message)}</span>`; }
+  }
+  $('#btn-publish-top').addEventListener('click', () => { const ch = changes(); if (ch && !ch.any) { U.notify('הכול כבר מפורסם.', 'info'); return; } setTab('publish'); });
 
-  /* ---------- חיבור ---------- */
+  /* ---------- העברת ההקלטות ---------- */
 
   const dlgMigrate = $('#dlg-migrate');
   let stopMigration = false;
-  $('#btn-migrate').addEventListener('click', () => dlgMigrate.showModal());
+  function openMigrate() {
+    const eps = A.data.episodes.filter((e) => U.driveId(e));
+    const bytes = eps.reduce((n, e) => n + (e.sourceFileBytes || 0), 0);
+    $('#migrate-summary').textContent = `${eps.length} הקלטות בדרייב${bytes ? `, בערך ${(bytes / 1024 / 1024 / 1024).toFixed(1)}GB` : ''}`;
+    $('#migrate-progress').max = Math.max(1, eps.length); $('#migrate-progress').value = 0; $('#migrate-errors').textContent = '';
+    dlgMigrate.showModal();
+  }
   $('#migrate-stop').addEventListener('click', () => { stopMigration = true; $('#migrate-stop').disabled = true; });
   $('#migrate-start').addEventListener('click', async () => {
     const start = $('#migrate-start'), stop = $('#migrate-stop'), status = $('#migrate-status'), progress = $('#migrate-progress'), errors = $('#migrate-errors');
-    if (!await checkAccess()) { U.notify('צריך להתחבר עם חשבון מנהל.', 'error'); return; }
+    if (!await checkAccess()) { U.notify('צריך להיות מחוברים כמנהל.', 'error'); return; }
     const episodes = A.data.episodes.filter((e) => U.driveId(e));
-    progress.max = episodes.length; progress.value = 0; errors.textContent = '';
+    progress.max = Math.max(1, episodes.length); progress.value = 0; errors.textContent = '';
     start.disabled = true; stop.disabled = false; stopMigration = false;
     let uploaded = 0, existing = 0, failed = 0;
     for (let i = 0; i < episodes.length && !stopMigration; i++) {
       const e = episodes[i];
-      status.innerHTML = `<b>${i + 1} מתוך ${episodes.length}: ${esc(e.title)}</b><span>${e.number != null ? `פרק ${e.number}` : 'הקלטה מיוחדת'} · מעבירים ל־R2…</span>`;
-      try {
-        const result = await S.sb.importDrive(e);
-        result.status === 'existing' ? existing++ : uploaded++;
-      } catch (err) {
-        failed++;
-        errors.insertAdjacentHTML('beforeend', `<div>✕ ${esc(e.title)}: ${esc(err.message)}</div>`);
-      }
+      status.innerHTML = `<b>${i + 1} מתוך ${episodes.length}: ${esc(label(e))}</b><span>מעתיקים לאתר…</span>`;
+      try { const r = await S.sb.importDrive(e); r.status === 'existing' ? existing++ : uploaded++; }
+      catch (err) { failed++; errors.insertAdjacentHTML('beforeend', `<div>✕ ${esc(label(e))}: ${esc(err.message)}</div>`); }
       progress.value = i + 1;
     }
-    status.innerHTML = `<b>${stopMigration ? 'ההעברה נעצרה' : 'ההעברה הסתיימה'}</b><span>${uploaded} הועלו · ${existing} כבר היו באתר · ${failed} נכשלו</span>`;
+    status.innerHTML = `<b>${stopMigration ? 'ההעברה נעצרה' : 'ההעברה הסתיימה'}</b><span>${uploaded} הועברו · ${existing} כבר היו באתר · ${failed} לא הצליחו</span>`;
     start.disabled = false; start.textContent = failed || stopMigration ? 'המשך / ניסיון חוזר' : 'בדיקה חוזרת'; stop.disabled = true;
-    if (!failed && !stopMigration) U.notify('כל ההקלטות הועברו ל־R2.', 'success');
+    if (!failed && !stopMigration) U.notify('כל ההקלטות הועברו לאתר.', 'success');
   });
 
-  const dlgSettings = $('#dlg-settings');
-  function openSettings() {
-    const u = S.sb.user, cfg = S.sb.cfg;
-    $('#settings-body').innerHTML = `
-<div class="sb-box" style="margin-bottom:14px">
-  <b>מקור הנתונים: ${S.state.source === 'cloudflare' ? 'Cloudflare D1' : 'קובץ episodes.json במאגר'}</b>
-  <span style="font-size:12px;color:var(--muted)">${S.state.source === 'cloudflare' ? `API: <code style="direction:ltr">${esc(cfg.apiBase)}</code>` : 'כדי לפרסם בלחיצה, הגדירו את Cloudflare ב־data/site.json.'}</span>
-  ${S.admin.hasOverride ? '<span style="font-size:12px;color:var(--gold-ink);font-weight:800">במכשיר הזה יש טיוטה מקומית שמוצגת במקום המקור.</span>' : ''}
-</div>
-${S.state.source === 'cloudflare' ? (u ? `
-<div class="sb-box"><b>מחוברים</b><span class="who">${esc(u.email)}</span><button type="button" class="btn small" data-set="logout">התנתקות</button></div>` : `
-<div class="sb-box">
-  <b>התחברות למנהל</b>
-  <span class="cue-hint">מנהלי אתר הסקר מנהלים גם כאן. מי שכבר מחובר שם נכנס מיד; אחרת נפתח חלון כניסה עם Google, ורשימת המנהלים של אתר הסקר מכריעה.</span>
-  <button type="button" class="btn primary" data-set="google">התחברות דרך אתר הסקר</button>
-</div>`) : ''}
-<div class="track-tools" style="margin-top:14px">
-  <button type="button" class="btn small" data-set="reload">משיכה מחדש מהמקור</button>
-  <button type="button" class="btn small danger" data-set="discard" ${S.admin.hasOverride ? '' : 'disabled'}>מחיקת הטיוטה המקומית</button>
-</div>`;
-    dlgSettings.showModal();
-  }
-  $('#btn-settings').addEventListener('click', openSettings);
-  $('#gate-login').addEventListener('click', openSettings);
-  dlgSettings.addEventListener('click', async (ev) => {
-    const b = ev.target.closest('[data-set]'); if (!b || b.tagName === 'FORM') return;
-    switch (b.dataset.set) {
-      case 'logout': S.sb.signOut(); await checkAccess(); U.notify('התנתקתם.', 'success'); openSettings(); paintStatus(); break;
-      case 'google': try { await S.sb.signIn(); const ok = await checkAccess(); U.notify(ok ? 'התחברתם לניהול.' : 'התחברתם, אבל החשבון אינו מוגדר כמנהל.', ok ? 'success' : 'info'); dlgSettings.close(); paintStatus(); if (ok) loadOriginIds(); } catch (err) { U.notify(`ההתחברות נכשלה: ${err.message}`, 'error'); } break;
-      case 'reload': { if (A.dirty && !confirm('יש שינויים שלא נשמרו. להמשיך?')) return; const stop = U.notify('מושכים מהמקור…', 'progress'); try { const o = await S.admin.pullOrigin(); A.data = clone(o); A.originIds = new Set(o.episodes.map((e) => e.id)); A.removed.clear(); A.dirty = true; stop(); renderList(); renderEditor(); dlgSettings.close(); U.notify('נמשך מהמקור אל הטיוטה. שמרו כדי להחיל.', 'success'); } catch (err) { stop(); U.notify(`המשיכה נכשלה: ${err.message}`, 'error'); } break; }
-      case 'discard': if (confirm('למחוק את הטיוטה המקומית? השינויים שלא פורסמו יאבדו.')) { S.admin.clearOverride(); location.reload(); } break;
+  /* ---------- המדריך ---------- */
+
+  const dlgGuide = $('#dlg-guide');
+  $('#btn-guide').addEventListener('click', () => dlgGuide.showModal());
+  function maybeGuide() { try { if (!localStorage.getItem('rosh:admin:guided')) { dlgGuide.showModal(); localStorage.setItem('rosh:admin:guided', '1'); } } catch { /* */ } }
+
+  /* ======================================================
+     אירועים — האצלה אחת על כל הפאנל
+     ====================================================== */
+
+  const P = $('#panel');
+
+  P.addEventListener('input', (ev) => {
+    const t = ev.target;
+    if (t.id === 'ep-q') { A.q = t.value; renderList(); return; }
+    const e = cur();
+    const { f, lf, sf, uf, zf } = t.dataset;
+    if (f && e) {
+      const v = t.value;
+      switch (f) {
+        case 'number': e.number = v === '' ? null : Number(v); break;
+        case 'tags': e.tags = splitList(v); break;
+        case 'guests': e.guests = splitList(v); break;
+        case 'season': if (v === '__new') { newSeasonInline(t); return; } e.season = v; break;
+        case 'audio': e.audio = v; e.duration = 0; break;
+        default: e[f] = v;
+      }
+      touch(); schedulePreview();
+    } else if (lf && e) {
+      const l = e.links[Number(t.dataset.i)]; if (!l) return;
+      l[lf] = t.value; touch(); schedulePreview();
+    } else if (sf) {
+      const b = A.data.settings.banner || (A.data.settings.banner = {}); b[sf] = t.value; touch();
+    } else if (uf) {
+      const u = A.data.settings.updates[Number(t.dataset.i)]; if (!u) return; u[uf] = t.value; touch();
+    } else if (zf) {
+      const s = A.data.seasons[Number(t.dataset.i)]; if (!s) return;
+      s[zf] = zf === 'year' ? (t.value ? Number(t.value) : null) : t.value; touch();
     }
   });
 
-  // סגירת דיאלוגים
-  $$('dialog.sheet').forEach((d) => { d.querySelector('[data-close]')?.addEventListener('click', () => d.close()); d.addEventListener('click', (e) => { if (e.target === d) d.close(); }); });
+  P.addEventListener('change', async (ev) => {
+    const t = ev.target;
+    if (t.id === 'ep-filter') { A.filter = t.value; renderList(); return; }
+    if (t.dataset.op === 'bulk-season') {
+      const v = t.value; if (!v) return;
+      A.picked.forEach((id) => { const e = A.data.episodes.find((x) => x.id === id); if (e) e.season = v === '__none' ? '' : v; });
+      touch(); renderList(); renderEditor(); U.notify(`${A.picked.size} תוכניות שויכו${v === '__none' ? ' ל"בלי עונה"' : ` לעונה "${A.data.seasons.find((s) => s.id === v)?.title || ''}"`}.`, 'success');
+      return;
+    }
+    const e = cur(); if (!e) return;
+    if (t.dataset.upload) {
+      const kind = t.dataset.upload, file = t.files[0]; if (!file) return;
+      const status = P.querySelector(`[data-upload-status="${kind}"]`);
+      t.disabled = true;
+      try {
+        status.textContent = 'מתחילים להעלות…';
+        e[kind] = await window.RoshUpload(file, e.id, kind, (pct) => { status.textContent = `מעלים את ${file.name} — ${pct}%`; });
+        if (kind === 'audio') e.duration = 0;
+        touch();
+        if (A.selected === e.id) renderEditor();
+        U.notify('הקובץ הועלה. כשתלחצו פרסום, הוא יופיע באתר.', 'success');
+      } catch (err) { status.textContent = err.message; t.disabled = false; t.value = ''; }
+      return;
+    }
+    if (t.dataset.f === 'audio' || t.dataset.f === 'cover' || t.dataset.f === 'publishAt') renderEditor();
+  });
+
+  P.addEventListener('submit', async (ev) => {
+    const f = ev.target.closest('[data-admin-add]'); if (!f) return;
+    ev.preventDefault();
+    const email = f.querySelector('input').value.trim(); if (!email) return;
+    try { A.admins = (await S.sb.admins.add(email)).admins; $('#admins-box').innerHTML = renderAdmins(); U.notify(`${email} נוסף לרשימת המנהלים.`, 'success'); }
+    catch (err) { U.notify(err.message, 'error'); }
+  });
+
+  P.addEventListener('click', async (ev) => {
+    const item = ev.target.closest('.ep-item[data-id]');
+    if (item) {
+      if (A.bulk) { A.picked.has(item.dataset.id) ? A.picked.delete(item.dataset.id) : A.picked.add(item.dataset.id); renderList(); }
+      else select(item.dataset.id);
+      return;
+    }
+    const b = ev.target.closest('[data-op]'); if (!b || b.tagName === 'SELECT') return;
+    const op = b.dataset.op, i = Number(b.dataset.i), e = cur();
+    switch (op) {
+      // כללי
+      case 'new': newEpisode(); break;
+      case 'open': A.bulk = false; select(b.dataset.id, { tab: 'programs' }); break;
+      case 'copy': (await U.copy(b.dataset.text)) ? U.notify('הועתק.', 'success') : U.notify('ההעתקה לא הצליחה.', 'error'); break;
+      // רשימה ובחירה מרובה
+      case 'bulk': A.bulk = !A.bulk; A.picked.clear(); renderPrograms(); break;
+      case 'pick-all': { const l = listFiltered(); if (A.picked.size === l.length && l.length) A.picked.clear(); else l.forEach((x) => A.picked.add(x.id)); renderList(); break; }
+      case 'bulk-show': case 'bulk-hide': { const on = op === 'bulk-show'; A.picked.forEach((id) => { const x = A.data.episodes.find((y) => y.id === id); if (x) x.visible = on; }); touch(); renderList(); renderEditor(); U.notify(`${A.picked.size} תוכניות ${on ? 'יוצגו באתר' : 'הוסתרו'}.`, 'success'); break; }
+      case 'bulk-del': if (confirm(`למחוק ${A.picked.size} תוכניות?`)) removeMany([...A.picked]); break;
+      // תוכנית
+      case 'visible': if (e) { e.visible = !e.visible; touch(); renderEditor(); renderList(); } break;
+      case 'featured': if (e) { const on = !e.featured; A.data.episodes.forEach((x) => { x.featured = on && x.id === e.id; }); touch(); renderEditor(); renderList(); U.notify(on ? 'התוכנית הזו תופיע בראש דף הבית.' : 'דף הבית יציג את התוכנית האחרונה.', 'info'); } break;
+      case 'unschedule': if (e) { e.publishAt = ''; touch(); renderEditor(); renderList(); } break;
+      case 'dup': if (e) duplicate(e); break;
+      case 'del': if (e && confirm(`למחוק את "${label(e)}"?`)) removeMany([e.id]); break;
+      case 'share': if (e) { (await U.copy(shareText(e))) ? U.notify('הטקסט הועתק — הדביקו בוואטסאפ.', 'success') : U.notify('ההעתקה לא הצליחה.', 'error'); } break;
+      case 'history': if (e) openHistory(e); break;
+      case 'cover-clear': if (e) { e.cover = ''; touch(); renderEditor(); } break;
+      case 'cover-auto': if (e) { const st = P.querySelector('[data-upload-status="auto"]'); b.disabled = true; try { await autoCover(e, st); U.notify('התמונה נוצרה. לא אהבתם? לחצו שוב לגרסה אחרת.', 'success'); } catch (err) { st.textContent = err.message; b.disabled = false; } } break;
+      case 'link-add': if (e) { e.links.push({ label: '', url: '' }); touch(); $('#link-rows').innerHTML = renderLinks(e); $$('#link-rows input[data-lf="label"]').pop()?.focus(); } break;
+      case 'link-del': if (e) { e.links.splice(i, 1); touch(); $('#link-rows').innerHTML = renderLinks(e); renderPreview(); } break;
+      // האתר
+      case 'banner-toggle': { const bn = A.data.settings.banner || (A.data.settings.banner = {}); bn.enabled = !bn.enabled; if (bn.enabled && !bn.text) { U.notify('כתבו קודם את ההודעה.', 'info'); bn.enabled = false; } touch(); renderSite(); break; }
+      case 'update-add': A.data.settings.updates.unshift({ id: `u-${Date.now().toString(36)}`, date: new Date().toISOString().slice(0, 10), title: '', text: '', link: '', pinned: false }); touch(); $('#update-rows').innerHTML = renderUpdates(A.data.settings.updates); $('#update-rows input[data-uf="title"]')?.focus(); break;
+      case 'update-pin': { const u = A.data.settings.updates[i]; if (u) { u.pinned = !u.pinned; touch(); $('#update-rows').innerHTML = renderUpdates(A.data.settings.updates); } break; }
+      case 'update-del': if (confirm('למחוק את העדכון?')) { A.data.settings.updates.splice(i, 1); touch(); renderSite(); } break;
+      case 'season-add': { const y = new Date().getFullYear(); A.data.seasons.push({ id: uniqueSeasonId(String(y)), title: `עונת ${y}`, year: y, note: '' }); touch(); $('#season-rows').innerHTML = renderSeasonRows(); $$('#season-rows input[data-zf="title"]').pop()?.select(); break; }
+      case 'season-del': { const s = A.data.seasons[i]; if (!s) break; const n = A.data.episodes.filter((x) => x.season === s.id).length; if (!confirm(`למחוק את העונה "${s.title}"?${n ? ` ${n} תוכניות יישארו בלי עונה.` : ''}`)) break; A.data.episodes.forEach((x) => { if (x.season === s.id) x.season = ''; }); A.data.seasons.splice(i, 1); touch(); renderSite(); break; }
+      // מאזינים
+      case 'reload-listeners': A.stats = A.messages = null; renderListeners(); loadListeners(); break;
+      case 'msg-read': try { await S.sb.messages.read(b.dataset.id, b.dataset.read === '1'); await loadListeners(); } catch (err) { U.notify(err.message, 'error'); } break;
+      case 'msg-del': if (confirm('למחוק את ההודעה?')) { try { await S.sb.messages.remove(b.dataset.id); await loadListeners(); } catch (err) { U.notify(err.message, 'error'); } } break;
+      // פרסום
+      case 'publish': publish(b); break;
+      case 'discard': discard(); break;
+      case 'reload': loadOrigin(); break;
+      case 'check-audio': runCheck('audio'); break;
+      case 'check-media': runCheck('media'); break;
+      case 'versions': b.disabled = true; try { A.versions = (await S.sb.versions.list()).versions; } catch (err) { U.notify(err.message, 'error'); A.versions = []; } renderPublish(); break;
+      case 'restore-version': restoreVersion(b.dataset.id); break;
+      case 'preview-link': previewLink(); break;
+      case 'preview-revoke': try { await S.sb.preview.revoke(); $('#preview-link').innerHTML = '<span class="cue-hint">הקישור בוטל.</span>'; } catch (err) { U.notify(err.message, 'error'); } break;
+      case 'backup': backupFile(); U.notify('קובץ הגיבוי ירד למחשב.', 'success'); break;
+      case 'restore': $('#file-restore').click(); break;
+      case 'migrate': openMigrate(); break;
+      case 'admins': b.disabled = true; try { A.admins = (await S.sb.admins.list()).admins; } catch (err) { A.admins = { error: err.status === 404 ? 'השרת עדיין לא עודכן לגרסה שמנהלת מנהלים מכאן. בינתיים — בלשונית "הרשאות" באתר הסקר.' : err.message }; } renderPublish(); $('details.more-details').open = true; break;
+      case 'admin-del': if (confirm(`להסיר את ${b.dataset.email} מרשימת המנהלים?`)) { try { A.admins = (await S.sb.admins.remove(b.dataset.email)).admins; $('#admins-box').innerHTML = renderAdmins(); } catch (err) { U.notify(err.message, 'error'); } } break;
+      case 'logout': S.sb.signOut(); gateMounted = false; checkAccess(); U.notify('התנתקתם.', 'success'); break;
+    }
+  });
+
+  // האורך נקרא מהקובץ אוטומטית (אירועי מדיה לא מבעבעים — לכן capture)
+  P.addEventListener('loadedmetadata', (ev) => {
+    if (ev.target.id !== 'preview-audio') return;
+    const e = cur(); if (e && !e.duration && isFinite(ev.target.duration)) { e.duration = Math.round(ev.target.duration); touch(); renderPreview(); }
+  }, true);
+
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); persist(); U.notify('הכול נשמר אוטומטית. כשמסיימים — "פרסום לאתר".', 'info'); }
+  });
+  $$('dialog.sheet').forEach((d) => { d.querySelectorAll('[data-close]').forEach((x) => x.addEventListener('click', () => d.close())); d.addEventListener('click', (e) => { if (e.target === d) d.close(); }); });
 
   /* ---------- התחלה ---------- */
 
-  bindEditor();
+  const first = U.qs('ep');
+  if (first) { const e = A.data.episodes.find((x) => x.id === first || x.slug === first); if (e) A.selected = e.id; }
+  setTab(location.hash.slice(1) || 'programs', { push: false });
   paintStatus();
-  renderList();
   if (S.state.authRedirect) U.notify(`התחברתם כ־${S.state.authRedirect.email}.`, 'success');
-  if (S.state.error && S.state.loadedFrom !== 'override') U.notify('טעינת המקור נכשלה. אפשר לעבוד על הטיוטה ולנסות שוב.', 'error', { action: 'ניסיון חוזר', onAction: () => location.reload(), ttl: 0 });
-  await checkAccess();
-  loadOriginIds();
-  const first = U.qs('ep'); if (first && A.data.episodes.some((e) => e.id === first || e.slug === first)) select(A.data.episodes.find((e) => e.id === first || e.slug === first).id);
+  const allowed = await checkAccess();
+  if (allowed || !CLOUD) { await loadOrigin(); if (allowed) { maybeGuide(); loadListeners(); } }
 })();
