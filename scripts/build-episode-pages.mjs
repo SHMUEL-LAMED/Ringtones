@@ -23,10 +23,62 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 const jsonScript = (o) => JSON.stringify(o).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
 
 const heDate = new Intl.DateTimeFormat('he-IL', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
-function fmtDate(iso) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || '')) return '';
+const heWeekday = new Intl.DateTimeFormat('he-IL', { weekday: 'long', timeZone: 'UTC' });
+const heHebrew = new Intl.DateTimeFormat('he-IL-u-ca-hebrew', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+const isoDate = (iso) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || '')) return null;
   const d = new Date(`${iso}T00:00:00Z`);
-  return Number.isNaN(d.getTime()) ? '' : heDate.format(d);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+function fmtDate(iso) { const d = isoDate(iso); return d ? heDate.format(d) : ''; }
+function fmtWeekday(iso) { const d = isoDate(iso); return d ? heWeekday.format(d) : ''; }
+/* תאריך עברי באותיות — כמו fmtHebDate ב־ui.js */
+function gematria(n) {
+  n = Math.floor(n) % 1000;
+  let out = '';
+  for (const [v, c] of [[400, 'ת'], [300, 'ש'], [200, 'ר'], [100, 'ק']]) while (n >= v) { out += c; n -= v; }
+  if (n === 15) out += 'טו'; else if (n === 16) out += 'טז';
+  else { if (n >= 10) { out += 'יכלמנסעפצ'[Math.floor(n / 10) - 1]; n %= 10; } if (n) out += 'אבגדהוזחט'[n - 1]; }
+  return out.length > 1 ? `${out.slice(0, -1)}״${out.slice(-1)}` : `${out}׳`;
+}
+function fmtHebDate(iso) {
+  const d = isoDate(iso); if (!d) return '';
+  try {
+    const p = Object.fromEntries(heHebrew.formatToParts(d).map((x) => [x.type, x.value]));
+    return `${gematria(Number(p.day))} ב${p.month} ${gematria(Number(p.year))}`;
+  } catch { return ''; }
+}
+/* הגוון של התוכנית — כמו hue() ב־ui.js, כדי שהדף הסטטי ייראה כמו הדף אחרי הציור */
+const seasonHue = { slater: 268, levi: 202, trio: 328, legacy: 26, sets: 158 };
+function hash(s) { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+function hue(e) {
+  const b = seasonHue[e?.season] ?? (hash(e?.season || 'x') % 360);
+  return (b + (hash(e?.id || e?.slug || '') % 46) - 23 + 360) % 360;
+}
+/* תיאור: פסקאות קצרות וקישורים — כמו paragraphs() ו־linkify() ב־episode.js (לעדכן יחד) */
+function paragraphs(text) {
+  return String(text || '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).flatMap((block) => {
+    if (block.length < 480 || block.includes('\n')) return [block];
+    const out = []; let cur = '';
+    for (const s of block.replace(/([.!?]+)\s+/g, '$1\u0000').split('\u0000')) {
+      cur = cur ? `${cur} ${s}` : s;
+      if (cur.length >= 300) { out.push(cur); cur = ''; }
+    }
+    if (cur) { if (out.length && cur.length < 120) out[out.length - 1] += ` ${cur}`; else out.push(cur); }
+    return out;
+  });
+}
+const URL_TAIL = /(?:&amp;|&quot;|&#39;|&lt;|&gt;|[.,;:!?)\]}״׳])+$/;
+const unesc = (s) => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, x) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[x]);
+function linkify(safe) {   // מקבל טקסט שכבר עבר esc
+  return safe.replace(/\bhttps?:\/\/(?:(?!&quot;|&#39;|&lt;|&gt;)[^\s<>"'])+/gi, (m) => {   // הכתובת נגמרת ברווח או במירכאה/סוגר זווית (מוברחים)
+    const tail = m.match(URL_TAIL)?.[0] || '';
+    const raw = unesc(m.slice(0, m.length - tail.length));
+    let u; try { u = new URL(raw); } catch { return m; }
+    if (!/^https?:$/.test(u.protocol) || !u.hostname) return m;
+    const shown = raw.replace(/^https?:\/\/(www\.)?/i, '');
+    return `<a class="ep-link" href="${esc(u.href)}" title="${esc(u.href)}" target="_blank" rel="noopener nofollow ugc" dir="ltr">${esc(shown.length > 36 ? `${shown.slice(0, 34)}…` : shown)}</a>${tail}`;
+  });
 }
 /** 160 תווים ראשונים, בלי לחתוך באמצע מילה כשאפשר */
 function clip(text, n = 160) {
@@ -38,19 +90,44 @@ function clip(text, n = 160) {
 }
 const isHttps = (u) => { try { return new URL(u).protocol === 'https:'; } catch { return false; } };
 
+/** אותו מבנה (ואותן מחלקות) כמו רצועת הפתיחה ו"על התוכנית" ש־episode.js מצייר — כך הדף כמעט לא זז
+    כשהסקריפט מצייר אותו מחדש עם הנגן. מקום פס הפעולות נשמר ריק (.ep-actionbar:empty). */
 function staticArticle(e, season) {
-  const kicker = [e.number != null && e.number !== '' ? `תוכנית ${e.number}` : (e.season === 'sets' ? 'סט' : 'תוכנית'), season?.title].filter(Boolean).join(' · ');
-  const date = fmtDate(e.date);
-  const paras = String(e.description || '').split(/\n\s*\n|\r?\n/).map((p) => p.trim()).filter(Boolean);
+  const num = e.number != null && e.number !== '' ? e.number : null;
+  const kicker = `<span class="ep-kick"><span>${num != null ? `תוכנית ${esc(num)}` : (e.season === 'sets' ? 'סט' : 'תוכנית')}</span>${season?.title ? `<span class="ep-kick-sep"> · </span><span>${esc(season.title)}</span>` : ''}</span>`;
+  const tags = (Array.isArray(e.tags) ? e.tags : []).map(String).filter(Boolean);
+  const details = [
+    season?.title ? `<div><dt>עונה</dt><dd><a href="archive.html?season=${encodeURIComponent(season.id)}">${esc(season.title)} <span aria-hidden="true">←</span></a></dd></div>` : '',
+    tags.length ? `<div><dt>נושאים</dt><dd class="ep-tags">${tags.map((t) => `<a class="chip" href="archive.html?q=${encodeURIComponent(t)}">${esc(t)}</a>`).join('')}</dd></div>` : '',
+  ].filter(Boolean);
   const guests = (Array.isArray(e.guests) ? e.guests : []).map(String).filter(Boolean);
+  const facts = [
+    fmtDate(e.date) ? `<time datetime="${esc(e.date)}">${esc(fmtWeekday(e.date))}, ${esc(fmtDate(e.date))}</time>` : '',
+    fmtHebDate(e.date) ? `<span>${esc(fmtHebDate(e.date))}</span>` : '',
+    guests.length ? `<span>עם ${esc(guests.join(', '))}</span>` : '',
+  ].filter(Boolean);
+  const paras = paragraphs(e.description);
   return `
-        <div class="section-title">
-          <div><p class="kicker">${esc(kicker)}</p><h1>${esc(e.title)}</h1></div>
-          ${date ? `<strong><time datetime="${esc(e.date)}">${esc(date)}</time></strong>` : ''}
-        </div>
-        <div class="ep-static">
-          ${guests.length ? `<div class="meta"><span class="pill navy">עם ${esc(guests.join(', '))}</span></div>` : ''}
-          ${paras.map((p) => `<p class="desc">${esc(p)}</p>`).join('\n          ')}
+        <header class="ep-hero ep-album">
+          <div class="ep-art" aria-hidden="true">
+            <div class="ep-disc"><div class="vinyl" data-num="" style="--label:${hue(e)}"><i></i></div></div>
+            <div class="ep-sleeve">${isHttps(e.cover) ? `<img src="${esc(e.cover)}" alt="">` : `<b>${num != null ? esc(num) : '♫'}</b><small>${esc(NAME)}</small>`}</div>
+          </div>
+          <div class="ep-head">
+            <p class="kicker">${kicker}</p>
+            <h1>${esc(e.title)}</h1>
+            ${facts.length ? `<p class="ep-facts">${facts.join('<i aria-hidden="true">·</i>')}</p>` : ''}
+          </div>
+          <div class="ep-actionbar"></div>
+        </header>
+        <div class="ep-body">
+          <section class="card card-body ep-section ep-about">
+            <div class="ep-about-main">
+              <div class="grid-head"><div><p class="kicker">מה בתוכנית</p><h2>על התוכנית</h2></div></div>
+              ${paras.length ? `<div class="ep-desc"><div class="ep-desc-text">${paras.map((p) => `<p>${linkify(esc(p))}</p>`).join('')}</div></div>` : ''}
+            </div>
+            ${details.length ? `<dl class="ep-details" aria-label="פרטי התוכנית">${details.join('')}</dl>` : ''}
+          </section>
         </div>
       `;
 }
@@ -97,7 +174,7 @@ function page(template, e, seasons) {
   must(/<title>[\s\S]*?<\/title>/, () => `<title>${esc(title)}</title>`);
   must(/<meta name="description"[^>]*>/, () => `<meta name="description" content="${esc(description)}">\n${head}`);
   must(/<body([^>]*)>/, (_, attrs) => `<body${attrs.replace(/\s+data-ep="[^"]*"/, '')} data-ep="${esc(slug)}">`);
-  must(/(<article id="episode"[^>]*>)[\s\S]*?(<\/article>)/, (_, open, close) => `${open}${staticArticle(e, season)}${close}`);
+  must(/(<article id="episode"[^>]*>)[\s\S]*?(<\/article>)/, (_, open, close) => `${open.replace(/>$/, ` style="--h:${hue(e)}">`)}${staticArticle(e, season)}${close}`);
   return html;
 }
 

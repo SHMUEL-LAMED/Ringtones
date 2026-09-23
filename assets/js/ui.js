@@ -474,21 +474,24 @@
   /* ---------- כפתורי פעולה לתוכנית: לאחר כך, תור, אהבתי ----------
      אותם כפתורים בדף הבית, בדף התוכנית ובאזור האישי. הלחיצה מטופלת כאן פעם
      אחת לכל האתר, וכל הכפתורים של אותה תוכנית בדף מתעדכנים יחד. */
-  function laterLabel(on) { return on ? '✓ שמור לאחר כך' : '+ לאחר כך'; }
-  function queueLabel(on) { return on ? '✓ בתור' : '+ לתור'; }
+  // כפתור עם אייקון (data-ico) — התווית קבועה, והמצב מוצג באייקון ובצבע (aria-pressed)
+  function laterLabel(on, ico) { return ico ? 'לאחר כך' : on ? '✓ שמור לאחר כך' : '+ לאחר כך'; }
+  function queueLabel(on, ico) { return ico ? 'לתור' : on ? '✓ בתור' : '+ לתור'; }
   /** כמה אהבו כל תוכנית — נתון שרק המנהלים רואים; למאזין מוצג רק הסימון שלו */
-  function likeLabel(id) { return `${window.RoshStore?.likes?.has(id) ? '♥' : '♡'} אהבתי`; }
-  function actionButtons(e, { like = true, queue = true } = {}) {
+  function likeLabel(id, ico) { return ico ? 'אהבתי' : `${window.RoshStore?.likes?.has(id) ? '♥' : '♡'} אהבתי`; }
+  /** icons: כפתורים עם אייקון ותווית (בדף התוכנית) במקום סימן בתחילת הטקסט */
+  function actionButtons(e, { like = true, queue = true, icons = false } = {}) {
     const S = window.RoshStore;
-    return `<button type="button" class="btn" data-later="${esc(e.id)}" aria-pressed="${S.later.has(e.id)}">${laterLabel(S.later.has(e.id))}</button>`
-      + (queue && e.stream ? `<button type="button" class="btn" data-queue="${esc(e.id)}" aria-pressed="${S.queue.has(e.id)}">${queueLabel(S.queue.has(e.id))}</button>` : '')
-      + (like && S.sb.configured ? `<button type="button" class="btn like-btn" data-like="${esc(e.id)}" aria-pressed="${S.likes.has(e.id)}">${likeLabel(e.id)}</button>` : '');
+    const ico = (name) => (icons ? ` data-ico="${name}"` : '');
+    return `<button type="button" class="btn" data-later="${esc(e.id)}"${ico('later')} aria-pressed="${S.later.has(e.id)}">${laterLabel(S.later.has(e.id), icons)}</button>`
+      + (queue && e.stream ? `<button type="button" class="btn" data-queue="${esc(e.id)}"${ico('queue')} aria-pressed="${S.queue.has(e.id)}">${queueLabel(S.queue.has(e.id), icons)}</button>` : '')
+      + (like && S.sb.configured ? `<button type="button" class="btn like-btn" data-like="${esc(e.id)}"${ico('like')} aria-pressed="${S.likes.has(e.id)}">${likeLabel(e.id, icons)}</button>` : '');
   }
   function paintActions(id) {
     const S = window.RoshStore;
-    document.querySelectorAll(`[data-later="${CSS.escape(id)}"]`).forEach((b) => { b.setAttribute('aria-pressed', String(S.later.has(id))); b.textContent = laterLabel(S.later.has(id)); });
-    document.querySelectorAll(`[data-queue="${CSS.escape(id)}"]`).forEach((b) => { b.setAttribute('aria-pressed', String(S.queue.has(id))); b.textContent = queueLabel(S.queue.has(id)); });
-    document.querySelectorAll(`[data-like="${CSS.escape(id)}"]`).forEach((b) => { b.setAttribute('aria-pressed', String(S.likes.has(id))); b.innerHTML = likeLabel(id); });
+    document.querySelectorAll(`[data-later="${CSS.escape(id)}"]`).forEach((b) => { b.setAttribute('aria-pressed', String(S.later.has(id))); b.textContent = laterLabel(S.later.has(id), b.hasAttribute('data-ico')); });
+    document.querySelectorAll(`[data-queue="${CSS.escape(id)}"]`).forEach((b) => { b.setAttribute('aria-pressed', String(S.queue.has(id))); b.textContent = queueLabel(S.queue.has(id), b.hasAttribute('data-ico')); });
+    document.querySelectorAll(`[data-like="${CSS.escape(id)}"]`).forEach((b) => { b.setAttribute('aria-pressed', String(S.likes.has(id))); b.innerHTML = likeLabel(id, b.hasAttribute('data-ico')); });
   }
   const accountHint = () => (window.RoshStore?.sb?.user ? '' : ' כדי שזה יישמר בחשבון, התחברו באזור האישי.');
   document.addEventListener('click', async (e) => {
@@ -562,7 +565,7 @@
     return `
 <form class="message-form" data-message-form data-episode="${esc(episodeId)}">
   <p class="kicker">${esc(title)}</p>
-  <p style="margin:0;color:#d5d2e0">${esc(hint)}</p>
+  <p style="margin:0;color:var(--text-2)">${esc(hint)}</p>
   ${u ? `<p class="cue-hint" style="margin:0;font-size:12px;color:var(--muted);font-weight:700">נשלח בשם ${esc(u.name || u.email)}</p>` : '<label class="field"><span>שם (לא חובה)</span><input name="name" maxlength="80" autocomplete="name"></label>'}
   <label class="field"><span>ההודעה</span><textarea name="text" required maxlength="4000" placeholder="מה תרצו להגיד?"></textarea></label>
   <div><button type="submit" class="btn primary">שליחה <span>←</span></button></div>
