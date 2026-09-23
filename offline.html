@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>אין חיבור — ראש בראש</title>
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#06080f">
+  <link rel="icon" href="assets/img/medallion.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <script src="assets/js/theme.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&family=Karantina:wght@300;400;700&display=swap">
+  <link rel="stylesheet" href="assets/css/rosh.css">
+  <link rel="stylesheet" href="assets/css/features.css">
+  <style>
+    .offline-card { margin: 30px auto 60px; max-width: 720px; }
+    .offline-card .state { padding: clamp(40px, 7vw, 70px) 22px; }
+    .offline-card h1 { font-family: var(--display); font-weight: 700; font-size: clamp(48px, 8vw, 80px); line-height: .95; color: var(--text-strong); }
+    .offline-card p { color: var(--text-2); max-width: 480px; }
+    .offline-card .note { margin-top: 6px; padding: 12px 16px; border: 1px solid var(--border-strong); border-radius: 14px; background: rgb(var(--fg-rgb) / .04); color: var(--ink-soft); font-size: 14px; font-weight: 700; }
+    .offline-card .actions { justify-content: center; }
+    .offline-mark { width: 84px; height: 84px; border-radius: 26%; box-shadow: 0 16px 40px var(--sh-2); }
+  </style>
+</head>
+<body data-page="offline">
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+  <a class="skip-link" href="#main">דילוג לתוכן</a>
+  <div class="shell">
+    <header class="site-header">
+      <a class="brand" href="index.html">
+        <span class="logo-ring" aria-hidden="true"></span>
+        <img class="logo-mark" src="assets/img/medallion.svg" alt="" width="46" height="46">
+        <div><strong>ראש בראש</strong><small>מוזיקה ואקטואליה</small></div>
+      </a>
+      <nav class="site-nav" aria-label="ניווט ראשי">
+        <a href="index.html">בית</a>
+        <a href="archive.html">הארכיון</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="card offline-card" aria-labelledby="offline-title">
+        <div class="state">
+          <img class="offline-mark" src="assets/img/medallion.svg" alt="" width="84" height="84">
+          <p class="kicker">מצב לא מקוון</p>
+          <h1 id="offline-title">אין חיבור לאינטרנט</h1>
+          <p>לא הצלחנו לטעון את הדף. בדקו את החיבור ונסו שוב — הדף ייטען מעצמו כשהחיבור יחזור.</p>
+          <div class="actions">
+            <button type="button" class="btn primary" id="retry">ניסיון חוזר <span>↻</span></button>
+            <a class="btn" href="index.html">לדף הבית</a>
+          </div>
+          <p class="note">האזור האישי, ההתחברות וההאזנה לתוכניות צריכים חיבור לאינטרנט. דפים שכבר ביקרתם בהם עשויים להיפתח גם בלי חיבור.</p>
+          <p class="visually-hidden" id="offline-status" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-mark" aria-hidden="true">ראש בראש</div>
+      <div class="footer-row"><span>ראש בראש · מוזיקה ואקטואליה</span><nav aria-label="קישורים"><a href="archive.html">הארכיון</a><a href="negishut.html">הצהרת נגישות</a></nav></div>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      var status = document.getElementById('offline-status');
+      function retry() { status.textContent = 'מנסים שוב…'; location.reload(); }
+      document.getElementById('retry').addEventListener('click', retry);
+      window.addEventListener('online', retry);
+    })();
+  </script>
+</body>
+</html>

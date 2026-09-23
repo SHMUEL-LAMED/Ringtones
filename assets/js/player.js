@@ -5,6 +5,8 @@
   const { esc, fmtTime } = window.RoshUI;
   const S = window.RoshStore;
 
+  /** המהירויות האפשריות — אותה רשימה בנגן, בקיצורי המקלדת ובאזור האישי */
+  const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
   const audio = new Audio();
   audio.preload = 'metadata';
 
@@ -58,7 +60,7 @@
   </div>
   <div class="dock-extra">
     <select data-speed aria-label="מהירות ניגון">
-      <option value="0.75">0.75×</option><option value="1" selected>מהירות רגילה</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>
+      ${RATES.map((r) => `<option value="${r}"${r === 1 ? ' selected' : ''}>${r === 1 ? 'מהירות רגילה' : `${r}×`}</option>`).join('')}
     </select>
     <select data-sleep aria-label="טיימר כיבוי">
       <option value="">טיימר כיבוי</option><option value="15">בעוד 15 דקות</option><option value="30">בעוד 30 דקות</option><option value="45">בעוד 45 דקות</option><option value="60">בעוד שעה</option>
@@ -104,9 +106,10 @@
     sc.addEventListener('pointerleave', () => { P.els.tip.style.opacity = ''; });
     sc.addEventListener('keydown', (e) => {
       const map = { ArrowRight: 5, ArrowLeft: -5, ArrowUp: 30, ArrowDown: -30, PageUp: 300, PageDown: -300 };
-      if (e.key in map) { e.preventDefault(); seek(audio.currentTime + map[e.key]); }
-      if (e.key === 'Home') { e.preventDefault(); seek(0); }
-      if (e.key === 'End') { e.preventDefault(); seek(dur() - 1); }
+      // stopPropagation: אחרת גם קיצורי המקלדת הכלליים (±15 שניות) מופעלים על אותה לחיצה
+      if (e.key in map) { e.preventDefault(); e.stopPropagation(); seek(audio.currentTime + map[e.key]); }
+      if (e.key === 'Home') { e.preventDefault(); e.stopPropagation(); seek(0); }
+      if (e.key === 'End') { e.preventDefault(); e.stopPropagation(); seek(dur() - 1); }
     });
 
     // העדפות
@@ -135,6 +138,7 @@
     const same = P.episode && P.episode.id === ep.id && P.candidates && audio.src === P.candidates[P.candidateIndex];
     P.episode = ep;
     if (!same) {
+      flushListen();
       P.candidates = candidates;
       P.candidateIndex = 0;
       audio.src = candidates[0];
@@ -149,7 +153,7 @@
     P.els.art.style.setProperty('--h', String(window.RoshUI.hue(ep)));
     const dl = window.RoshUI.downloadUrl(ep);
     P.els.download.hidden = !dl;
-    if (dl) { P.els.download.href = dl; P.els.download.setAttribute('download', `${ep.title}.mp3`); }
+    if (dl) { P.els.download.href = dl; P.els.download.setAttribute('download', `${ep.title}.mp3`); }   // השרת קובע את שם הקובץ
     P.els.art.innerHTML = ep.cover ? `<img src="${esc(ep.cover)}" alt=""><i></i>` : '<i></i>';
     P.els.dur.textContent = fmtTime(dur());
     renderSegments();
@@ -191,6 +195,7 @@
   }
   function setRate(r, silent) {
     r = Number(r) || 1;
+    r = RATES.reduce((best, x) => (Math.abs(x - r) < Math.abs(best - r) ? x : best), 1);
     audio.playbackRate = r;
     if (P.els.speed) P.els.speed.value = String(r);
     S.prefs.set('rate', r);
@@ -265,11 +270,20 @@
 
   /* ---------- שמירת מיקום ---------- */
 
-  // דקות האזנה לסטטיסטיקה: כל שתי דקות של ניגון נשלחות כאירוע אחד
+  // דקות האזנה לסטטיסטיקה: כל שתי דקות של ניגון נשלחות כאירוע אחד, ומה שנשאר
+  // נשלח גם בעצירה, במעבר לתוכנית אחרת ובסגירת הדף — כדי ששום דקה לא תלך לאיבוד.
+  // עם כל אירוע נשלח גם עד איפה הגיעו (באחוזים) — לגרף "עד איפה מאזינים".
+  const pctNow = () => { const D = dur(); return D ? Math.min(100, Math.round((audio.currentTime / D) * 100)) : 0; };
+  function flushListen() {
+    if (!P.episode || !P.listened) return;
+    S.sb.event('listen', P.episode.id, P.listened, { pct: pctNow() });
+    P.listened = 0;
+  }
   setInterval(() => {
     if (audio.paused || !P.episode) return;
     P.listened = (P.listened || 0) + 1;
-    if (P.listened >= 120) { S.sb.event('listen', P.episode.id, P.listened); P.listened = 0; }
+    S.listening.tick(1);   // זמן האזנה אמיתי באזור האישי
+    if (P.listened >= 120) flushListen();
   }, 1000);
 
   function save(force) {
@@ -305,7 +319,7 @@
   async function shareMoment() {
     if (!P.episode) return;
     const t = Math.floor(audio.currentTime);
-    const url = new URL(`episode.html?ep=${encodeURIComponent(P.episode.slug)}${t > 5 ? `&t=${t}` : ''}`, location.href).href;
+    const url = window.RoshUI.shareUrl(P.episode, t);
     const text = `${P.episode.title} (${fmtTime(t)})`;
     if (navigator.share) { try { await navigator.share({ title: P.episode.title, text, url }); return; } catch { /* בוטל */ } }
     (await window.RoshUI.copy(url)) ? window.RoshUI.notify('הקישור לרגע הזה הועתק.', 'success') : window.RoshUI.notify('ההעתקה נכשלה. העתיקו מהשורה: ' + url, 'error');
@@ -320,8 +334,21 @@
   audio.addEventListener('play', () => { paint(); paintPlaying(); emit('play'); });
   audio.addEventListener('playing', paintPlaying);
   audio.addEventListener('waiting', () => document.body.classList.remove('is-playing'));
-  audio.addEventListener('pause', () => { paint(); paintPlaying(); save(true); emit('pause'); });
-  audio.addEventListener('ended', () => { paintPlaying(); if (P.episode) S.positions.clear(P.episode.id); paint(); emit('end'); const nb = S.neighbors(P.episode.id); if (nb.older?.stream) window.RoshUI.notify(`נגמר. להמשיך ל"${nb.older.title}"?`, 'info', { action: 'כן, נגנו', onAction: () => load(nb.older), ttl: 12000 }); });
+  audio.addEventListener('pause', () => { paint(); paintPlaying(); save(true); flushListen(); emit('pause'); });
+  /* סוף תוכנית: אם יש תור — ממשיכים לבאה בתור מיד. אחרת מציעים את "התוכנית
+     הבאה" — אותו כיוון כמו הכפתור ▸▸ בנגן (החדשה יותר). */
+  audio.addEventListener('ended', () => {
+    paintPlaying(); paint();
+    if (!P.episode) return;
+    const id = P.episode.id;
+    flushListen();
+    S.positions.clear(id); S.listening.finish(id);
+    emit('end');
+    const queued = S.queue.shift(id);
+    if (queued) { window.RoshUI.notify(`ממשיכים בתור: ${queued.title}`, 'info', { ttl: 5000 }); load(queued, { at: 0 }); return; }
+    const nb = S.neighbors(id);
+    if (nb.newer?.stream) window.RoshUI.notify(`נגמר. להמשיך לתוכנית הבאה, "${nb.newer.title}"?`, 'info', { action: 'כן, נגנו', onAction: () => load(nb.newer, { at: 0 }), ttl: 12000 });
+  });
   audio.addEventListener('error', () => {
     paintPlaying();
     if (!P.episode || !audio.src) return;
@@ -345,8 +372,8 @@
     if (dl) P.els.download.href = dl;
   });
   audio.addEventListener('volumechange', () => S.prefs.set('volume', audio.volume));
-  document.addEventListener('visibilitychange', () => { if (document.hidden) save(true); });
-  window.addEventListener('pagehide', () => save(true));
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { save(true); flushListen(); } });
+  window.addEventListener('pagehide', () => { save(true); flushListen(); });
 
   /* ---------- קיצורי מקלדת ---------- */
 
@@ -363,8 +390,8 @@
       case 'l': case 'L': seek(audio.currentTime + 15); break;
       case 'm': case 'M': P.els.mute.click(); break;
       case 'r': case 'R': random(); break;
-      case '+': case '=': setRate(Math.min(2, audio.playbackRate + 0.25)); break;
-      case '-': setRate(Math.max(0.5, audio.playbackRate - 0.25)); break;
+      case '+': case '=': setRate(RATES[Math.min(RATES.length - 1, RATES.indexOf(audio.playbackRate) + 1)] || 1); break;
+      case '-': setRate(RATES[Math.max(0, RATES.indexOf(audio.playbackRate) - 1)] || 1); break;
       default:
         if (/^[0-9]$/.test(e.key)) { e.preventDefault(); seek(dur() * (Number(e.key) / 10)); }
     }
@@ -372,14 +399,17 @@
 
   /* ---------- שחזור הנגן בכל דף ---------- */
 
-  S.ready.then(() => {
+  // התוכנית האחרונה מהחשבון (בכל מכשיר) — מוכנה בנגן, מושהית
+  const restore = () => {
     const l = S.last.get();
     const ep = l && S.byId(l.id);
-    if (ep && ep.visible && ep.stream && !P.episode) load(ep, { at: l.t, autoplay: false, quiet: true });
-  });
+    if (ep && ep.visible && !S.scheduled(ep) && ep.stream && !P.episode) load(ep, { at: l.t, autoplay: false, quiet: true });
+  };
+  S.ready.then(restore);
+  S.onSession(() => S.ready.then(restore));
 
   window.RoshPlayer = {
-    load, play, pause, toggle, seek, nextEpisode, prevEpisode, random, close, setRate, shareMoment,
+    load, play, pause, toggle, seek, nextEpisode, prevEpisode, random, close, setRate, shareMoment, RATES,
     get episode() { return P.episode; },
     get time() { return audio.currentTime; },
     get duration() { return dur(); },

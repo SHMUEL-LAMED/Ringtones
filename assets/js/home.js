@@ -6,6 +6,7 @@
   const { esc, fmtTime, fmtDate, fmtDuration } = U;
 
   await S.ready;
+  const on = { signal: window.RoshApp?.signal };   // המאזינים מוסרים במעבר לדף אחר
   const site = S.site || {};
   document.getElementById('site-header').innerHTML = U.header('home', site);
   document.getElementById('site-footer').innerHTML = U.footer(site);
@@ -25,7 +26,11 @@
   /* ---------- גיבור ---------- */
   document.getElementById('hero-eq').innerHTML = U.eqBars(56, 3);
   const live = document.getElementById('hero-live');
-  if (feat) { live.hidden = false; live.querySelector('[data-live-title]').textContent = feat.number != null ? `תוכנית ${feat.number} · ${feat.title}` : feat.title; }
+  if (feat) {
+    live.hidden = false;
+    live.querySelector('[data-live-label]').textContent = feat.featured && feat.id !== S.latest()?.id ? 'מומלץ עכשיו' : 'התוכנית האחרונה';
+    live.querySelector('[data-live-title]').textContent = feat.number != null ? `תוכנית ${feat.number} · ${feat.title}` : feat.title;
+  }
   const playLatest = document.querySelector('[data-play-latest]');
   const latestPlayable = (feat?.stream ? feat : null) || shows.find((e) => e.stream) || null;
   if (!latestPlayable) playLatest.hidden = true;
@@ -37,7 +42,8 @@
   /* ---------- התוכנית האחרונה ---------- */
   const F = document.getElementById('featured');
   if (!feat) {
-    F.innerHTML = `<div class="card"><div class="state"><span class="mark">♫</span><h3>עדיין אין תוכניות</h3><p>הוסיפו את התוכנית הראשונה מאזור הניהול.</p><a class="btn primary" href="admin.html">לאזור הניהול <span>←</span></a></div></div>`;
+    // קישור לניהול מוצג רק למנהלים
+    F.innerHTML = `<div class="card"><div class="state"><span class="mark">♫</span><h3>עדיין אין תוכניות</h3><p>${S.sb.user?.isAdmin ? 'הוסיפו את התוכנית הראשונה מאזור הניהול.' : 'התוכניות יעלו לכאן בקרוב.'}</p>${S.sb.user?.isAdmin ? '<a class="btn primary" href="admin.html">לאזור הניהול <span>←</span></a>' : ''}</div></div>`;
   } else {
     const season = S.seasons().find((s) => s.id === feat.season);
     F.innerHTML = `
@@ -59,7 +65,7 @@
       <div class="actions">
         ${feat.stream ? `<button type="button" class="btn xl primary" data-play="${esc(feat.id)}">האזנה לתוכנית <span>▶</span></button>` : '<span class="pill">אין עדיין הקלטה לתוכנית הזו</span>'}
         <a class="btn" href="episode.html?ep=${encodeURIComponent(feat.slug)}">לדף התוכנית</a>
-        <button type="button" class="btn" data-later="${esc(feat.id)}" aria-pressed="${S.later.has(feat.id)}">${S.later.has(feat.id) ? '✓ שמור לאחר כך' : '+ לאחר כך'}</button>
+        ${U.actionButtons(feat)}
       </div>
     </div>
   </div>
@@ -93,6 +99,16 @@
   Rc.innerHTML = recent.length ? `
 <div class="grid-head"><div><p class="kicker">ארכיון</p><h2>תוכניות אחרונות</h2></div><a href="archive.html">לכל ${list.length} התוכניות ←</a></div>
 <div class="ep-grid">${recent.map((e) => U.epCard(e)).join('')}</div>` : '';
+
+  /* ---------- הכי אהובות ---------- */
+  const Lv = document.getElementById('loved');
+  const paintLoved = () => {
+    if (!Lv) return;
+    const top = S.likes.top(8);
+    Lv.innerHTML = top.length >= 3 ? `<div class="grid-head"><div><p class="kicker">המאזינים בחרו</p><h2>הכי אהובות</h2></div><a href="archive.html?sort=liked">לכל התוכניות ←</a></div><div class="ep-grid">${top.map((e) => U.epCard(e, { badge: `♥ ${S.likes.count(e.id)}` })).join('')}</div>` : '';
+    if (Lv.innerHTML) { Lv.setAttribute('data-reveal', ''); U.reveal(Lv.parentNode); }
+  };
+  S.likes.load().then(() => { if (!on.signal?.aborted) { paintLoved(); if (feat) U.paintActions(feat.id); } });
 
   /* ---------- סטים ---------- */
   const sets = list.filter((e) => e.season === 'sets');
@@ -152,14 +168,7 @@
       if (Pl.isCurrent(ep.id)) { Pl.seek(at); Pl.play(); } else Pl.load(ep, { at });
       return;
     }
-    const later = e.target.closest('[data-later]');
-    if (later) {
-      const on = S.later.toggle(later.dataset.later);
-      later.setAttribute('aria-pressed', String(on));
-      later.textContent = on ? '✓ שמור לאחר כך' : '+ לאחר כך';
-      U.notify(on ? 'נשמר לרשימת "לאחר כך".' : 'הוסר מרשימת "לאחר כך".', 'success');
-    }
-  });
+  }, on);
 
   window.addEventListener('rosh:player', (ev) => {
     const { episode } = ev.detail;
@@ -170,5 +179,5 @@
     }
     if (latestPlayable && episode?.id === latestPlayable.id) playLatest.innerHTML = Pl.paused ? 'האזנה לתוכנית האחרונה <span>▶</span>' : 'מתנגן עכשיו <span>■</span>';
     document.querySelectorAll('[data-vinyl]').forEach((v) => v.classList.toggle('live', !!episode && v.dataset.vinyl === episode.id));
-  });
+  }, on);
 })();

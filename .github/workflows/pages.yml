@@ -2,6 +2,9 @@ name: Deploy GitHub Pages
 on:
   push:
     branches: [main]
+  schedule:
+    # פעם ביום: בניית מפת האתר מחדש, כדי שתוכניות חדשות יופיעו בגוגל
+    - cron: '17 3 * * *'
   workflow_dispatch:
 permissions:
   contents: read
@@ -11,7 +14,11 @@ concurrency:
   group: pages
   cancel-in-progress: true
 jobs:
+  test:
+    # שום דבר לא עולה לאוויר אם בדיקה נכשלה
+    uses: ./.github/workflows/tests.yml
   deploy:
+    needs: test
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -19,6 +26,11 @@ jobs:
     steps:
       - name: Download site
         uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build the sitemap from the live catalog
+        run: node scripts/build-sitemap.mjs
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload static site

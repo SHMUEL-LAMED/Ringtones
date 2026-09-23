@@ -13,6 +13,7 @@ const catalog = JSON.parse(readFileSync(new URL('../data/episodes.json', import.
 let published = null; let draftPuts = 0; let events = []; let messagesSent = [];
 let settings = { banner: { enabled: false, text: '', link: '', linkLabel: '', until: '', sites: { program: true, survey: false } }, updates: [], survey: { id: 'main', name: 'מצעד האלבומים', open: true, url: 'https://rosh-berosh.smwlyqswkwt232.workers.dev/' } };
 let handoffs = 0; let logouts = 0; let ssoBounces = 0; let ssoSignedIn = false;
+let latestVersion = 'v1'; let conflicts = 0; let publishBody = null; let userdata = null; let userdataPuts = 0; let likes = {};
 
 const browser = await chromium.launch(process.env.PW_EXECUTABLE ? { executablePath: process.env.PW_EXECUTABLE } : {});
 const ctx = await browser.newContext({ locale: 'he-IL', viewport: { width: 1280, height: 900 } });
@@ -23,12 +24,24 @@ await ctx.route(`${API}/**`, async (route) => {
   const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type,range', 'access-control-allow-methods': 'GET,HEAD,POST,PUT,DELETE,OPTIONS' }, body: JSON.stringify(body) });
   if (m === 'OPTIONS') return json({});
   if (p === '/api/program/me') return auth ? json({ user: { email: 'admin@example.com', name: 'בדיקה', isAdmin: true } }) : json({ user: null }, 401);
-  if (p === '/api/program/catalog' && m === 'GET') return json({ ...(published || catalog), settings });
-  if (p === '/api/program/catalog' && m === 'POST') { const b = req.postDataJSON(); published = { seasons: b.seasons, episodes: b.episodes }; if (b.settings) settings = { ...settings, ...b.settings }; return json({ ok: true, episodes: b.episodes.length }); }
+  if (p === '/api/program/catalog' && m === 'GET') return json({ ...(published || catalog), settings, ...(auth ? { versionId: latestVersion } : {}) });
+  if (p === '/api/program/catalog' && m === 'POST') {
+    const b = req.postDataJSON(); publishBody = b;
+    if ('baseVersion' in b && b.baseVersion !== latestVersion && !b.force) { conflicts++; return json({ error: 'מישהו אחר פרסם בינתיים.', conflict: true, latest: { id: latestVersion, by: 'other@example.com', createdAt: 1758600000 } }, 409); }
+    published = { seasons: b.seasons, episodes: b.episodes }; if (b.settings) settings = { ...settings, ...b.settings };
+    latestVersion = `v${Number(latestVersion.slice(1)) + 1}`;
+    return json({ ok: true, episodes: b.episodes.length, versionId: latestVersion, notified: 0 });
+  }
+  if (p === '/api/program/userdata' && m === 'GET') return auth ? json({ data: userdata, updatedAt: null }) : json({ error: 'x' }, 401);
+  if (p === '/api/program/userdata' && m === 'PUT') { userdata = req.postDataJSON().data; userdataPuts++; return json({ ok: true, updatedAt: new Date().toISOString() }); }
+  if (p === '/api/program/likes' && m === 'GET') return json({ counts: likes, mine: [] });
+  if (p === '/api/program/push/count') return json({ total: 7 });
+  if (p === '/api/program/push/drain') return json({ sent: 0, failed: 0, removed: 0, remaining: 0 });
+  if (p.startsWith('/api/program/stats/episode/')) return json({ id: p.split('/').pop(), plays: 10, listeners: 8, retention: Array.from({ length: 20 }, (_, i) => ({ pct: i * 5, listeners: 8 - Math.floor(i / 3) })) });
   if (p === '/api/program/draft' && m === 'GET') return json({ draft: null });
   if (p === '/api/program/draft' && m === 'PUT') { draftPuts++; return json({ ok: true, updatedAt: new Date().toISOString(), by: 'admin@example.com' }); }
   if (p === '/api/program/draft' && m === 'DELETE') return json({ ok: true });
-  if (p === '/api/program/stats') return json({ days: [{ day: '2026-09-20', plays: 12, listeners: 9, seconds: 4000 }, { day: '2026-09-21', plays: 20, listeners: 15, seconds: 9000 }], episodes: [{ id: catalog.episodes[0].id, plays: 30, listeners: 20, seconds: 5000 }], recent: [{ id: catalog.episodes[1].id, plays: 8, listeners: 6, seconds: 500 }], totals: { plays: 32, listeners: 24, seconds: 13000 }, week: { plays: 32, listeners: 24 }, devices: { phone: 20, desktop: 12 } });
+  if (p === '/api/program/stats') return json({ sources: [{ ref: 'whatsapp', plays: 20 }, { ref: 'direct', plays: 12 }], hours: Array.from({ length: 24 }, (_, h) => ({ hour: h, plays: h % 5 })), likes: [{ id: catalog.episodes[2].id, likes: 4 }], days: [{ day: '2026-09-20', plays: 12, listeners: 9, seconds: 4000 }, { day: '2026-09-21', plays: 20, listeners: 15, seconds: 9000 }], episodes: [{ id: catalog.episodes[0].id, plays: 30, listeners: 20, seconds: 5000 }], recent: [{ id: catalog.episodes[1].id, plays: 8, listeners: 6, seconds: 500 }], totals: { plays: 32, listeners: 24, seconds: 13000 }, week: { plays: 32, listeners: 24 }, devices: { phone: 20, desktop: 12 } });
   if (p === '/api/program/messages' && m === 'GET') return json({ messages: [{ id: 'm1', name: 'דוד', email: 'd@x.com', text: 'תוכנית מצוינת!', episodeId: catalog.episodes[0].id, readAt: null, createdAt: 1758500000 }], unread: 1 });
   if (p === '/api/program/messages' && m === 'POST') { messagesSent.push(req.postDataJSON()); return json({ ok: true, id: 'm2' }); }
   if (p === '/api/program/messages/read') return json({ ok: true });
@@ -67,7 +80,7 @@ check((await page.locator('#gate-google').count()) === 1, 'השער מציע כ�
 check((await page.locator('#gate-login:visible').count()) === 1 || (await page.locator('#gate-fallback:visible').count()) === 1, 'כשכפתור Google לא נטען יש דרך חלופית להיכנס');
 
 /* ---------- מנהל מחובר ---------- */
-await page.evaluate(() => { localStorage.clear(); localStorage.setItem('rosh:cf:session', JSON.stringify({ token: 'test', user: { email: 'admin@example.com', name: 'בדיקה', isAdmin: true } })); });
+await page.evaluate(() => { localStorage.clear(); localStorage.setItem('rosh:cf:session', JSON.stringify({ token: 'test', user: { email: 'admin@example.com', name: 'בדיקה', isAdmin: true } })); localStorage.setItem('rosh:admin:guided', '1'); });
 await page.goto(`${BASE}/admin.html?standalone=1`);
 await page.waitForSelector('#panel .workspace', { timeout: 15000 });
 await page.evaluate(() => document.querySelector('#dlg-guide')?.close());
@@ -133,30 +146,43 @@ check((await page.locator('#season-rows .season-row').count()) === 6, 'עונה 
 await page.click('[data-tab="listeners"]');
 await page.waitForSelector('.admin-stats', { timeout: 10000 });
 check((await page.locator('.admin-stats .stat').count()) === 4, 'סטטיסטיקות מוצגות');
-check((await page.locator('.bars .bar').count()) === 2, 'גרף ימים');
+check((await page.locator('.bars:not(.hours):not(.retention) .bar').count()) === 2, 'גרף ימים');
 check((await page.locator('.msg.unread').count()) === 1, 'הודעה מהמאזינים מוצגת');
 check((await page.locator('#tab-unread').innerText()) === '1', 'תג הודעות שלא נקראו');
+check((await page.locator('.hbars .hbar').count()) === 2, 'סטטיסטיקה: מאיפה הגיעו המאזינים');
+check((await page.locator('.bars.hours .bar').count()) === 24, 'סטטיסטיקה: האזנות לפי שעה');
+await page.selectOption('#stats-ep', { index: 1 });
+await page.waitForSelector('.bars.retention .bar');
+check((await page.locator('.bars.retention .bar').count()) === 20, 'סטטיסטיקה: עד איפה מאזינים בתוכנית');
+check((await page.locator('[data-push-send]').count()) === 1, 'שליחת התראה לכל המאזינים');
 
 /* ---------- פרסום ---------- */
 await page.click('[data-tab="publish"]');
 await page.waitForSelector('.pub-card');
 check((await page.locator('.change-list li').count()) >= 3, 'רשימת השינויים: תוכנית חדשה, עודכנו, הודעה');
 check((await page.locator('.pub-card [data-op="publish"]').isEnabled()), 'כפתור הפרסום פעיל');
+check((await page.locator('.health-group [data-op="covers-all"]').count()) === 1 && (await page.locator('.health-group [data-op="fill-durations"]').count()) === 1, 'בדיקת תקינות מקובצת, עם תיקון לכולן בלחיצה');
 await page.click('[data-op="check-audio"]');
 await page.waitForFunction(() => /נבדקו|בעיות/.test(document.querySelector('.tool-list').innerText), null, { timeout: 60000 });
 check(/הכול תקין/.test(await page.locator('.tool-list').first().innerText()), 'בדיקת ההקלטות עוברת (השרת המדומה עונה)');
 await page.click('[data-op="versions"]');
 await page.waitForSelector('.version');
 check((await page.locator('.version').count()) === 1, 'גרסאות קודמות מוצגות');
-await page.click('summary');
+await page.click('details.more-details > summary');
 await page.click('[data-op="preview-link"]');
 await page.waitForSelector('.preview-url input');
 check((await page.locator('.preview-url input').inputValue()).includes('preview=tok123'), 'קישור לתצוגה מקדימה נוצר');
 await page.click('[data-op="admins"]');
 await page.waitForSelector('.admin-list');
 check((await page.locator('.admin-list li').count()) === 2, 'רשימת המנהלים מוצגת');
+// מנהל אחר פרסם בינתיים: הפרסום נעצר ושואל, ולא דורס בשקט
+latestVersion = 'v9';
 await page.click('.pub-card [data-op="publish"]');
+await page.waitForSelector('#dlg-conflict[open]', { timeout: 10000 });
+check(conflicts === 1 && publishBody.baseVersion === 'v1' && !published, 'פרסום מעל גרסה חדשה של מנהל אחר נעצר ומוצגת אזהרה');
+await page.click('#dlg-conflict [data-force]');
 await page.waitForFunction(() => document.querySelector('#status-text').textContent.includes('הכול מפורסם'), null, { timeout: 10000 });
+check(publishBody.force === true, 'אפשר לבחור לפרסם בכל זאת');
 check(!!published && published.episodes.length === 87, 'הפרסום שלח 87 תוכניות לשרת');
 check(published.episodes.some((e) => e.title === 'תוכנית בדיקה חדשה' && e.publishAt === '2031-01-01T20:00'), 'התוכנית החדשה עם התזמון נשלחה');
 check(settings.banner.enabled && settings.banner.text.includes('חמישי') && settings.updates.length === 1, 'ההודעה והעדכונים פורסמו');
@@ -202,20 +228,33 @@ check((await page.locator('#me-profile [data-google]').count()) === 1, 'האזו
 await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); localStorage.setItem('rosh:sso-test', '1'); });
 await page.goto(`${BASE}/index.html`);
 await page.waitForSelector('#featured .card');
-check(ssoBounces === 1 && !(await page.locator('.site-nav .me-link.signed').count()), 'לא מחוברים באתר הסקר: בדיקה אחת, ונשארים אורחים');
+check(ssoBounces === 0, 'דף הבית נטען מיד, בלי מעבר לאתר הסקר וחזרה');
+await page.goto(`${BASE}/me.html`);
+await page.waitForSelector('#me-profile .profile-hero');
+check(ssoBounces === 1 && !(await page.locator('.site-nav .me-link.signed').count()), 'באזור האישי: בדיקה אחת באתר הסקר, ונשארים אורחים');
 await page.goto(`${BASE}/archive.html`);
 await page.waitForSelector('#results .ep-card');
 check(ssoBounces === 1, 'לא בודקים שוב בכל דף');
 ssoSignedIn = true;
-await page.evaluate(() => localStorage.removeItem('rosh:sso-checked'));
-await page.goto(`${BASE}/index.html`);
-await page.waitForSelector('#featured .card');
+await page.evaluate(() => { localStorage.removeItem('rosh:sso-checked'); sessionStorage.clear(); });
+await page.goto(`${BASE}/me.html`);
+await page.waitForSelector('#me-profile .profile-hero');
 check(ssoBounces === 2 && (await page.locator('.site-nav .me-link.signed').count()) === 1, 'מחוברים באתר הסקר: מחוברים גם כאן אוטומטית');
+// הנתונים האישיים נשמרים בחשבון, לא במכשיר
+await page.click('.site-nav a[href="archive.html"]');
+await page.waitForSelector('#results .ep-card');
+await page.click('.site-nav a[href="index.html"]');
+await page.waitForSelector('#featured [data-later]');
+await page.click('#featured [data-later]');
+await page.evaluate(() => window.RoshStore.me.save(true));
+await page.waitForTimeout(300);
+check(userdataPuts >= 1 && Array.isArray(userdata?.later) && userdata.later.length === 1, '"לאחר כך" נשמר בחשבון');
+check(!(await page.evaluate(() => Object.keys(localStorage).some((k) => /^rosh:(later|pos:|history|prefs|last)/.test(k)))), 'שום נתון אישי לא נשמר במכשיר');
 check(!page.url().includes('sso='), 'הקוד נמחק מהכתובת');
 await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
 
 /* ---------- הגעה מניהול הסקר: קוד מעבר במקום כניסה, במצב מוטמע ---------- */
-await page.evaluate(() => { localStorage.removeItem('rosh:cf:session'); sessionStorage.clear(); });
+await page.evaluate(() => { localStorage.removeItem('rosh:cf:session'); sessionStorage.clear(); localStorage.setItem('rosh:admin:guided', '1'); });
 await page.goto(`${BASE}/admin.html?handoff=c0ffee&embed=1`);
 await page.waitForSelector('#panel .workspace', { timeout: 15000 });
 await page.evaluate(() => document.querySelector('#dlg-guide')?.close());
@@ -226,7 +265,7 @@ check(!(await page.locator('#admin-tabs').isVisible()), 'בדף המשותף א�
 check(await page.evaluate(() => JSON.parse(localStorage.getItem('rosh:cf:session') || 'null')?.token === 'handed'), 'הסשן מהמעבר נשמר');
 await page.evaluate(() => { location.hash = 'publish'; });
 await page.waitForSelector('.pub-card');
-await page.click('summary');
+await page.click('details.more-details > summary');
 await page.click('[data-op="logout"]');
 await page.waitForTimeout(500);
 check(logouts === 1, 'התנתקות מנתקת גם בשרת (מכל המקומות)');
@@ -236,7 +275,7 @@ await page.waitForTimeout(800);
 check(await page.evaluate(() => document.body.classList.contains('admin-locked')), 'קוד מעבר שפג משאיר את הניהול נעול');
 
 // תשובות 401/404 מהשרת המדומה הן חלק מהתרחישים (קוד מעבר שפג, נתיב שלא קיים בשרת ישן)
-const real = errors.filter((e) => !/favicon|manifest|sw\.js|serviceWorker|net::ERR_|accounts\.google|gsi|status of 40[14]/i.test(e));
+const real = errors.filter((e) => !/favicon|manifest|sw\.js|serviceWorker|net::ERR_|accounts\.google|gsi|status of 40[149]/i.test(e));
 check(real.length === 0, `אין שגיאות JavaScript${real.length ? `: ${real.join(' | ')}` : ''}`);
 await browser.close();
 if (fails.length) { console.error(`\n${fails.length} בדיקות נכשלו`); process.exit(1); }

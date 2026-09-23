@@ -122,11 +122,20 @@
   /** הכתובת שהנגן מנגן: קובץ ישיר אם יש, אחרת הזרמה של קובץ הדרייב, אחרת ''. */
   function streamUrl(ep) { return streamCandidates(ep)[0] || ''; }
 
-  /** כתובת להורדת ההקלטה (ניווט רגיל — לא נחסם). */
+  /** כתובת להורדת ההקלטה: מהאחסון של האתר, בשם התוכנית (לא מהדרייב). */
   function downloadUrl(ep) {
+    if (!ep || !streamUrl(ep)) return '';
+    const base = apiBase();
+    if (base) return `${base}/api/program/download/${encodeURIComponent(ep.id)}`;
     const id = driveId(ep);
-    if (id) return driveDirect(id);
-    return streamUrl(ep);
+    return id ? driveDirect(id) : streamUrl(ep);
+  }
+  /** קישור לשיתוף: דף קטן בשרת שמציג בוואטסאפ את שם התוכנית והתמונה, ומעביר לדף התוכנית */
+  function shareUrl(ep, t = 0) {
+    const base = apiBase();
+    const tail = t > 5 ? `?t=${Math.floor(t)}` : '';
+    if (base) return `${base}/p/${encodeURIComponent(ep.slug)}${tail}`;
+    return new URL(`episode.html?ep=${encodeURIComponent(ep.slug)}${t > 5 ? `&t=${Math.floor(t)}` : ''}`, location.href).href;
   }
 
   /** קישורים שמותר להציג לציבור — בלי קישורי דרייב (ההקלטה מנוגנת באתר). */
@@ -147,7 +156,9 @@
 
   /* ---------- כותרת ופוטר ---------- */
 
+  let headerActive = '';
   function header(active, site) {
+    headerActive = active;
     const user = window.RoshStore?.sb?.user || null;
     const S = window.RoshStore;
     const nav = [
@@ -176,9 +187,35 @@
     ${nav}
     ${admin}
     ${me}
+    <button type="button" class="theme-toggle" data-theme-toggle aria-label="${themeLabel()}" title="${themeLabel()}"></button>
   </nav>
 </header>${banner()}${voteBar(active)}${previewBar()}`;
   }
+
+  /* ---------- מצב בהיר / כהה ותנועה (theme.js), נשמרים בהעדפות החשבון ---------- */
+  const isLight = () => window.RoshTheme?.resolved?.() === 'light';
+  const themeLabel = () => (isLight() ? 'מעבר למצב כהה' : 'מעבר למצב בהיר');
+  function applyPrefs() {
+    const S = window.RoshStore, T = window.RoshTheme;
+    if (!S || !T) return;
+    const theme = S.prefs.get('theme', null), motion = S.prefs.get('motion', null);
+    if (theme && theme !== T.get()) T.set(theme);
+    if (motion && T.setMotion && motion !== T.getMotion?.()) T.setMotion(motion);
+    document.querySelectorAll('[data-theme-toggle]').forEach((b) => { b.setAttribute('aria-label', themeLabel()); b.title = themeLabel(); });
+    document.querySelectorAll('[data-motion-toggle]').forEach((b) => b.setAttribute('aria-pressed', String(T.getMotion?.() === 'reduced')));
+  }
+  document.addEventListener('click', (e) => {
+    const T = window.RoshTheme, S = window.RoshStore;
+    if (e.target.closest('[data-theme-toggle]') && T) {
+      const next = isLight() ? 'dark' : 'light';
+      T.set(next); S?.prefs.set('theme', next); applyPrefs();
+    }
+    if (e.target.closest('[data-motion-toggle]') && T?.setMotion) {
+      const next = T.getMotion() === 'reduced' ? 'full' : 'reduced';
+      T.setMotion(next); S?.prefs.set('motion', next); applyPrefs();
+      notify(next === 'reduced' ? 'האנימציות הופסקו.' : 'האנימציות הופעלו.', 'success');
+    }
+  });
 
   /** "הצביעו עכשיו": כשההצבעה במצעד פתוחה באתר הסקר */
   function voteBar(active) {
@@ -212,7 +249,7 @@
   <div class="footer-mark" aria-hidden="true">${esc(site?.name || 'ראש בראש')}</div>
   <div class="footer-row">
     <span>${esc(site?.name || 'ראש בראש')} · ${esc(site?.tagline || 'מוזיקה ואקטואליה')}</span>
-    <nav aria-label="קישורים">${links}<a href="archive.html">הארכיון</a><button type="button" class="chip" data-kbd-help>קיצורי מקלדת</button></nav>
+    <nav aria-label="קישורים">${links}<a href="archive.html">הארכיון</a><a href="negishut.html">הצהרת נגישות</a><button type="button" class="chip" data-motion-toggle aria-pressed="${window.RoshTheme?.getMotion?.() === 'reduced'}">הפסקת אנימציות</button><button type="button" class="chip" data-kbd-help>קיצורי מקלדת</button></nav>
   </div>
 </footer>`;
   }
@@ -311,7 +348,7 @@
 
   /* ---------- תנועה: גילוי בגלילה, מספרים רצים, אור עוקב, כותרת דחוסה ---------- */
 
-  const reduceMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reduceMotion = () => (window.RoshTheme?.reducedMotion ? window.RoshTheme.reducedMotion() : typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) || document.documentElement?.dataset?.lite === '1';
 
   let revealObs = null;
   function reveal(root = document) {
@@ -379,6 +416,19 @@
     window.addEventListener('scroll', onScroll, { passive: true });
     onScroll();
     reveal();
+    // כניסה / יציאה / אימות מול השרת: הכותרת מתעדכנת בלי לטעון את הדף מחדש
+    // (store.js נטען אחרי הקובץ הזה, ולכן מתחברים אליו רק אחרי שכל הסקריפטים רצו)
+    setTimeout(() => {
+      const S = window.RoshStore;
+      S?.onSession?.(() => repaintHeader());
+      S?.me?.onChange?.(() => applyPrefs());
+      S?.ready?.then(() => applyPrefs());
+    }, 0);
+  }
+  function repaintHeader() {
+    const h = document.getElementById('site-header');
+    if (h && headerActive !== 'admin-embed' && h.innerHTML.trim()) h.innerHTML = header(headerActive, window.RoshStore?.site);
+    applyPrefs();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else if (document.readyState) boot();
 
@@ -387,7 +437,8 @@
   function epCard(e, { badge = '', titleHtml = null, href = null } = {}) {
     const S = window.RoshStore, Pl = window.RoshPlayer;
     const pos = S?.positions?.get(e.id);
-    const pct = pos && e.duration ? Math.min(100, (pos.t / e.duration) * 100) : 0;
+    const total = e.duration || pos?.dur || 0;   // האורך השמור, או האורך שהנגן מדד
+    const pct = pos && total ? Math.min(100, (pos.t / total) * 100) : 0;
     const playable = !!(e.stream || streamUrl(e));
     return `
 <a class="ep-card${Pl?.isCurrent?.(e.id) ? ' current' : ''}" href="${href || `episode.html?ep=${encodeURIComponent(e.slug)}`}" data-ep="${esc(e.id)}" style="${coverVars(e)}">
@@ -399,6 +450,89 @@
   ${pct ? `<span class="resume" aria-hidden="true"><i style="width:${pct}%"></i></span>` : ''}
 </a>`;
   }
+
+  /* ---------- כפתורי פעולה לתוכנית: לאחר כך, תור, אהבתי ----------
+     אותם כפתורים בדף הבית, בדף התוכנית ובאזור האישי. הלחיצה מטופלת כאן פעם
+     אחת לכל האתר, וכל הכפתורים של אותה תוכנית בדף מתעדכנים יחד. */
+  function laterLabel(on) { return on ? '✓ שמור לאחר כך' : '+ לאחר כך'; }
+  function queueLabel(on) { return on ? '✓ בתור' : '+ לתור'; }
+  function likeLabel(id) {
+    const L = window.RoshStore?.likes; const n = L?.count(id) || 0;
+    return `${L?.has(id) ? '♥' : '♡'} אהבתי${n ? ` <span class="like-count">${n}</span>` : ''}`;
+  }
+  function actionButtons(e, { like = true, queue = true } = {}) {
+    const S = window.RoshStore;
+    return `<button type="button" class="btn" data-later="${esc(e.id)}" aria-pressed="${S.later.has(e.id)}">${laterLabel(S.later.has(e.id))}</button>`
+      + (queue && e.stream ? `<button type="button" class="btn" data-queue="${esc(e.id)}" aria-pressed="${S.queue.has(e.id)}">${queueLabel(S.queue.has(e.id))}</button>` : '')
+      + (like && S.sb.configured ? `<button type="button" class="btn like-btn" data-like="${esc(e.id)}" aria-pressed="${S.likes.has(e.id)}">${likeLabel(e.id)}</button>` : '');
+  }
+  function paintActions(id) {
+    const S = window.RoshStore;
+    document.querySelectorAll(`[data-later="${CSS.escape(id)}"]`).forEach((b) => { b.setAttribute('aria-pressed', String(S.later.has(id))); b.textContent = laterLabel(S.later.has(id)); });
+    document.querySelectorAll(`[data-queue="${CSS.escape(id)}"]`).forEach((b) => { b.setAttribute('aria-pressed', String(S.queue.has(id))); b.textContent = queueLabel(S.queue.has(id)); });
+    document.querySelectorAll(`[data-like="${CSS.escape(id)}"]`).forEach((b) => { b.setAttribute('aria-pressed', String(S.likes.has(id))); b.innerHTML = likeLabel(id); });
+  }
+  const accountHint = () => (window.RoshStore?.sb?.user ? '' : ' כדי שזה יישמר בחשבון, התחברו באזור האישי.');
+  document.addEventListener('click', async (e) => {
+    const S = window.RoshStore; if (!S) return;
+    const later = e.target.closest?.('[data-later]');
+    if (later && later.dataset.later) {
+      const on = S.later.toggle(later.dataset.later); paintActions(later.dataset.later);
+      notify((on ? 'נשמר לרשימת "לאחר כך".' : 'הוסר מרשימת "לאחר כך".') + accountHint(), 'success');
+      return;
+    }
+    const q = e.target.closest?.('[data-queue]');
+    if (q && q.dataset.queue) {
+      const on = S.queue.toggle(q.dataset.queue); paintActions(q.dataset.queue);
+      notify(on ? `נוסף לתור (${S.queue.list().length} בתור). כשהתוכנית הנוכחית תיגמר, היא תתחיל לבד.` : 'הוסר מהתור.', 'success');
+      return;
+    }
+    const like = e.target.closest?.('[data-like]');
+    if (like && like.dataset.like) {
+      if (!S.sb.user) { notify('כדי לסמן "אהבתי" צריך להתחבר.', 'info', { action: 'להתחברות', onAction: () => (window.RoshApp ? window.RoshApp.navigate('me.html') : (location.href = 'me.html')) }); return; }
+      like.disabled = true;
+      try { await S.likes.toggle(like.dataset.like); paintActions(like.dataset.like); }
+      catch (err) { notify(`לא הצלחנו לשמור: ${err.message}`, 'error'); }
+      like.disabled = false;
+    }
+  });
+
+  /* ---------- התראות לטלפון על תוכנית חדשה (Web Push) ---------- */
+  const push = {
+    supported() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && location.protocol === 'https:'; },
+    async registration() {
+      if (!navigator.serviceWorker.controller) await navigator.serviceWorker.register('sw.js').catch(() => null);
+      return navigator.serviceWorker.ready;
+    },
+    /** 'unsupported' | 'denied' | 'on' | 'off' */
+    async state() {
+      if (!this.supported() || !window.RoshStore?.sb?.configured) return 'unsupported';
+      if (Notification.permission === 'denied') return 'denied';
+      try { const reg = await Promise.race([navigator.serviceWorker.getRegistration(), new Promise((r) => setTimeout(r, 1500))]); return (await reg?.pushManager.getSubscription()) ? 'on' : 'off'; }
+      catch { return 'off'; }
+    },
+    async enable() {
+      const S = window.RoshStore;
+      if (!this.supported()) throw new Error('הדפדפן הזה לא תומך בהתראות.');
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') throw new Error('לא ניתן אישור להתראות.');
+      const reg = await this.registration();
+      const { publicKey } = await S.sb.call('/api/program/push/key', { auth: false });
+      const raw = atob(publicKey.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(publicKey.length / 4) * 4, '='));
+      const key = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+      const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      await S.sb.call('/api/program/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
+      return true;
+    },
+    async disable() {
+      const S = window.RoshStore;
+      const reg = await navigator.serviceWorker.getRegistration();
+      const sub = await reg?.pushManager.getSubscription();
+      if (!sub) return;
+      await S.sb.call('/api/program/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } }).catch(() => {});
+      await sub.unsubscribe();
+    },
+  };
 
   /* ---------- הודעה למגישים ---------- */
 
@@ -437,14 +571,14 @@
     const u = S.sb.user;
     if (!u) {
       el.innerHTML = '<div class="subscribe-google"><span>מתחברים עם Google, וההצטרפות היא בלחיצה אחת — בלי להקליד כתובת.</span><div class="google-slot" data-google></div><a class="btn ghost small" href="#" data-subscribe-fallback>בעיה עם הכפתור? כניסה דרך אתר הסקר</a></div>';
-      try { await S.sb.google(el.querySelector('[data-google]'), { onDone: () => { document.getElementById('site-header').innerHTML = header(document.body.dataset.page || '', S.site); mountSubscribe(el); }, onError: (err) => notify(`ההתחברות לא הצליחה: ${err.message}`, 'error') }); }
+      try { await S.sb.google(el.querySelector('[data-google]'), { onDone: () => mountSubscribe(el), onError: (err) => notify(`ההתחברות לא הצליחה: ${err.message}`, 'error') }); }
       catch (err) { el.querySelector('[data-google]').innerHTML = `<span class="cue-hint">${esc(err.message)}</span>`; }
       return;
     }
     el.innerHTML = '<span class="cue-hint">בודקים…</span>';
     let subscribed = false;
     try { subscribed = (await S.sb.subscribe.status()).subscribed; }
-    catch (err) { if (err.status === 401) { S.sb.signOut(); return mountSubscribe(el); } el.innerHTML = `<span class="cue-hint">${esc(err.message)}</span>`; return; }
+    catch (err) { if (err.status === 401) { S.signOut(); return mountSubscribe(el); } el.innerHTML = `<span class="cue-hint">${esc(err.message)}</span>`; return; }
     el.innerHTML = subscribed
       ? `<div class="subscribe-google"><span class="subscribe-state">✓ אתם ברשימת התפוצה (${esc(u.email)})</span><button type="button" class="btn ghost small" data-unsubscribe>הסרה מהרשימה</button></div>`
       : `<div class="subscribe-google"><button type="button" class="continue btn xl primary" data-subscribe>הצטרפות לתפוצה <span>←</span></button><span class="cue-hint" style="font-size:12px;color:var(--muted);font-weight:700">הכתובת: ${esc(u.email)}. הלחיצה היא ההסכמה — בלי דואר מיותר.</span></div>`;
@@ -458,10 +592,10 @@
     try {
       if (join) { join.disabled = true; await S.sb.subscribe.join(); notify('נרשמתם לרשימת התפוצה.', 'success'); }
       else if (leave) { leave.disabled = true; await S.sb.subscribe.leave(); notify('הוסרתם מרשימת התפוצה.', 'success'); }
-      else { await S.sb.signIn(); document.getElementById('site-header').innerHTML = header(document.body.dataset.page || '', S.site); }
+      else await S.sb.signIn();
     } catch (err) { notify(err.message, 'error'); }
     mountSubscribe(host);
   });
 
-  window.RoshUI = { banner, messageForm, mountSubscribe, esc, fmtTime, parseTime, fmtDuration, fmtDate, fmtWeekday, slugify, qs, header, footer, notify, kbdHelp, isTyping, copy, driveId, isDriveUrl, streamUrl, streamCandidates, downloadUrl, publicLinks, coverVars, hue, seasonVars, epCard, reveal, countUp, eqBars, reduceMotion };
+  window.RoshUI = { banner, messageForm, mountSubscribe, esc, fmtTime, parseTime, fmtDuration, fmtDate, fmtWeekday, slugify, qs, header, footer, repaintHeader, actionButtons, paintActions, push, notify, kbdHelp, isTyping, copy, driveId, isDriveUrl, streamUrl, streamCandidates, downloadUrl, shareUrl, publicLinks, coverVars, hue, seasonVars, epCard, reveal, countUp, eqBars, reduceMotion, applyPrefs };
 })();
