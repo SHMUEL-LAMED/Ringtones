@@ -128,6 +128,10 @@
     } catch { location.href = url.href; return; }   // בלי רשת או דף שלא נמצא — טעינה רגילה
     if (ticket !== navigating) return;               // לחצו בינתיים על קישור אחר
     const doc = new DOMParser().parseFromString(html, 'text/html');
+    // גרסה חדשה של האתר עלתה בינתיים (הפריסה מסמנת את קובצי העיצוב והסקריפטים ב־?v=): טעינה רגילה,
+    // כדי שהדף החדש לא יצויר עם העיצוב והסקריפטים המשותפים של הגרסה הקודמת
+    const build = (d) => d.querySelector('link[rel="stylesheet"][href*="rosh.css?v="]')?.getAttribute('href').split('?v=')[1] || '';
+    if (build(doc) !== build(document)) { location.href = url.href; return; }
     const shell = doc.querySelector('.shell');
     const script = [...doc.querySelectorAll('script[src]')].find((s) => PAGE_SCRIPT.test(s.getAttribute('src')));
     if (!shell || !script) { location.href = url.href; return; }

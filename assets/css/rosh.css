@@ -765,7 +765,11 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background: linear-gradient(125deg, rgba(255, 255, 255, .22), transparent 38%, transparent 70%, rgba(0, 0, 0, .18));
 }
-#episode .ep-sleeve img { width: 100%; height: 100%; object-fit: cover; }
+/* עטיפה עם תמונה: כל התמונה נראית (בכל צורה — לרוחב או לאורך), ומאחוריה עותק מטושטש שלה ממלא את הריבוע */
+#episode .ep-sleeve.has-cover { background: #0c0c12; }
+#episode .ep-sleeve.has-cover::before { display: none; }
+#episode .ep-sleeve img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+#episode .ep-sleeve .ep-sleeve-fill { object-fit: cover; filter: blur(14px) saturate(1.3) brightness(.65); transform: scale(1.2); }
 #episode .ep-sleeve b { position: relative; z-index: 1; font-family: var(--display); font-weight: 700; font-size: clamp(96px, 11vw, 150px); line-height: .8; color: #fff; text-shadow: 0 8px 30px rgba(0, 0, 0, .45); }
 #episode .ep-sleeve small { position: absolute; z-index: 1; bottom: 8%; inset-inline-start: 9%; font-size: 11px; font-weight: 800; letter-spacing: .22em; color: rgba(255, 255, 255, .82); }
 #episode .ep-disc { position: absolute; top: 4%; inset-inline-end: 0; z-index: 1; width: 70%; aspect-ratio: 1; transition: transform .9s var(--ease); }
@@ -781,8 +785,10 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
   margin: 0; font-family: var(--display); font-weight: 700; font-size: clamp(52px, 7vw, 104px); line-height: .9; letter-spacing: .005em;
   color: var(--text-strong); text-wrap: balance; overflow-wrap: anywhere;
 }
+#episode .ep-head h1.ep-title-long { font-size: clamp(44px, 5.4vw, 78px); }
 #episode .ep-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 18px 0 0; color: var(--text-2); font-size: 15px; font-weight: 700; }
 #episode .ep-facts time { color: var(--text-strong); }
+#episode .ep-facts .ep-nw { white-space: nowrap; }
 #episode .ep-facts i { font-style: normal; color: var(--gold); }
 
 /* פס הפעולות: האזנה, ואחריה כל השאר בקבוצה אחת */
@@ -815,12 +821,14 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
 #episode .ep-play.is-playing .ep-play-disc::before { animation: none; opacity: 0; }
 /* ▶ ו־❚❚ מצוירים בשני חצאים, ועוברים זה לזה בתנועה */
 #episode .ep-play-disc i { position: relative; width: 22px; height: 24px; transform: translateX(2px); transition: transform .25s var(--ease); }
-#episode .ep-play-disc i::before, #episode .ep-play-disc i::after { content: ""; position: absolute; top: 0; bottom: 0; width: 50%; background: #15110a; transition: clip-path .25s var(--ease); }
-#episode .ep-play-disc i::before { left: 0; clip-path: polygon(0 0, 100% 25%, 100% 75%, 0 100%); }
-#episode .ep-play-disc i::after { right: 0; clip-path: polygon(0 25%, 100% 50%, 100% 50%, 0 75%); }
+/* שני החצאים פרושים על כל הריבוע וחופפים בפיקסל — בלי תפר באמצע המשולש במסכים בצפיפות לא שלמה */
+#episode .ep-play-disc i::before, #episode .ep-play-disc i::after { content: ""; position: absolute; inset: 0; background: #15110a; transition: clip-path .25s var(--ease); }
+#episode .ep-play-disc i::before { clip-path: polygon(0 0, calc(50% + 1px) calc(25% + .55px), calc(50% + 1px) calc(75% - .55px), 0 100%); }
+#episode .ep-play-disc i::after { clip-path: polygon(50% 25%, 100% 50%, 100% 50%, 50% 75%); }
 #episode .ep-play.is-playing .ep-play-disc i { transform: none; }
-#episode .ep-play.is-playing .ep-play-disc i::before { clip-path: polygon(0 0, 66% 0, 66% 100%, 0 100%); }
-#episode .ep-play.is-playing .ep-play-disc i::after { clip-path: polygon(34% 0, 100% 0, 100% 100%, 34% 100%); }
+#episode .ep-play.is-playing .ep-play-disc i::before { clip-path: polygon(0 0, 33% 0, 33% 100%, 0 100%); }
+#episode .ep-play.is-playing .ep-play-disc i::after { clip-path: polygon(67% 0, 100% 0, 100% 100%, 67% 100%); }
+#episode .ep-play-time { white-space: nowrap; }
 
 #episode .ep-tools { display: flex; flex-wrap: wrap; gap: 8px; }
 #episode .ep-tools .btn {
@@ -909,7 +917,7 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
 #episode .ep-private-txt small { color: var(--muted); font-size: 12.5px; font-weight: 700; }
 #episode .ep-private-body { padding: 4px 20px 20px; }
 #episode .ep-private .message-form { margin: 0; }
-#episode .ep-private .message-form > .kicker { display: none; }   /* הכותרת כבר בשורה שנפתחה */
+#episode .ep-private .message-form > .kicker, #episode .ep-private .message-form > .kicker + p { display: none; }   /* הכותרת וההסבר כבר בשורה שנפתחה */
 
 /* קודמת / הבאה */
 #prevnext .ep-nb { display: flex; align-items: center; gap: 14px; }
@@ -944,6 +952,7 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
   #episode .ep-head .kicker { display: block; margin-bottom: 6px; font-size: 11px; letter-spacing: .1em; line-height: 1.5; }
   #episode .ep-head .kicker::before { display: none; }
   #episode .ep-head h1 { font-size: clamp(40px, 12vw, 54px); line-height: .92; }
+  #episode .ep-head h1.ep-title-long { font-size: clamp(34px, 9.6vw, 42px); }
   /* בטור צר: כל פרט בשורה משלו, בלי נקודות מפרידות שנשארות תלויות בסוף שורה */
   #episode .ep-facts { display: grid; gap: 0; margin-top: 0; font-size: 12.5px; line-height: 1.55; }
   #episode .ep-facts i { display: none; }
@@ -973,8 +982,13 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
   #episode .ep-hero { --art: 92px; column-gap: 12px; padding: 16px 14px; }
   #episode .ep-sleeve b { font-size: 48px; }
   #episode .ep-head h1 { font-size: 38px; }
+  #episode .ep-play { padding-inline-end: 16px; font-size: 15.5px; }
   #episode .ep-tools { gap: 4px; }
   #episode .ep-tools .btn { font-size: 11.5px; }
+}
+@media (forced-colors: active) {
+  [data-ico]::before, #episode .ep-play-disc i::before, #episode .ep-play-disc i::after { forced-color-adjust: none; background: ButtonText; }
+  [data-ico][aria-pressed="true"] { outline: 2px solid Highlight; outline-offset: 1px; }
 }
 @media (pointer: coarse) {
   #episode .ep-details dd > a:not(.chip) { display: inline-block; padding-block: 10px; margin-block: -10px; }
