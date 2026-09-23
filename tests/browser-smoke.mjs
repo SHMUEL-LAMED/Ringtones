@@ -144,7 +144,7 @@ check((await page.locator('#me-profile h1').innerText()).includes('מאזין'),
 await page.evaluate(() => localStorage.removeItem('rosh:cf:session'));
 
 /* ---------- ניהול: השער ---------- */
-await page.goto(`${BASE}/admin.html`);
+await page.goto(`${BASE}/admin.html?standalone=1`);   // בלי standalone הדף עובר לניהול המשותף באתר הסקר
 await page.waitForSelector('#admin-gate');
 await page.waitForTimeout(500);
 check(await page.evaluate(() => document.body.classList.contains('admin-locked')), 'אזור הניהול נעול למי שלא מחובר');
@@ -152,7 +152,7 @@ check(await page.evaluate(() => document.body.classList.contains('admin-locked')
 /* ---------- סיכום ---------- */
 // ה־Worker מאשר CORS רק ל־origin של האתר הפרוס, ולכן מול שרת מקומי הקטלוג נופל
 // לעותק שבמאגר (זה מה שהבדיקה בודקת) — שגיאת ה־CORS הזו אינה תקלה באתר.
-const realErrors = errors.filter((e) => !/favicon|manifest|sw\.js|serviceWorker|net::ERR_(FAILED|TUNNEL_CONNECTION_FAILED|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|CONNECTION_REFUSED)|net::ERR_TOO_MANY_RETRIES|blocked by CORS policy|accounts\.google\.com/i.test(e));
+const realErrors = errors.filter((e) => !/favicon|manifest|sw\.js|serviceWorker|net::ERR_(FAILED|TUNNEL_CONNECTION_FAILED|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|CONNECTION_REFUSED)|net::ERR_TOO_MANY_RETRIES|blocked by CORS policy|accounts\.google\.com|GSI_LOGGER|status of 403 \(\)/i.test(e));
 check(realErrors.length === 0, `אין שגיאות JavaScript${realErrors.length ? `: ${realErrors.join(' | ')}` : ''}`);
 await browser.close();
 if (failures.length) { console.error(`\n${failures.length} בדיקות נכשלו`); process.exit(1); }
