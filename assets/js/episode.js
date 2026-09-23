@@ -5,6 +5,34 @@
   const U = window.RoshUI, S = window.RoshStore, Pl = window.RoshPlayer;
   const { esc, fmtTime, fmtDate, fmtDuration, fmtWeekday } = U;
 
+  /* ---------- תיאור התוכנית ----------
+     רוב התיאורים הם פסקה אחת ארוכה. כדי שייקראו בנוחות: שורה ריקה מפרידה פסקאות, ופסקה
+     ארוכה מאוד מתחלקת לפסקאות קצרות בסופי משפטים. כתובות http(s) הופכות לקישורים — רק
+     אחרי esc, כך ששום טקסט מהקטלוג לא נכנס לדף כ־HTML (ו־javascript: לא יכול להיות קישור). */
+  function paragraphs(text) {
+    return String(text || '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).flatMap((block) => {
+      if (block.length < 480 || block.includes('\n')) return [block];
+      const out = []; let cur = '';
+      for (const s of block.replace(/([.!?]+)\s+/g, '$1\u0000').split('\u0000')) {
+        cur = cur ? `${cur} ${s}` : s;
+        if (cur.length >= 300) { out.push(cur); cur = ''; }
+      }
+      if (cur) { if (out.length && cur.length < 120) out[out.length - 1] += ` ${cur}`; else out.push(cur); }
+      return out;
+    });
+  }
+  // סימני פיסוק בסוף הכתובת (גם בצורתם המוברחת) נשארים מחוץ לקישור
+  const URL_TAIL = /(?:&amp;|&quot;|&#39;|&lt;|&gt;|[.,;:!?)\]}״׳])+$/;
+  function linkify(safe) {   // מקבל טקסט שכבר עבר esc
+    return safe.replace(/\bhttps?:\/\/(?:(?!&quot;|&#39;|&lt;|&gt;)[^\s<>"'])+/gi, (m) => {   // הכתובת נגמרת ברווח או במירכאה/סוגר זווית (מוברחים)
+      const tail = m.match(URL_TAIL)?.[0] || '';
+      const url = m.slice(0, m.length - tail.length);
+      if (!/^https?:\/\/[\w\u0590-\u05ff-]/i.test(url)) return m;
+      return `<a class="ep-link" href="${url}" target="_blank" rel="noopener nofollow ugc" dir="ltr">${url.replace(/^https?:\/\//i, '')}</a>${tail}`;
+    });
+  }
+  const descHtml = (text) => paragraphs(text).map((p) => `<p>${linkify(esc(p))}</p>`).join('');
+
   // האות נלקח לפני ההמתנה: אם עברו לדף אחר בזמן שהקטלוג נטען, הסקריפט הזה לא מצייר על הדף החדש
   const signal = window.RoshApp?.signal;
   await S.ready;
@@ -22,7 +50,7 @@
   // תוכנית מוסתרת, או מתוזמנת שעוד לא הגיע זמנה — רק מנהלים רואים אותה
   if (!ep || ((!ep.visible || S.scheduled(ep)) && !S.sb.user?.isAdmin)) {
     document.title = `התוכנית לא נמצאה — ${site.name || 'ראש בראש'}`;
-    A.innerHTML = `<div class="state error"><span class="mark">!</span><h3>התוכנית לא נמצאה</h3><p>${S.state.error ? 'טעינת רשימת התוכניות נכשלה. בדקו את החיבור ונסו שוב.' : 'ייתכן שהקישור ישן או שהתוכנית הוסרה מהארכיון.'}</p><div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">${S.state.error ? '<button type="button" class="btn" data-reload-page>ניסיון חוזר</button>' : ''}<a class="btn primary" href="archive.html">לארכיון התוכניות <span>←</span></a></div></div>`;
+    A.innerHTML = `<div class="card"><div class="state error"><span class="mark">!</span><h3>התוכנית לא נמצאה</h3><p>${S.state.error ? 'טעינת רשימת התוכניות נכשלה. בדקו את החיבור ונסו שוב.' : 'ייתכן שהקישור ישן או שהתוכנית הוסרה מהארכיון.'}</p><div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">${S.state.error ? '<button type="button" class="btn" data-reload-page>ניסיון חוזר</button>' : ''}<a class="btn primary" href="archive.html">לארכיון התוכניות <span>←</span></a></div></div></div>`;
     A.querySelector('[data-reload-page]')?.addEventListener('click', () => location.reload());
     return;
   }
@@ -45,42 +73,77 @@
   document.head.appendChild(ld);
 
   const links = U.publicLinks(ep);
+  const survey = ep.surveyId && S.settings.survey?.id === ep.surveyId ? S.settings.survey : null;
+  const privateForm = U.messageForm({ episodeId: ep.id, title: 'הודעה פרטית למגישים', hint: 'רק המגישים יקראו אותה — לא תוצג באתר.' });
+  const kicker = `${ep.number != null ? `תוכנית ${ep.number}` : (ep.season === 'sets' ? 'סט' : 'תוכנית')}${season ? ` · ${esc(season.title)}` : ''}`;
+  // שורת פרטים אחת: יום ותאריך · תאריך עברי · אורך — כל תאריך מופיע פעם אחת בלבד
+  const facts = [
+    ep.date ? `<time datetime="${esc(ep.date)}">${esc(fmtWeekday(ep.date))}, ${esc(fmtDate(ep.date))}</time>` : '',
+    ep.date ? `<span>${esc(U.fmtHebDate(ep.date))}</span>` : '',
+    ep.duration ? `<span>${esc(fmtDuration(ep.duration))}</span>` : '',
+  ].filter(Boolean);
+  const desc = descHtml(ep.description);
+  const longDesc = ep.description.length > 420;
   A.style.cssText = U.coverVars(ep);
   A.innerHTML = `
-<div class="section-title">
-  <div><p class="kicker">${ep.number != null ? `תוכנית ${ep.number}` : (ep.season === 'sets' ? 'סט' : 'תוכנית')}${season ? ` · ${esc(season.title)}` : ''}</p><h1>${esc(ep.title)}</h1></div>
-  ${ep.date ? `<strong>${esc(fmtDate(ep.date, true))}</strong>` : ''}
-</div>
-<div class="ep-hero">
-  <div class="cover">${ep.cover ? `<img src="${esc(ep.cover)}" alt="">` : `<div class="vinyl" data-num="${ep.number ?? '♫'}" style="--label:${U.hue(ep)}" data-vinyl="${esc(ep.id)}"><i></i></div>`}</div>
-  <div>
-    <div class="meta">
-      ${ep.date ? `<span class="pill">${esc(fmtWeekday(ep.date))}, ${esc(fmtDate(ep.date))}</span><span class="pill">${esc(U.fmtHebDate(ep.date))}</span>` : ''}
-      ${ep.duration ? `<span class="pill teal">${esc(fmtDuration(ep.duration))}</span>` : ''}
-      ${ep.guests.length ? `<span class="pill navy">עם ${esc(ep.guests.join(', '))}</span>` : ''}
-      ${ep.tags.map((t) => `<a class="chip" href="archive.html?q=${encodeURIComponent(t)}">${esc(t)}</a>`).join('')}
-    </div>
-    ${ep.description ? `<p class="desc">${esc(ep.description)}</p>` : ''}
-    <div class="actions">
-      ${stream ? `<button type="button" class="btn xl primary" data-play>האזנה לתוכנית <span>▶</span></button>` : `<span class="pill">אין עדיין הקלטה לתוכנית הזו</span>`}
+<header class="ep-hero ep-album"${ep.number != null ? ` data-n="${esc(ep.number)}"` : ''}>
+  <div class="ep-art" aria-hidden="true">
+    <div class="ep-disc"><div class="vinyl" data-num="" style="--label:${U.hue(ep)}" data-vinyl="${esc(ep.id)}"><i></i></div></div>
+    <div class="ep-sleeve">${ep.cover ? `<img src="${esc(ep.cover)}" alt="">` : `<b>${ep.number != null ? esc(ep.number) : '♫'}</b><small>ראש בראש</small>`}</div>
+  </div>
+  <div class="ep-head">
+    <p class="kicker">${kicker}</p>
+    <h1>${esc(ep.title)}</h1>
+    ${facts.length || ep.guests.length ? `<p class="ep-facts">${facts.join('<i aria-hidden="true">·</i>')}${ep.guests.length ? `${facts.length ? '<i aria-hidden="true">·</i>' : ''}<span>עם ${esc(ep.guests.join(', '))}</span>` : ''}</p>` : ''}
+  </div>
+  <div class="ep-actionbar">
+    ${stream ? `<button type="button" class="ep-play" data-play><span class="ep-play-disc" aria-hidden="true"><i></i></span><span class="ep-play-label">האזנה לתוכנית</span></button>` : '<span class="pill">אין עדיין הקלטה לתוכנית הזו</span>'}
+    <div class="ep-tools" role="group" aria-label="עוד פעולות לתוכנית">
       ${U.actionButtons(ep)}
-      <button type="button" class="btn" data-share>שיתוף</button>
-      ${U.downloadUrl(ep) ? `<a class="btn ghost" href="${esc(U.downloadUrl(ep))}" download="${esc(ep.title)}.mp3" rel="noopener">הורדת ההקלטה</a>` : ''}
-      ${links.map((l) => `<a class="btn ghost" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join('')}
+      <button type="button" class="btn" data-share>↗ שיתוף</button>
+      ${U.downloadUrl(ep) ? `<a class="btn" href="${esc(U.downloadUrl(ep))}" download="${esc(ep.title)}.mp3" rel="noopener" title="הורדת ההקלטה">↓ הורדה</a>` : ''}
     </div>
   </div>
+  <div class="now-playing-strip ep-now" id="now-strip" hidden></div>
+</header>
+${survey ? `<div class="site-banner ep-survey${survey.open ? ' vote' : ''}"><span class="site-banner-mark" aria-hidden="true">${survey.open ? '✓' : '✦'}</span><p>${survey.open ? `המצעד של התוכנית הזו פתוח להצבעה${survey.name ? ` — <b>${esc(survey.name)}</b>` : ''}` : `התוכנית הזו מקושרת למצעד${survey.name ? ` "${esc(survey.name)}"` : ''} — ההצבעה הסתיימה`}</p>${survey.open ? `<a class="btn small primary" href="${esc(survey.url)}" target="_blank" rel="noopener">הצביעו עכשיו <span>←</span></a>` : ''}</div>` : ''}
+<div class="ep-body">
+  <div class="ep-main">
+    <section class="card card-body ep-section ep-about" aria-labelledby="ep-about-title">
+      <div class="grid-head"><div><p class="kicker">מה בתוכנית</p><h2 id="ep-about-title">על התוכנית</h2></div></div>
+      ${desc ? `<div class="ep-desc${longDesc ? ' is-collapsed' : ''}" data-desc>
+        <div class="ep-desc-text" id="ep-desc-text">${desc}</div>
+        ${longDesc ? '<button type="button" class="ep-more" data-desc-toggle aria-expanded="false" aria-controls="ep-desc-text"><span>קראו עוד</span></button>' : ''}
+      </div>` : '<p class="cue-hint">עדיין אין תיאור לתוכנית הזו.</p>'}
+    </section>
+    ${S.sb.configured ? '<section class="card card-body ep-section comments" id="comments" aria-labelledby="comments-title"></section>' : ''}
+  </div>
+  <aside class="ep-side" aria-label="פרטים נוספים">
+    <div class="card card-body ep-section ep-info">
+      <p class="kicker">פרטי התוכנית</p>
+      <dl class="ep-details">
+        ${season ? `<div><dt>עונה</dt><dd><a href="archive.html?season=${encodeURIComponent(season.id)}">${esc(season.title)} <span aria-hidden="true">←</span></a></dd></div>` : ''}
+        ${ep.tags.length ? `<div><dt>נושאים</dt><dd class="ep-tags">${ep.tags.map((t) => `<a class="chip" href="archive.html?q=${encodeURIComponent(t)}">${esc(t)}</a>`).join('')}</dd></div>` : ''}
+        ${links.length ? `<div><dt>להאזנה גם ב־</dt><dd class="ep-tags">${links.map((l) => `<a class="chip" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join('')}</dd></div>` : ''}
+      </dl>
+    </div>
+    ${privateForm ? `<details class="card ep-section ep-private private-msg"><summary><span class="ep-private-mark" aria-hidden="true">✉</span><span class="ep-private-txt"><b>הודעה פרטית למגישים</b><small>רק המגישים יקראו אותה</small></span></summary><div class="ep-private-body">${privateForm}</div></details>` : ''}
+  </aside>
 </div>
-<div class="now-playing-strip" id="now-strip" hidden></div>
-${ep.surveyId && S.settings.survey?.id === ep.surveyId ? `<div class="card-body" style="padding-top:0"><div class="site-banner${S.settings.survey.open ? ' vote' : ''}" style="margin:0"><span class="site-banner-mark" aria-hidden="true">${S.settings.survey.open ? '✓' : '✦'}</span><p>${S.settings.survey.open ? `המצעד של התוכנית הזו פתוח להצבעה${S.settings.survey.name ? ` — <b>${esc(S.settings.survey.name)}</b>` : ''}` : `התוכנית הזו מקושרת למצעד${S.settings.survey.name ? ` "${esc(S.settings.survey.name)}"` : ''} — ההצבעה הסתיימה`}</p>${S.settings.survey.open ? `<a class="btn small primary" href="${esc(S.settings.survey.url)}" target="_blank" rel="noopener">הצביעו עכשיו <span>←</span></a>` : ''}</div></div>` : ''}
-${S.sb.configured ? '<section class="card-body comments" id="comments" aria-labelledby="comments-title"></section>' : ''}
-${(() => { const form = U.messageForm({ episodeId: ep.id, title: 'הודעה פרטית למגישים', hint: 'רק המגישים יקראו אותה — לא תוצג באתר.' }); return form ? `<details class="card-body private-msg" style="padding-top:0"><summary>הודעה פרטית למגישים</summary>${form}</details>` : ''; })()}
 `;
+
+  // תיאור ארוך: מקופל לכמה שורות עם "קראו עוד". הטקסט המלא נשאר בדף (גם לגוגל).
+  const D = A.querySelector('[data-desc]');
+  const descText = D?.querySelector('.ep-desc-text');
+  if (D && longDesc && descText.scrollHeight <= descText.clientHeight + 4) {   // נכנס בכל זאת — בלי קיפול
+    D.classList.remove('is-collapsed'); D.querySelector('[data-desc-toggle]')?.remove();
+  }
 
   // קודמת / הבאה
   const nb = S.neighbors(ep.id);
   document.getElementById('prevnext').innerHTML = `
-${nb.older ? `<a href="episode.html?ep=${encodeURIComponent(nb.older.slug)}"><small>התוכנית הקודמת</small><b>${esc(nb.older.title)}</b></a>` : '<span></span>'}
-${nb.newer ? `<a href="episode.html?ep=${encodeURIComponent(nb.newer.slug)}"><small>התוכנית הבאה</small><b>${esc(nb.newer.title)}</b></a>` : '<span></span>'}`;
+${nb.older ? `<a href="episode.html?ep=${encodeURIComponent(nb.older.slug)}" class="ep-nb" rel="prev"><span class="ep-nb-arrow" aria-hidden="true">→</span><span><small>התוכנית הקודמת</small><b>${esc(nb.older.title)}</b></span></a>` : '<span></span>'}
+${nb.newer ? `<a href="episode.html?ep=${encodeURIComponent(nb.newer.slug)}" class="ep-nb" rel="next"><span><small>התוכנית הבאה</small><b>${esc(nb.newer.title)}</b></span><span class="ep-nb-arrow" aria-hidden="true">←</span></a>` : '<span></span>'}`;
 
   // עוד מאותה עונה
   const more = S.episodes().filter((e) => e.id !== ep.id && e.season === ep.season).slice(0, 4);
@@ -171,6 +234,7 @@ ${comments.length ? `<ul class="comment-list">${comments.map((c) => commentHtml(
   /* ---------- אירועים ---------- */
   A.addEventListener('click', async (e) => {
     if (e.target.closest('[data-play]')) { Pl.isCurrent(ep.id) ? Pl.toggle() : Pl.load(ep); return; }
+    if (e.target.closest('[data-desc-toggle]')) { foldDesc(D.classList.contains('is-collapsed')); return; }
     if (e.target.closest('[data-share]')) {
       const url = U.shareUrl(ep);
       if (navigator.share) { try { await navigator.share({ title: ep.title, text: ep.description.slice(0, 120), url }); return; } catch { /* בוטל */ } }
@@ -180,16 +244,38 @@ ${comments.length ? `<ul class="comment-list">${comments.map((c) => commentHtml(
   });
   S.likes.load().then(() => { if (!on.signal?.aborted) U.paintActions(ep.id); });
 
+  /** פתיחה/קיפול של תיאור ארוך. בקיפול — חוזרים לראש הקטע אם הוא כבר גלל מעל המסך */
+  function foldDesc(open) {
+    const btn = D?.querySelector('[data-desc-toggle]'); if (!btn) return;
+    D.classList.toggle('is-collapsed', !open);
+    btn.setAttribute('aria-expanded', String(open));
+    btn.firstElementChild.textContent = open ? 'הצג פחות' : 'קראו עוד';
+    if (!open && D.getBoundingClientRect().top < 90) D.closest('section')?.scrollIntoView({ block: 'start' });
+  }
+  // מעבר במקלדת לקישור שמוסתר בחלק המקופל — פותחים את התיאור כדי שהמיקוד ייראה
+  D?.addEventListener('focusin', (e) => { if (D.classList.contains('is-collapsed') && e.target.matches('.ep-link')) foldDesc(true); });
+
+  /** כפתור ההאזנה והתקליט לפי מצב הנגן: האזנה / השהיה / המשך האזנה */
+  function paintPlay(mine) {
+    const btn = A.querySelector('[data-play]');
+    if (btn) {
+      const on = mine && !Pl.paused;
+      btn.classList.toggle('is-playing', on);
+      btn.querySelector('.ep-play-label').textContent = on ? 'השהיה' : (mine ? 'המשך האזנה' : 'האזנה לתוכנית');
+    }
+    A.querySelector('[data-vinyl]')?.classList.toggle('live', mine);
+    A.querySelector('.ep-art')?.classList.toggle('is-live', mine);
+  }
+  paintPlay(Pl.isCurrent(ep.id));
+
   const strip = document.getElementById('now-strip');
   window.addEventListener('rosh:player', (ev) => {
     const mine = ev.detail.episode?.id === ep.id;
-    const btn = A.querySelector('[data-play]');
-    if (btn) btn.innerHTML = mine && !Pl.paused ? 'השהיה <span>■</span>' : 'האזנה לתוכנית <span>▶</span>';
-    A.querySelector('[data-vinyl]')?.classList.toggle('live', mine);
+    paintPlay(mine);
     document.querySelectorAll('#more .ep-card').forEach((c) => c.classList.toggle('current', c.dataset.ep === ev.detail.episode?.id));
     if (mine && ev.detail.type !== 'close') {
       strip.hidden = false;
-      strip.innerHTML = `<span>${Pl.paused ? 'מושהה ב־' : 'מתנגן עכשיו ·'} ${fmtTime(ev.detail.time)}</span>`;
+      strip.innerHTML = `<span class="ep-eq${Pl.paused ? ' paused' : ''}" aria-hidden="true"><i></i><i></i><i></i></span><span>${Pl.paused ? 'מושהה ב־' : 'מתנגן עכשיו ·'} <b dir="ltr">${fmtTime(ev.detail.time)}</b></span>`;
     } else strip.hidden = true;
     // התווית "על הרגע הזה" מתעדכנת לפי המקום בנגן
     const ml = C?.querySelector('[data-moment-label]'), mc = C?.querySelector('input[name="moment"]');
