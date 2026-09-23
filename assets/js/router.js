@@ -4,11 +4,19 @@
    חדש, בהורדה או עם מקש Ctrl/Cmd/Shift.
 
    כל דף רושם את המאזינים שלו על document/window עם RoshApp.signal, וכך
-   במעבר לדף אחר הם מוסרים (אחרת כל מעבר היה מכפיל אותם). */
+   במעבר לדף אחר הם מוסרים (אחרת כל מעבר היה מכפיל אותם).
+
+   דפי התוכניות הסטטיים (episodes/<slug>.html, נבנים בפריסה) יושבים בתת־תיקייה
+   ומתחילים ב־<base href="../">, ולכן כל הכתובות היחסיות נפתרות מול document.baseURI
+   (שורש האתר), ובמעבר בין דפים גם תגית ה־<base> מתעדכנת.
+
+   לחיצה על התראה (sw.js) שולחת לחלון הפתוח { type: 'rosh-navigate', url } —
+   ועוברים לדף בלי טעינה, כך שהנגן ממשיך לנגן. */
 (function () {
   'use strict';
 
-  const PAGES = /(?:^|\/)(?:index|archive|episode|me|updates|negishut)\.html$|\/$/;
+  // הנתיב יחסית לשורש האתר: "", index.html, archive.html… או episodes/<slug>.html
+  const PAGES = /^(?:(?:index|archive|episode|me|updates|negishut)\.html)?$|^episodes\/[^/]+\.html$/;
   const PAGE_SCRIPT = /assets\/js\/(home|archive|episode|me|updates|negishut)\.js(?:\?|$)/;
   let controller = new AbortController();
   let navigating = 0;
@@ -19,17 +27,19 @@
   };
   window.RoshApp = App;
 
+  /** שורש האתר (עם / בסוף). מחושב פעם אחת בטעינה: document.baseURI — גם בדף
+      עם <base href="../"> זה השורש, ולא התיקייה episodes/. */
+  const root = new URL('./', document.baseURI);
+
   function sameSite(url) {
-    const here = new URL(document.baseURI);
-    const base = here.pathname.replace(/[^/]*$/, '');
-    return url.origin === here.origin && url.pathname.startsWith(base) && PAGES.test(url.pathname);
+    return url.origin === root.origin && url.pathname.startsWith(root.pathname) && PAGES.test(url.pathname.slice(root.pathname.length));
   }
 
   function internalLink(e) {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return null;
     const a = e.target.closest?.('a[href]');
     if (!a || a.target && a.target !== '_self' || a.hasAttribute('download') || a.dataset.reload != null) return null;
-    let url; try { url = new URL(a.getAttribute('href'), location.href); } catch { return null; }
+    let url; try { url = new URL(a.getAttribute('href'), document.baseURI); } catch { return null; }
     if (!sameSite(url)) return null;
     // קישור לעוגן באותו דף — הדפדפן מטפל בזה
     if (url.pathname === location.pathname && url.search === location.search && url.hash) return null;
@@ -48,8 +58,41 @@
     navigate(location.href, { push: false });
   });
 
+  /* לחיצה על התראה: sw.js מבקש לעבור לדף בלי לטעון מחדש */
+  navigator.serviceWorker?.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || d.type !== 'rosh-navigate' || typeof d.url !== 'string') return;
+    let url; try { url = new URL(d.url, document.baseURI); } catch { return; }
+    if (url.origin !== location.origin) return;
+    if (sameSite(url)) navigate(url.href); else location.href = url.href;
+  });
+
+  /** תגית ה־<base> של הדף החדש, בכתובת מלאה (או הסרה כשאין לו) */
+  function syncBase(doc, url) {
+    const next = doc.querySelector('base[href]');
+    let cur = document.querySelector('base');
+    if (!next) { cur?.remove(); return; }
+    const href = new URL(next.getAttribute('href'), url).href;
+    if (!cur) { cur = document.createElement('base'); document.head.prepend(cur); }
+    if (cur.href !== href) cur.setAttribute('href', href);
+  }
+
+  /** קישור ה־canonical והנתונים המובנים (JSON-LD) של הדף החדש */
+  function syncHeadLinks(doc, url) {
+    const next = doc.querySelector('link[rel="canonical"]'), cur = document.querySelector('link[rel="canonical"]');
+    if (next) {
+      const href = new URL(next.getAttribute('href'), url).href;
+      if (cur) cur.setAttribute('href', href);
+      else { const l = document.createElement('link'); l.rel = 'canonical'; l.href = href; document.head.appendChild(l); }
+    } else cur?.remove();
+    document.querySelectorAll('script[type="application/ld+json"]').forEach((s) => s.remove());
+    doc.querySelectorAll('head script[type="application/ld+json"]').forEach((s) => {
+      const c = document.createElement('script'); c.type = 'application/ld+json'; c.textContent = s.textContent; document.head.appendChild(c);
+    });
+  }
+
   async function navigate(href, { push = true } = {}) {
-    const url = new URL(href, location.href);
+    const url = new URL(href, document.baseURI);
     const ticket = ++navigating;
     let html;
     try {
@@ -75,8 +118,11 @@
         else if (next) document.head.appendChild(next.cloneNode());
         else cur?.remove();
       }
-      document.querySelectorAll('script[type="application/ld+json"]').forEach((s) => s.remove());
-      if (doc.body.dataset.page) document.body.dataset.page = doc.body.dataset.page; else delete document.body.dataset.page;
+      syncBase(doc, url);
+      syncHeadLinks(doc, url);
+      for (const k of ['page', 'ep']) {
+        if (doc.body.dataset[k]) document.body.dataset[k] = doc.body.dataset[k]; else delete document.body.dataset[k];
+      }
       document.querySelector('.shell').replaceWith(document.importNode(shell, true));
       const s = document.createElement('script');
       s.src = script.getAttribute('src');

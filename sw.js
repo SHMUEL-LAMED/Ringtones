@@ -2,12 +2,12 @@
    נתוני התוכניות נטענים תמיד מהרשת קודם (ונופלים למטמון אם אין), וההקלטות
    עצמן לא נשמרות. ניווט שנכשל ואין לו עותק שמור מקבל את offline.html.
    הגופנים של Google נשמרים במטמון נפרד (שורד החלפת גרסה) כדי שהאתר ייראה נכון גם בלי רשת. */
-const VERSION = 'rosh-v9-account-player';
+const VERSION = 'rosh-v10-episode-pages';
 const FONTS = 'rosh-fonts-v1';
 const OFFLINE = './offline.html';
 const SHELL = [
   './', './index.html', './archive.html', './episode.html', './me.html', './updates.html', './negishut.html', OFFLINE,
-  './assets/css/rosh.css', './assets/css/features.css', './assets/js/theme.js', './assets/js/ui.js', './assets/js/store.js', './assets/js/player.js', './assets/js/router.js',
+  './assets/css/rosh.css', './assets/css/features.css', './assets/js/theme.js', './assets/js/app-update.js', './assets/js/offline.js', './assets/js/ui.js', './assets/js/store.js', './assets/js/player.js', './assets/js/router.js',
   './assets/js/home.js', './assets/js/archive.js', './assets/js/episode.js', './assets/js/me.js', './assets/js/updates.js', './assets/js/negishut.js',
   './assets/img/medallion.svg', './assets/img/icon-192.png', './assets/img/icon-512.png', './assets/img/icon-maskable-512.png',
   './assets/img/apple-touch-icon.png', './manifest.webmanifest',
@@ -74,13 +74,19 @@ self.addEventListener('fetch', (e) => {
   }).catch(async () => {
     const hit = await caches.match(req, { ignoreSearch: true });
     if (hit) return hit;
-    if (navigate) return (await caches.match(OFFLINE)) || Response.error();
+    if (navigate) {
+      // דף בתיקייה אחרת (episodes/…): הכתובות היחסיות של offline.html לא יעבדו שם — מפנים אליו
+      const off = new URL(OFFLINE, self.registration.scope).href;
+      if (url.pathname.replace(/[^/]*$/, '') !== new URL(self.registration.scope).pathname) return Response.redirect(off, 302);
+      return (await caches.match(OFFLINE)) || Response.error();
+    }
     return Response.error();
   }));
 });
 
 /* התראה על תוכנית חדשה (Web Push): מציגים אותה, ולחיצה פותחת את התוכנית —
-   בחלון האתר שכבר פתוח אם יש כזה. */
+   בחלון האתר שכבר פתוח אם יש כזה: החלון מקבל הודעה ('rosh-navigate') ועובר לדף
+   בלי טעינה מחדש (router.js), כך שהנגן ממשיך לנגן. חלון חדש רק כשאין חלון פתוח. */
 self.addEventListener('push', (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data?.text() || '' }; }
@@ -95,8 +101,14 @@ self.addEventListener('notificationclick', (e) => {
   const target = new URL(e.notification.data?.url || './', self.registration.scope).href;
   e.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    const here = wins.find((w) => w.url.startsWith(self.registration.scope));
-    if (here) { await here.focus(); return here.navigate(target).catch(() => self.clients.openWindow(target)); }
+    // חלון עליון של האתר (לא iframe, ולא אזור הניהול — שם אין ניווט בלי טעינה)
+    const mine = wins.filter((w) => w.url.startsWith(self.registration.scope) && w.frameType !== 'nested' && !/\/admin\.html/.test(new URL(w.url).pathname));
+    const here = mine.find((w) => w.focused) || mine.find((w) => w.visibilityState === 'visible') || mine[0];
+    if (here) {
+      try { await here.focus(); } catch { /* הדפדפן לא תמיד מרשה — ההודעה עדיין עוברת */ }
+      here.postMessage({ type: 'rosh-navigate', url: target });
+      return;
+    }
     return self.clients.openWindow(target);
   })());
 });
