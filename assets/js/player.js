@@ -53,6 +53,7 @@
     <time data-cur>0:00</time>
     <div class="scrub" data-scrub role="slider" tabindex="0" aria-label="מיקום בתוכנית" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
       <div class="segs" data-segs></div>
+      <div class="markers" data-markers aria-hidden="true"></div>
       <div class="knob" data-knob style="left:0"></div>
       <div class="tip" data-tip></div>
     </div>
@@ -66,6 +67,7 @@
       <option value="">טיימר כיבוי</option><option value="15">בעוד 15 דקות</option><option value="30">בעוד 30 דקות</option><option value="45">בעוד 45 דקות</option><option value="60">בעוד שעה</option>
     </select>
     <button type="button" class="chip hide-sm" data-mute aria-pressed="false">השתקה</button>
+    <button type="button" class="chip moment-btn" data-moment aria-pressed="false" title="סימון הרגע הזה ברשימת הרגעים שאהבתם">♡ הרגע הזה</button>
     <button type="button" class="chip" data-share>שיתוף הרגע הזה</button>
     <a class="chip hide-sm" data-download href="#" download rel="noopener">הורדה</a>
     <span class="spacer"></span>
@@ -79,7 +81,7 @@
     P.els = {
       art: q('[data-art]'), link: q('[data-link]'), title: q('[data-title]'), now: q('[data-now]'),
       toggle: q('[data-toggle]'), cur: q('[data-cur]'), dur: q('[data-dur]'),
-      scrub: q('[data-scrub]'), segs: q('[data-segs]'), knob: q('[data-knob]'), tip: q('[data-tip]'),
+      scrub: q('[data-scrub]'), segs: q('[data-segs]'), markers: q('[data-markers]'), knob: q('[data-knob]'), tip: q('[data-tip]'),
       speed: q('[data-speed]'), sleep: q('[data-sleep]'), sleepLeft: q('[data-sleep-left]'), mute: q('[data-mute]'), download: q('[data-download]'),
     };
 
@@ -90,6 +92,7 @@
     q('[data-next]').addEventListener('click', nextEpisode);
     q('[data-close]').addEventListener('click', close);
     q('[data-share]').addEventListener('click', shareMoment);
+    q('[data-moment]').addEventListener('click', toggleMoment);
     P.els.mute.addEventListener('click', () => { audio.muted = !audio.muted; P.els.mute.setAttribute('aria-pressed', String(audio.muted)); P.els.mute.textContent = audio.muted ? 'ביטול השתקה' : 'השתקה'; });
     P.els.speed.addEventListener('change', () => setRate(Number(P.els.speed.value)));
     P.els.sleep.addEventListener('change', () => setSleep(P.els.sleep.value));
@@ -233,11 +236,20 @@
     P.els.now.textContent = P.episode?.date ? window.RoshUI.fmtDate(P.episode.date) : '';
     mediaSession();
   }
+  /* סימנים על פס ההתקדמות: רגעים שמאזינים הגיבו עליהם (מדף התוכנית) */
+  const markers = new Map();   // episodeId → [{ at, label }]
+  function setMarkers(id, list) { markers.set(id, list || []); paintMarkers(); }
+  function paintMarkers() {
+    if (!P.els.markers) return;
+    const D = dur(), list = (P.episode && markers.get(P.episode.id)) || [];
+    P.els.markers.innerHTML = D ? list.filter((m) => m.at < D).map((m) => `<i style="left:${(m.at / D) * 100}%" title="${esc(`${fmtTime(m.at)} · ${m.label}`)}"></i>`).join('') : '';
+  }
   function renderSegments() {
     const D = dur();
     P.segs = [{ from: 0, to: D || 1 }];
     P.els.segs.innerHTML = '<span class="seg" style="flex-grow:1"><i></i></span>';
     P.els.scrub.setAttribute('aria-valuemax', String(Math.floor(D)));
+    paintMarkers();
   }
   function paint(ratioOverride) {
     const D = dur();
@@ -274,9 +286,9 @@
   // נשלח גם בעצירה, במעבר לתוכנית אחרת ובסגירת הדף — כדי ששום דקה לא תלך לאיבוד.
   // עם כל אירוע נשלח גם עד איפה הגיעו (באחוזים) — לגרף "עד איפה מאזינים".
   const pctNow = () => { const D = dur(); return D ? Math.min(100, Math.round((audio.currentTime / D) * 100)) : 0; };
-  function flushListen() {
+  function flushListen(closing = false) {
     if (!P.episode || !P.listened) return;
-    S.sb.event('listen', P.episode.id, P.listened, { pct: pctNow() });
+    S.sb.event('listen', P.episode.id, P.listened, { pct: pctNow() }, { beacon: closing });
     P.listened = 0;
   }
   setInterval(() => {
@@ -304,7 +316,10 @@
         title: P.episode.title,
         artist: S.site?.name || 'ראש בראש',
         album: P.episode.title,
-        artwork: P.episode.cover ? [{ src: P.episode.cover, sizes: '512x512' }] : [],
+        // תמונת התוכנית במסך הנעילה ובשעון; כשאין תמונה — הלוגו של התוכנית
+        artwork: P.episode.cover
+          ? [{ src: P.episode.cover, sizes: '1400x1400', type: 'image/jpeg' }]
+          : [{ src: new URL('assets/img/icon-512.png', document.baseURI).href, sizes: '512x512', type: 'image/png' }],
       });
       const h = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession);
       h('play', play); h('pause', pause);
@@ -312,6 +327,23 @@
       h('previoustrack', prevEpisode); h('nexttrack', nextEpisode);
       h('seekto', (d) => seek(d.seekTime));
     } catch { /* */ }
+  }
+
+  /* ---------- ♥ על רגע: נשמר ב"הרגעים שסימנתם" באזור האישי ---------- */
+  async function toggleMoment() {
+    if (!P.episode) return;
+    try {
+      const r = await S.moments.toggle(P.episode.id, audio.currentTime);
+      paintMomentBtn();
+      window.RoshUI.notify(r.on ? `♥ נשמר: ${fmtTime(r.at)}. תמצאו את זה באזור האישי.` : 'הסימון הוסר.', 'success');
+    } catch (err) {
+      window.RoshUI.notify(err.message, 'info', err.login ? { action: 'להתחברות', onAction: () => (window.RoshApp ? window.RoshApp.navigate('me.html') : (location.href = 'me.html')) } : {});
+    }
+  }
+  function paintMomentBtn() {
+    const b = P.dock?.querySelector('[data-moment]'); if (!b || !P.episode) return;
+    const on = S.moments.near(P.episode.id, audio.currentTime) != null;
+    if (b.getAttribute('aria-pressed') !== String(on)) { b.setAttribute('aria-pressed', String(on)); b.textContent = on ? '♥ הרגע הזה' : '♡ הרגע הזה'; }
   }
 
   /* ---------- שיתוף ---------- */
@@ -327,7 +359,7 @@
 
   /* ---------- אירועי אודיו ---------- */
 
-  audio.addEventListener('timeupdate', () => { if (!P.dragging) { paint(); updateNow(); save(); } if (P.sleepAt && Date.now() >= P.sleepAt) { pause(); setSleep(''); P.els.sleep.value = ''; window.RoshUI.notify('הטיימר כיבה את הנגן. לילה טוב.', 'info'); } paintSleep(); emit('time'); });
+  audio.addEventListener('timeupdate', () => { if (!P.dragging) { paint(); updateNow(); save(); paintMomentBtn(); } if (P.sleepAt && Date.now() >= P.sleepAt) { pause(); setSleep(''); P.els.sleep.value = ''; window.RoshUI.notify('הטיימר כיבה את הנגן. לילה טוב.', 'info'); } paintSleep(); emit('time'); });
   audio.addEventListener('loadedmetadata', () => { paint(); renderSegments(); paint(); });
   audio.addEventListener('durationchange', () => { renderSegments(); paint(); });
   const paintPlaying = () => document.body.classList.toggle('is-playing', !audio.paused && !audio.ended);
@@ -372,8 +404,9 @@
     if (dl) P.els.download.href = dl;
   });
   audio.addEventListener('volumechange', () => S.prefs.set('volume', audio.volume));
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { save(true); flushListen(); } });
-  window.addEventListener('pagehide', () => { save(true); flushListen(); });
+  // כשהדף נסגר או עובר לרקע (בטלפון זה לפעמים הרגע האחרון) — שליחה ב־sendBeacon, שלא נחתכת
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { save(true); flushListen(true); } });
+  window.addEventListener('pagehide', () => { save(true); flushListen(true); });
 
   /* ---------- קיצורי מקלדת ---------- */
 
@@ -409,7 +442,7 @@
   S.onSession(() => S.ready.then(restore));
 
   window.RoshPlayer = {
-    load, play, pause, toggle, seek, nextEpisode, prevEpisode, random, close, setRate, shareMoment, RATES,
+    load, play, pause, toggle, seek, nextEpisode, prevEpisode, random, close, setRate, shareMoment, setMarkers, RATES,
     get episode() { return P.episode; },
     get time() { return audio.currentTime; },
     get duration() { return dur(); },

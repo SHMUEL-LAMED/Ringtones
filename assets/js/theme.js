@@ -71,20 +71,63 @@
     else root.removeAttribute('data-motion');
   }
 
-  /* ---------- מצב קל: רק לטלפון (מצביע גס) חלש ---------- */
-  function weakPhone() {
-    var coarse = mq('(pointer: coarse)');
-    if (!coarse || !coarse.matches) return false;
+  /* ---------- מצב קל: רק לטלפון (מצביע גס) שבאמת מתקשה ----------
+     "חוסך נתונים" מדליק אותו מיד. אחרת מודדים את קצב הפריימים האמיתי: 2.5 שניות
+     של requestAnimationFrame, שנייה וחצי אחרי הטעינה (כשהאנימציות של הדף כבר רצות).
+     חציון מרווח מעל 24ms (פחות מ־~42 פריימים בשנייה), או יותר מ־15% פריימים מעל
+     50ms — מצב קל. התוצאה נשמרת ללשונית (sessionStorage), כך שלא מודדים בכל דף.
+     במחשב (מצביע עדין) לא מופעל אוטומטית לעולם. */
+  var AKEY = 'rosh:lite-auto';
+  function coarsePhone() { var c = mq('(pointer: coarse)'); return !!(c && c.matches); }
+  function saveData() {
     var nav = window.navigator || {};
     var conn = nav.connection || nav.mozConnection || nav.webkitConnection;
-    if (conn && conn.saveData) return true;
-    if (typeof nav.deviceMemory === 'number') return nav.deviceMemory <= 3;
-    if (typeof nav.hardwareConcurrency === 'number' && nav.hardwareConcurrency > 0) return nav.hardwareConcurrency <= 4;
-    return false;
+    return !!(conn && conn.saveData);
   }
-  var autoLite = weakPhone();
+  var measured = ss(AKEY);   // '1' | '0' | null (עוד לא נמדד בלשונית הזו)
+  var autoLite = coarsePhone() && (saveData() || measured === '1');
   function lite() { return liteChoice === 'on' || (liteChoice === 'auto' && autoLite); }
   function paintLite() { if (lite()) root.setAttribute('data-lite', '1'); else root.removeAttribute('data-lite'); }
+
+  function measureFrames() {
+    if (liteChoice === 'on' || !coarsePhone() || saveData() || measured === '0' || measured === '1' || !window.requestAnimationFrame) return;
+    var started = false;
+    function begin() {
+      if (started) return;
+      if (document.visibilityState === 'hidden') {
+        // לשונית ברקע: הדפדפן מאט את הפריימים — מודדים כשחוזרים אליה
+        document.addEventListener('visibilitychange', function again() {
+          if (document.visibilityState !== 'visible') return;
+          document.removeEventListener('visibilitychange', again);
+          setTimeout(begin, 1500);
+        });
+        return;
+      }
+      started = true;
+      var gaps = [], last = 0, until = 0, aborted = false;
+      function onHide() { if (document.visibilityState === 'hidden') aborted = true; }
+      document.addEventListener('visibilitychange', onHide);
+      function frame(t) {
+        if (aborted) { document.removeEventListener('visibilitychange', onHide); started = false; begin(); return; }
+        if (!last) { last = t; until = t + 2500; requestAnimationFrame(frame); return; }
+        gaps.push(t - last); last = t;
+        if (t < until) { requestAnimationFrame(frame); return; }
+        document.removeEventListener('visibilitychange', onHide);
+        if (gaps.length < 10) return;   // משהו השהה את הדף — ננסה בדף הבא
+        var sorted = gaps.slice().sort(function (a, b) { return a - b; });
+        var median = sorted[Math.floor(sorted.length / 2)];
+        var slow = 0;
+        for (var i = 0; i < gaps.length; i++) if (gaps[i] > 50) slow++;
+        var weak = median > 24 || slow / gaps.length > 0.15;
+        measured = weak ? '1' : '0';
+        ss(AKEY, measured);
+        if (weak && !autoLite) { autoLite = true; paintLite(); if (liteChoice === 'auto') emit('lite'); }
+      }
+      requestAnimationFrame(frame);
+    }
+    function schedule() { setTimeout(begin, 1500); }
+    if (document.readyState === 'complete') schedule(); else window.addEventListener('load', schedule);
+  }
 
   function emit(kind) {
     var detail = { kind: kind, theme: theme, resolved: resolved(), motion: motion, reduced: reducedMotion(), lite: lite() };
@@ -137,6 +180,7 @@
   paintTheme(theme);
   paintMotion();
   paintLite();
+  measureFrames();
   // אם תגית ה־meta מופיעה אחרי הסקריפט
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', paintMeta);
 

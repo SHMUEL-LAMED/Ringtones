@@ -50,6 +50,27 @@
     const d = toDate(iso);
     return d ? (short ? heDateShort : heDate).format(d) : '';
   }
+  /* ---------- תאריך עברי ----------
+     היום, החודש והשנה נלקחים מלוח השנה העברי של הדפדפן, והמספרים נכתבים
+     באותיות: 11 בתשרי 5787 → י״א בתשרי תשפ״ז. */
+  const heHebrew = new Intl.DateTimeFormat('he-IL-u-ca-hebrew', { day: 'numeric', month: 'long', year: 'numeric' });
+  function gematria(n) {
+    n = Math.floor(n) % 1000;
+    let out = '';
+    for (const [v, c] of [[400, 'ת'], [300, 'ש'], [200, 'ר'], [100, 'ק']]) while (n >= v) { out += c; n -= v; }
+    if (n === 15) out += 'טו'; else if (n === 16) out += 'טז';
+    else { if (n >= 10) { out += 'יכלמנסעפצ'[Math.floor(n / 10) - 1]; n %= 10; } if (n) out += 'אבגדהוזחט'[n - 1]; }
+    return out.length > 1 ? `${out.slice(0, -1)}״${out.slice(-1)}` : `${out}׳`;
+  }
+  function fmtHebDate(iso, short = false) {
+    const d = toDate(iso);
+    if (!d) return '';
+    try {
+      const p = Object.fromEntries(heHebrew.formatToParts(d).map((x) => [x.type, x.value]));
+      return short ? `${gematria(Number(p.day))} ב${p.month}` : `${gematria(Number(p.day))} ב${p.month} ${gematria(Number(p.year))}`;
+    } catch { return ''; }
+  }
+
   function fmtWeekday(iso) {
     const d = toDate(iso);
     return d ? heWeekday.format(d) : '';
@@ -442,11 +463,11 @@
     const playable = !!(e.stream || streamUrl(e));
     return `
 <a class="ep-card${Pl?.isCurrent?.(e.id) ? ' current' : ''}" href="${href || `episode.html?ep=${encodeURIComponent(e.slug)}`}" data-ep="${esc(e.id)}" style="${coverVars(e)}">
-  ${e.cover ? `<img class="ep-cover" src="${esc(e.cover)}" alt="" loading="lazy">` : `<span class="cover-fallback num" aria-hidden="true">${e.number ?? '♫'}</span>`}
+  ${e.cover ? `<img class="ep-cover" src="${esc(e.thumb || e.cover)}" alt="" loading="lazy" decoding="async">` : `<span class="cover-fallback num" aria-hidden="true">${e.number ?? '♫'}</span>`}
   ${e.number != null ? `<span class="ep-num">תוכנית ${e.number}</span>` : (e.season === 'sets' ? '<span class="ep-num">סט</span>' : '')}
   ${badge ? `<i class="ep-badge gold" aria-hidden="true">${badge}</i>` : (playable ? '<i class="ep-badge" aria-hidden="true">▶</i>' : '')}
   <b>${titleHtml ?? esc(e.title)}</b>
-  <small>${esc(fmtDate(e.date, true))}${e.duration ? ` · ${esc(fmtDuration(e.duration))}` : ''}</small>
+  <small>${esc(fmtDate(e.date, true))}${e.date ? ` · ${esc(fmtHebDate(e.date, true))}` : ''}${e.duration ? ` · ${esc(fmtDuration(e.duration))}` : ''}</small>
   ${pct ? `<span class="resume" aria-hidden="true"><i style="width:${pct}%"></i></span>` : ''}
 </a>`;
   }
@@ -456,10 +477,8 @@
      אחת לכל האתר, וכל הכפתורים של אותה תוכנית בדף מתעדכנים יחד. */
   function laterLabel(on) { return on ? '✓ שמור לאחר כך' : '+ לאחר כך'; }
   function queueLabel(on) { return on ? '✓ בתור' : '+ לתור'; }
-  function likeLabel(id) {
-    const L = window.RoshStore?.likes; const n = L?.count(id) || 0;
-    return `${L?.has(id) ? '♥' : '♡'} אהבתי${n ? ` <span class="like-count">${n}</span>` : ''}`;
-  }
+  /** כמה אהבו כל תוכנית — נתון שרק המנהלים רואים; למאזין מוצג רק הסימון שלו */
+  function likeLabel(id) { return `${window.RoshStore?.likes?.has(id) ? '♥' : '♡'} אהבתי`; }
   function actionButtons(e, { like = true, queue = true } = {}) {
     const S = window.RoshStore;
     return `<button type="button" class="btn" data-later="${esc(e.id)}" aria-pressed="${S.later.has(e.id)}">${laterLabel(S.later.has(e.id))}</button>`
@@ -597,5 +616,5 @@
     mountSubscribe(host);
   });
 
-  window.RoshUI = { banner, messageForm, mountSubscribe, esc, fmtTime, parseTime, fmtDuration, fmtDate, fmtWeekday, slugify, qs, header, footer, repaintHeader, actionButtons, paintActions, push, notify, kbdHelp, isTyping, copy, driveId, isDriveUrl, streamUrl, streamCandidates, downloadUrl, shareUrl, publicLinks, coverVars, hue, seasonVars, epCard, reveal, countUp, eqBars, reduceMotion, applyPrefs };
+  window.RoshUI = { banner, messageForm, mountSubscribe, esc, fmtTime, parseTime, fmtDuration, fmtDate, fmtHebDate, fmtWeekday, slugify, qs, header, footer, repaintHeader, actionButtons, paintActions, push, notify, kbdHelp, isTyping, copy, driveId, isDriveUrl, streamUrl, streamCandidates, downloadUrl, shareUrl, publicLinks, coverVars, hue, seasonVars, epCard, reveal, countUp, eqBars, reduceMotion, applyPrefs };
 })();

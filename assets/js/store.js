@@ -43,6 +43,7 @@
       date: e.date ? String(e.date).slice(0, 10) : '',
       description: String(e.description || ''),
       cover: String(e.cover || ''),
+      thumb: String(e.thumb || ''),   // גרסה קטנה של התמונה לכרטיסים
       audio: String(e.audio || ''),
       duration: Number(e.duration) || 0,
       sourceFileBytes: Number(e.sourceFileBytes) || 0,
@@ -92,8 +93,18 @@
     const updates = (Array.isArray(raw?.updates) ? raw.updates : []).map((u, i) => ({
       id: String(u?.id || `u${i}`), date: String(u?.date || '').slice(0, 10), title: String(u?.title || ''), text: String(u?.text || ''), link: String(u?.link || ''), pinned: !!u?.pinned,
     })).filter((u) => u.title || u.text);
-    return { banner, updates, survey };
+    // פרטי הקשר בדף הבית — נערכים בניהול; כשלא נשמרו, הערכים שהיו באתר מאז ומעולם
+    const c = raw?.contacts && typeof raw.contacts === 'object' ? raw.contacts : {};
+    const contacts = { ...CONTACT_DEFAULTS };
+    for (const k of Object.keys(CONTACT_DEFAULTS)) if (typeof c[k] === 'string') contacts[k] = c[k].trim();
+    return { banner, updates, survey, contacts };
   }
+  const CONTACT_DEFAULTS = {
+    phone: '077-226-2271', phone2: '073-707-9536', email: 'rbr17011701@gmail.com',
+    phoneNote: 'האזנה לתוכניות בשלוחה 1, שירים מומלצים בשלוחה 3 והרשמה לצינתוק בשלוחה 4.',
+    hostsNote: 'לשאלות ולתגובות למגישים: שלוחה 9 בקו התוכן. פורום המאזינים נמצא בשלוחה 5.',
+    chatNote: 'בבקשה ציינו לאיזו קבוצה להצטרף — גברים או נשים.',
+  };
   /* ---------- שעון ישראל ----------
      התאריכים באתר (תאריך שידור, "הודעה עד", פרסום מתוזמן) הם לפי שעון ישראל,
      גם כשהגולש בחו"ל וגם בין חצות לשלוש, כשהשעון העולמי עוד ב"אתמול". */
@@ -237,10 +248,13 @@
       return j;
     },
     /** אירוע האזנה לסטטיסטיקה (ציבורי; בלי preflight, בלי המתנה) */
-    event(kind, episodeId, seconds = 0, extra = {}) {
+    event(kind, episodeId, seconds = 0, extra = {}, { beacon = false } = {}) {
       if (!this.configured || state.preview) return;
       const device = matchMedia('(pointer: coarse)').matches ? 'phone' : 'desktop';
-      try { fetch(this.base('/api/program/events'), { method: 'POST', keepalive: true, headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ kind, episodeId, seconds, device, ref: visitSource(), ...extra }) }).catch(() => {}); } catch { /* */ }
+      const body = JSON.stringify({ kind, episodeId, seconds, device, ref: visitSource(), ...extra });
+      // בסגירת הדף sendBeacon אמין יותר (הדפדפן שולח גם אחרי שהדף נסגר)
+      if (beacon && navigator.sendBeacon) { try { if (navigator.sendBeacon(this.base('/api/program/events'), new Blob([body], { type: 'text/plain' }))) return; } catch { /* */ } }
+      try { fetch(this.base('/api/program/events'), { method: 'POST', keepalive: true, headers: { 'Content-Type': 'text/plain' }, body }).catch(() => {}); } catch { /* */ }
     },
     draft: {
       get: () => sb.call('/api/program/draft'),
@@ -518,7 +532,7 @@
      הנוכחי, ומצטרפים לחשבון כשהוא מתחבר. */
 
   const ME_KEYS = ['positions', 'later', 'history', 'prefs', 'queue', 'finished', 'last', 'listenSeconds'];
-  const blank = () => ({ positions: {}, later: [], history: [], prefs: {}, queue: [], finished: [], last: null, listenSeconds: 0 });
+  const blank = () => ({ positions: {}, later: [], history: [], prefs: {}, queue: [], finished: [], last: null, listenSeconds: 0, moments: {} });
   function cleanMe(raw) {
     const d = blank();
     if (!raw || typeof raw !== 'object') return d;
@@ -531,9 +545,12 @@
     d.prefs = raw.prefs && typeof raw.prefs === 'object' ? { ...raw.prefs } : {};
     d.last = raw.last && raw.last.id ? { id: String(raw.last.id), t: Math.floor(Number(raw.last.t) || 0) } : null;
     d.listenSeconds = Math.max(0, Math.floor(Number(raw.listenSeconds) || 0));
+    if (raw.moments && typeof raw.moments === 'object') {
+      for (const [id, list] of Object.entries(raw.moments)) if (Array.isArray(list)) d.moments[id] = [...new Set(list.map(Number).filter((n) => Number.isFinite(n) && n >= 0))].sort((a, b) => a - b).slice(0, 200);
+    }
     return d;
   }
-  const hasContent = (d) => !!(Object.keys(d.positions).length || d.later.length || d.history.length || d.queue.length || d.listenSeconds || d.last);
+  const hasContent = (d) => !!(Object.keys(d.moments || {}).length || Object.keys(d.positions).length || d.later.length || d.history.length || d.queue.length || d.listenSeconds || d.last);
   /** מיזוג: מה שנעשה בביקור הזה (לפני שהתחברו, או במכשיר הזה) נוסף לחשבון */
   function mergeMe(base, extra) {
     const out = cleanMe(base), x = cleanMe(extra);
@@ -546,6 +563,7 @@
     out.prefs = { ...out.prefs, ...x.prefs };
     if (x.last) out.last = x.last;
     out.listenSeconds += x.listenSeconds;
+    for (const [id, list] of Object.entries(x.moments)) out.moments[id] = [...new Set([...(out.moments[id] || []), ...list])].sort((a, b) => a - b);
     return out;
   }
 
@@ -695,6 +713,27 @@
     get finished() { return me.data.finished; },
   };
 
+  /* ---------- הרגעים שאהבתי: ♥ על רגע בתוכנית ----------
+     נשמר באזור האישי (בחשבון), ונשלח לשרת לספירה — שרק המנהלים רואים. */
+  const moments = {
+    step: 5,
+    of(id) { return me.data.moments[id] || []; },
+    all() { return Object.entries(me.data.moments).filter(([, l]) => l.length); },
+    near(id, t) { return this.of(id).find((m) => Math.abs(m - t) < 10) ?? null; },
+    async toggle(id, t) {
+      if (!sb.user) throw Object.assign(new Error('כדי לסמן רגעים צריך להתחבר.'), { login: true });
+      const hit = this.near(id, t);
+      const at = hit ?? Math.floor(t / this.step) * this.step;
+      const on = hit == null;
+      const list = this.of(id).filter((m) => m !== at);
+      me.data.moments[id] = on ? [...list, at].sort((a, b) => a - b) : list;
+      if (!me.data.moments[id].length) delete me.data.moments[id];
+      me.change();
+      sb.call('/api/program/moments', { method: 'POST', body: { episodeId: id, at, on } }).catch(() => {});
+      return { at, on };
+    },
+  };
+
   /* ---------- "אהבתי" ---------- */
   const likes = {
     counts: {}, mine: new Set(), loaded: false, _p: null,
@@ -712,10 +751,6 @@
       if (r.liked) this.mine.add(id); else this.mine.delete(id);
       this.counts[id] = Number(r.count) || 0;
       return r.liked;
-    },
-    top(n = 8) {
-      return Object.entries(this.counts).filter(([id, c]) => c > 0 && byId(id)).sort((a, b) => b[1] - a[1]).slice(0, n)
-        .map(([id]) => byId(id)).filter((e) => e && e.visible && !scheduled(e));
     },
   };
 
@@ -759,7 +794,7 @@
   };
 
   window.RoshStore = {
-    state, ready, load, sb, prefs, positions, last, later, history, queue, listening, likes, me, admin,
+    state, ready, load, sb, prefs, positions, last, later, history, queue, listening, likes, moments, me, admin,
     episodes, seasons, bySlug, byId, latest, featured, neighbors, searchEpisodes, suggest,
     bannerActive, scheduled, nowIL, todayIL, onSession, signedIn, signOut,
     get site() { return state.site; },

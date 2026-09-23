@@ -13,6 +13,7 @@ const catalog = JSON.parse(readFileSync(new URL('../data/episodes.json', import.
 let published = null; let draftPuts = 0; let events = []; let messagesSent = [];
 let settings = { banner: { enabled: false, text: '', link: '', linkLabel: '', until: '', sites: { program: true, survey: false } }, updates: [], survey: { id: 'main', name: 'מצעד האלבומים', open: true, url: 'https://rosh-berosh.smwlyqswkwt232.workers.dev/' } };
 let handoffs = 0; let logouts = 0; let ssoBounces = 0; let ssoSignedIn = false;
+let comments = [{ id: 'c1', episodeId: catalog.episodes[0].id, name: 'שרה לוי', email: 's@x.com', text: 'הוויכוח בדקה 12 היה מצוין!', at: 720, status: 'pending', pinned: false, reply: null, createdAt: 1758500000 }]; let proofreadCalls = 0;
 let latestVersion = 'v1'; let conflicts = 0; let publishBody = null; let userdata = null; let userdataPuts = 0; let likes = {};
 
 const browser = await chromium.launch(process.env.PW_EXECUTABLE ? { executablePath: process.env.PW_EXECUTABLE } : {});
@@ -36,7 +37,11 @@ await ctx.route(`${API}/**`, async (route) => {
   if (p === '/api/program/userdata' && m === 'PUT') { userdata = req.postDataJSON().data; userdataPuts++; return json({ ok: true, updatedAt: new Date().toISOString() }); }
   if (p === '/api/program/likes' && m === 'GET') return json({ counts: likes, mine: [] });
   if (p === '/api/program/push/count') return json({ total: 7 });
+  if (p === '/api/program/comments/all') return json({ comments: comments, pending: comments.filter((c) => c.status === 'pending').length });
+  if (p === '/api/program/comments/moderate') { const b = req.postDataJSON(); const c = comments.find((x) => x.id === b.id); Object.assign(c, b.status ? { status: b.status } : {}, 'reply' in b ? { reply: b.reply } : {}, 'pinned' in b ? { pinned: b.pinned } : {}); return json({ ok: true, comment: c }); }
+  if (p === '/api/program/ai/proofread') { const b = req.postDataJSON(); proofreadCalls++; return json({ results: b.items.filter((it) => it.text.includes('תוכנית בדיקה חדשה')).map((it) => ({ key: it.key, fixed: it.text.replace('בדיקה', 'הבדיקה'), changes: [{ from: 'בדיקה', to: 'הבדיקה' }] })) }); }
   if (p === '/api/program/push/drain') return json({ sent: 0, failed: 0, removed: 0, remaining: 0 });
+  if (p.startsWith('/api/program/moments/')) return json({ id: decodeURIComponent(p.split('/').pop()), total: 3, buckets: [{ at: 60, count: 2 }, { at: 600, count: 3 }], top: [{ at: 600, count: 3 }, { at: 60, count: 2 }] });
   if (p.startsWith('/api/program/stats/episode/')) return json({ id: p.split('/').pop(), plays: 10, listeners: 8, retention: Array.from({ length: 20 }, (_, i) => ({ pct: i * 5, listeners: 8 - Math.floor(i / 3) })) });
   if (p === '/api/program/draft' && m === 'GET') return json({ draft: null });
   if (p === '/api/program/draft' && m === 'PUT') { draftPuts++; return json({ ok: true, updatedAt: new Date().toISOString(), by: 'admin@example.com' }); }
@@ -148,13 +153,20 @@ await page.waitForSelector('.admin-stats', { timeout: 10000 });
 check((await page.locator('.admin-stats .stat').count()) === 4, 'סטטיסטיקות מוצגות');
 check((await page.locator('.bars:not(.hours):not(.retention) .bar').count()) === 2, 'גרף ימים');
 check((await page.locator('.msg.unread').count()) === 1, 'הודעה מהמאזינים מוצגת');
-check((await page.locator('#tab-unread').innerText()) === '1', 'תג הודעות שלא נקראו');
+check((await page.locator('#tab-unread').innerText()) === '2', 'תג: הודעה שלא נקראה ותגובה שממתינה לאישור');
 check((await page.locator('.hbars .hbar').count()) === 2, 'סטטיסטיקה: מאיפה הגיעו המאזינים');
 check((await page.locator('.bars.hours .bar').count()) === 24, 'סטטיסטיקה: האזנות לפי שעה');
 await page.selectOption('#stats-ep', { index: 1 });
 await page.waitForSelector('.bars.retention .bar');
 check((await page.locator('.bars.retention .bar').count()) === 20, 'סטטיסטיקה: עד איפה מאזינים בתוכנית');
+check((await page.locator('.hot-list li').count()) === 2, 'הרגעים הכי חמים בתוכנית — גלוי רק בניהול');
 check((await page.locator('[data-push-send]').count()) === 1, 'שליחת התראה לכל המאזינים');
+check((await page.locator('#comments-card .mod.pending').count()) === 1, 'תגובה שממתינה לאישור מופיעה בניהול');
+await page.fill('[data-reply-for="c1"]', 'תודה שרה!');
+await page.click('[data-op="comment-reply"][data-id="c1"]');
+await page.click('[data-op="comment-status"][data-id="c1"][data-st="approved"]');
+await page.waitForTimeout(300);
+check(comments[0].status === 'approved' && comments[0].reply === 'תודה שרה!', 'אישור תגובה ותשובת המגישים נשמרים בשרת');
 
 /* ---------- פרסום ---------- */
 await page.click('[data-tab="publish"]');
@@ -162,6 +174,19 @@ await page.waitForSelector('.pub-card');
 check((await page.locator('.change-list li').count()) >= 3, 'רשימת השינויים: תוכנית חדשה, עודכנו, הודעה');
 check((await page.locator('.pub-card [data-op="publish"]').isEnabled()), 'כפתור הפרסום פעיל');
 check((await page.locator('.health-group [data-op="covers-all"]').count()) === 1 && (await page.locator('.health-group [data-op="fill-durations"]').count()) === 1, 'בדיקת תקינות מקובצת, עם תיקון לכולן בלחיצה');
+check((await page.locator('.diff-list > li').count()) >= 3, '"מה בדיוק ישתנה" מפרט את השינויים לפני הפרסום');
+await page.click('[data-op="proof-changed"]');
+await page.waitForSelector('.proof-list li');
+check(proofreadCalls >= 1 && (await page.locator('.proof-list li').count()) >= 1, 'בדיקת איות מציעה תיקונים');
+await page.click('[data-op="proof-apply"] >> nth=0');
+// השלמת תאריכים
+await page.click('.health-group [data-op="dates-screen"]');
+await page.waitForSelector('#dlg-dates[open] input[data-date-for]');
+const left = Number(await page.locator('#dlg-dates [data-left]').innerText());
+await page.fill('#dlg-dates input[data-date-for] >> nth=0', '2025-01-02');
+await page.dispatchEvent('#dlg-dates input[data-date-for] >> nth=0', 'change');
+check(Number(await page.locator('#dlg-dates [data-left]').innerText()) === left - 1, 'מסך השלמת התאריכים שומר ועובר לבאה');
+await page.click('#dlg-dates .card-foot [data-close]');
 await page.click('[data-op="check-audio"]');
 await page.waitForFunction(() => /נבדקו|בעיות/.test(document.querySelector('.tool-list').innerText), null, { timeout: 60000 });
 check(/הכול תקין/.test(await page.locator('.tool-list').first().innerText()), 'בדיקת ההקלטות עוברת (השרת המדומה עונה)');
@@ -184,10 +209,11 @@ await page.click('#dlg-conflict [data-force]');
 await page.waitForFunction(() => document.querySelector('#status-text').textContent.includes('הכול מפורסם'), null, { timeout: 10000 });
 check(publishBody.force === true, 'אפשר לבחור לפרסם בכל זאת');
 check(!!published && published.episodes.length === 87, 'הפרסום שלח 87 תוכניות לשרת');
-check(published.episodes.some((e) => e.title === 'תוכנית בדיקה חדשה' && e.publishAt === '2031-01-01T20:00'), 'התוכנית החדשה עם התזמון נשלחה');
+check(published.episodes.some((e) => /^תוכנית (ה)?בדיקה חדשה$/.test(e.title) && e.publishAt === '2031-01-01T20:00'), 'התוכנית החדשה עם התזמון נשלחה');
 check(settings.banner.enabled && settings.banner.text.includes('חמישי') && settings.updates.length === 1, 'ההודעה והעדכונים פורסמו');
 check(settings.banner.sites?.survey === true && settings.banner.sites?.program === true, 'ההודעה מסומנת לשני האתרים');
-check(published.episodes.some((e) => e.title === 'תוכנית בדיקה חדשה' && e.surveyId === 'main'), 'הקישור למצעד נשמר בתוכנית');
+check(published.episodes.some((e) => /^תוכנית (ה)?בדיקה חדשה$/.test(e.title) && e.surveyId === 'main'), 'הקישור למצעד נשמר בתוכנית');
+check(published.episodes.some((e) => e.title === 'תוכנית הבדיקה חדשה'), 'תיקון האיות שאושר נכנס לפרסום');
 // דף ניהול אחד: הכתובת של ניהול התוכניות עוברת לדף הניהול המשותף, לאותו חלק, בלי כניסה נוספת
 await page.goto(`${BASE}/admin.html#site`);
 await page.waitForURL(/\/api\/program\/handoff\/c0ffee#prog-site$/, { timeout: 15000 }).catch(() => {});

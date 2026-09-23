@@ -3,7 +3,7 @@ on:
   push:
     branches: [main]
   schedule:
-    # פעם ביום: בניית מפת האתר מחדש, כדי שתוכניות חדשות יופיעו בגוגל
+    # פעם ביום: בניית מפת האתר ודפי התוכניות מחדש, כדי שתוכניות חדשות יופיעו בגוגל
     - cron: '17 3 * * *'
   workflow_dispatch:
 permissions:
@@ -31,6 +31,8 @@ jobs:
           node-version: 22
       - name: Build the sitemap from the live catalog
         run: node scripts/build-sitemap.mjs
+      - name: Build a static page per episode (episodes/<slug>.html, for search engines)
+        run: node scripts/build-episode-pages.mjs
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload static site

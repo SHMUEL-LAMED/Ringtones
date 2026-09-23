@@ -107,6 +107,19 @@
 <div class="grid-head"><div><p class="kicker">שמרתם</p><h2>לאחר כך</h2></div></div>
 <div class="card"><div class="state"><span class="mark">+</span><h3>הרשימה ריקה</h3><p>לחצו "+ לאחר כך" בכל תוכנית כדי לשמור אותה כאן.</p></div></div>`;
 
+    // התוכניות שסימנתם "אהבתי"
+    const loved = [...S.likes.mine].map((id) => S.byId(id)).filter((e) => e && e.visible && !S.scheduled(e));
+    $('me-loved').innerHTML = loved.length ? `
+<div class="grid-head"><div><p class="kicker">♥</p><h2>תוכניות שאהבתי</h2></div></div>
+<div class="ep-grid">${loved.map((e) => U.epCard(e)).join('')}</div>` : '';
+
+    // הרגעים שסימנתם ♥ בנגן — לכל תוכנית, קפיצה ישירה לכל רגע
+    const mom = S.moments.all().map(([id, list]) => ({ e: S.byId(id), list })).filter((x) => x.e && x.e.visible);
+    $('me-moments').innerHTML = mom.length ? `
+<div class="grid-head"><div><p class="kicker">♥ ברגע</p><h2>הרגעים שסימנתם</h2></div></div>
+<p class="cue-hint" style="margin:-6px 0 12px">בזמן האזנה, לחצו "♡ הרגע הזה" בנגן — והרגע יישמר כאן.</p>
+<div class="moments-list">${mom.map(({ e, list }) => `<div class="moments-row" style="${U.coverVars(e)}"><a href="episode.html?ep=${encodeURIComponent(e.slug)}"><b>${esc(e.title)}</b></a><div class="moments-chips">${list.map((at) => `<span class="moment-pair"><button type="button" class="moment-chip" data-cue="${esc(e.id)}" data-at="${at}">▶ ${fmtTime(at)}</button><button type="button" class="moment-del" data-unmoment="${esc(e.id)}" data-at="${at}" aria-label="הסרת הרגע ${fmtTime(at)}">✕</button></span>`).join('')}</div></div>`).join('')}</div>` : '';
+
     const when = new Intl.DateTimeFormat('he-IL', { dateStyle: 'medium', timeStyle: 'short' });
     $('me-history').innerHTML = heard.length ? `
 <div class="grid-head"><div><p class="kicker">שמעתם</p><h2>היסטוריית האזנה</h2></div><button type="button" class="chip" data-clear-history>ניקוי</button></div>
@@ -114,7 +127,7 @@
 ${heard.length > 30 ? `<p class="cue-hint">ועוד ${heard.length - 30} תוכניות.</p>` : ''}` : '';
 
     renderPrefs();
-    document.querySelectorAll('#me-resume, #me-queue, #me-later, #me-history').forEach((el) => { if (el.innerHTML.trim()) el.setAttribute('data-reveal', ''); });
+    document.querySelectorAll('#me-resume, #me-queue, #me-later, #me-loved, #me-moments, #me-history').forEach((el) => { if (el.innerHTML.trim()) el.setAttribute('data-reveal', ''); });
     U.reveal();
   }
 
@@ -146,6 +159,7 @@ ${heard.length > 30 ? `<p class="cue-hint">ועוד ${heard.length - 30} תוכ�
   if (S.sb.user) { await S.state.verified; renderProfile(false); }
   // כניסה, יציאה, או נתונים שהגיעו מהחשבון — הכול מצויר מחדש
   const offSession = S.onSession(renderAll);
+  S.likes.load().then(() => { if (!on.signal?.aborted) renderLists(); });
   const offData = S.me.onChange(() => { clearTimeout(renderLists.t); renderLists.t = setTimeout(() => { if (!on.signal?.aborted) renderLists(); }, 300); });
   on.signal?.addEventListener('abort', () => { offSession(); offData(); });
 
@@ -165,6 +179,8 @@ ${heard.length > 30 ? `<p class="cue-hint">ועוד ${heard.length - 30} תוכ�
     if (cue) { const ep = S.byId(cue.dataset.cue); if (!ep) return; const at = Number(cue.dataset.at) || 0; Pl.isCurrent(ep.id) ? (Pl.seek(at), Pl.play()) : Pl.load(ep, { at }); return; }
     if (e.target.closest('[data-queue-play]')) { const next = S.queue.shift(Pl.episode?.id); if (next) Pl.load(next, { at: 0 }); return; }
     if (e.target.closest('[data-queue-clear]')) { S.queue.clear(); U.notify('התור נוקה.', 'success'); return; }
+    const um = e.target.closest('[data-unmoment]');
+    if (um) { await S.moments.toggle(um.dataset.unmoment, Number(um.dataset.at)).catch(() => {}); U.notify('הרגע הוסר.', 'success'); return; }
     const un = e.target.closest('[data-unlater]');
     if (un) { S.later.toggle(un.dataset.unlater); U.notify('הוסר מרשימת "לאחר כך".', 'success'); return; }
     if (e.target.closest('[data-clear-history]')) { S.history.clear(); U.notify('ההיסטוריה נמחקה.', 'success'); return; }
