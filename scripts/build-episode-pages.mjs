@@ -32,6 +32,15 @@ const isoDate = (iso) => {
 };
 function fmtDate(iso) { const d = isoDate(iso); return d ? heDate.format(d) : ''; }
 function fmtWeekday(iso) { const d = isoDate(iso); return d ? heWeekday.format(d) : ''; }
+/* אורך בשעות ודקות — כמו fmtDuration ב־ui.js */
+function fmtDuration(sec) {
+  sec = Number(sec) || 0;
+  if (!sec) return '';
+  const total = Math.round(sec / 60), h = Math.floor(total / 60), m = total % 60;
+  if (!h) return m === 1 ? 'דקה אחת' : `${m} דקות`;
+  const hw = h === 1 ? 'שעה' : h === 2 ? 'שעתיים' : `${h} שעות`;
+  return m ? `${hw} ו${m === 1 ? 'דקה אחת' : `־${m} דקות`}` : hw;
+}
 /* תאריך עברי באותיות — כמו fmtHebDate ב־ui.js */
 function gematria(n) {
   n = Math.floor(n) % 1000;
@@ -102,8 +111,9 @@ function staticArticle(e, season) {
   ].filter(Boolean);
   const guests = (Array.isArray(e.guests) ? e.guests : []).map(String).filter(Boolean);
   const facts = [
-    fmtDate(e.date) ? `<time datetime="${esc(e.date)}">${esc(fmtWeekday(e.date))}, ${esc(fmtDate(e.date))}</time>` : '',
+    fmtDate(e.date) ? `<time datetime="${esc(e.date)}">${esc(fmtWeekday(e.date))}, <span class="ep-nw">${esc(fmtDate(e.date))}</span></time>` : '',
     fmtHebDate(e.date) ? `<span>${esc(fmtHebDate(e.date))}</span>` : '',
+    fmtDuration(e.duration) ? `<span>${esc(fmtDuration(e.duration))}</span>` : '',
     guests.length ? `<span>עם ${esc(guests.join(', '))}</span>` : '',
   ].filter(Boolean);
   const paras = paragraphs(e.description);
@@ -111,11 +121,11 @@ function staticArticle(e, season) {
         <header class="ep-hero ep-album">
           <div class="ep-art" aria-hidden="true">
             <div class="ep-disc"><div class="vinyl" data-num="" style="--label:${hue(e)}"><i></i></div></div>
-            <div class="ep-sleeve">${isHttps(e.cover) ? `<img src="${esc(e.cover)}" alt="">` : `<b>${num != null ? esc(num) : '♫'}</b><small>${esc(NAME)}</small>`}</div>
+            <div class="ep-sleeve${isHttps(e.cover) ? ' has-cover' : ''}">${isHttps(e.cover) ? `<img class="ep-sleeve-fill" src="${esc(e.cover)}" alt=""><img src="${esc(e.cover)}" alt="">` : `<b>${num != null ? esc(num) : '♫'}</b><small>${esc(NAME)}</small>`}</div>
           </div>
           <div class="ep-head">
             <p class="kicker">${kicker}</p>
-            <h1>${esc(e.title)}</h1>
+            <h1${String(e.title || '').length > 22 ? ' class="ep-title-long"' : ''}>${esc(e.title)}</h1>
             ${facts.length ? `<p class="ep-facts">${facts.join('<i aria-hidden="true">·</i>')}</p>` : ''}
           </div>
           <div class="ep-actionbar"></div>
@@ -164,6 +174,8 @@ function page(template, e, seasons) {
     `<meta name="twitter:description" content="${esc(description)}">`,
     `<meta name="twitter:image" content="${esc(image)}">`,
     `<script type="application/ld+json">${jsonScript(ld)}</script>`,
+    // בלי JavaScript הכפתורים לא יצוירו — בלי המקום הריק ששמור להם
+    '<noscript><style>#episode .ep-actionbar:empty{display:none}</style></noscript>',
   ].map((l) => `  ${l}`).join('\n');
 
   let html = template;

@@ -85,11 +85,12 @@
   const kicker = `<span class="ep-kick"><span>${ep.number != null ? `תוכנית ${ep.number}` : (ep.season === 'sets' ? 'סט' : 'תוכנית')}</span>${season ? `<span class="ep-kick-sep"> · </span><span>${esc(season.title)}</span>` : ''}</span>`;
   // שורת פרטים אחת: יום ותאריך · תאריך עברי · אורך — כל תאריך מופיע פעם אחת בלבד
   const facts = [
-    ep.date ? `<time datetime="${esc(ep.date)}">${esc(fmtWeekday(ep.date))}, ${esc(fmtDate(ep.date))}</time>` : '',
+    ep.date ? `<time datetime="${esc(ep.date)}">${esc(fmtWeekday(ep.date))}, <span class="ep-nw">${esc(fmtDate(ep.date))}</span></time>` : '',
     ep.date ? `<span>${esc(U.fmtHebDate(ep.date))}</span>` : '',
     ep.duration ? `<span>${esc(fmtDuration(ep.duration))}</span>` : '',
   ].filter(Boolean);
   const desc = descHtml(ep.description);
+  const sleeveNumber = `<b>${ep.number != null ? esc(ep.number) : '♫'}</b><small>ראש בראש</small>`;
   // פרטים קטנים ליד התיאור: עונה, נושאים, קישורים חיצוניים
   const details = [
     season ? `<div><dt>עונה</dt><dd><a href="archive.html?season=${encodeURIComponent(season.id)}">${esc(season.title)} <span aria-hidden="true">←</span></a></dd></div>` : '',
@@ -102,11 +103,11 @@
 <header class="ep-hero ep-album">
   <div class="ep-art" aria-hidden="true">
     <div class="ep-disc"><div class="vinyl" data-num="" style="--label:${U.hue(ep)}" data-vinyl="${esc(ep.id)}"><i></i></div></div>
-    <div class="ep-sleeve">${ep.cover ? `<img src="${esc(ep.cover)}" alt="">` : `<b>${ep.number != null ? esc(ep.number) : '♫'}</b><small>ראש בראש</small>`}</div>
+    <div class="ep-sleeve${ep.cover ? ' has-cover' : ''}">${ep.cover ? `<img class="ep-sleeve-fill" src="${esc(ep.cover)}" alt=""><img src="${esc(ep.cover)}" alt="">` : sleeveNumber}</div>
   </div>
   <div class="ep-head">
     <p class="kicker">${kicker}</p>
-    <h1>${esc(ep.title)}</h1>
+    <h1${ep.title.length > 22 ? ' class="ep-title-long"' : ''}>${esc(ep.title)}</h1>
     ${facts.length || ep.guests.length ? `<p class="ep-facts">${facts.join('<i aria-hidden="true">·</i>')}${ep.guests.length ? `${facts.length ? '<i aria-hidden="true">·</i>' : ''}<span>עם ${esc(ep.guests.join(', '))}</span>` : ''}</p>` : ''}
   </div>
   <div class="ep-actionbar">
@@ -139,11 +140,15 @@ ${survey ? `<div class="site-banner ep-survey${survey.open ? ' vote' : ''}"><spa
   // תיאור ארוך: מקופל לכמה שורות עם "קראו עוד". הטקסט המלא נשאר בדף (גם לגוגל).
   const D = A.querySelector('[data-desc]');
   const descText = D?.querySelector('.ep-desc-text');
-  const fitDesc = () => {   // נכנס בכל זאת — בלי קיפול. נמדד אחרי הציור, ושוב כשהגופנים נטענו
-    if (!D?.querySelector('[data-desc-toggle][aria-expanded="false"]') || descText.scrollHeight > descText.clientHeight + 4) return;
+  const fitDesc = () => {   // נכנס בכל זאת (או שנשארה שורה אחת) — בלי קיפול. נמדד אחרי הציור, ושוב כשהגופנים נטענו
+    if (!D?.querySelector('[data-desc-toggle][aria-expanded="false"]') || descText.scrollHeight > descText.clientHeight + 1.5 * parseFloat(getComputedStyle(descText).lineHeight)) return;
     D.classList.remove('is-collapsed'); D.querySelector('[data-desc-toggle]')?.remove();
   };
   if (D && longDesc) { requestAnimationFrame(fitDesc); document.fonts?.ready.then(fitDesc); }
+
+  A.querySelector('.ep-sleeve.has-cover img:not(.ep-sleeve-fill)')?.addEventListener('error', (e) => {
+    const sl = e.target.parentElement; sl.classList.remove('has-cover'); sl.innerHTML = sleeveNumber;
+  });
 
   // קודמת / הבאה
   const nb = S.neighbors(ep.id);
@@ -268,11 +273,12 @@ ${comments.length ? `<ul class="comment-list">${comments.map((c) => commentHtml(
     if (btn) {
       const on = mine && !Pl.paused;
       const p = !mine && S.positions.get(ep.id);
-      const label = on ? 'השהיה' : mine ? 'המשך האזנה' : p && p.t > 20 && (!p.dur || p.t < p.dur - 30) ? `המשך האזנה · ${fmtTime(p.t)}` : 'האזנה לתוכנית';
-      if (btn.dataset.label !== label) {   // נקרא בכל עדכון של הנגן — משנים את הכפתור רק כשהמצב השתנה
-        btn.dataset.label = label;
+      const at = !on && !mine && p && p.t > 20 && (!p.dur || p.t < p.dur - 30) ? fmtTime(p.t) : '';
+      const label = on ? 'השהיה' : mine || at ? 'המשך האזנה' : 'האזנה לתוכנית';
+      if (btn.dataset.label !== label + at) {   // נקרא בכל עדכון של הנגן — משנים את הכפתור רק כשהמצב השתנה
+        btn.dataset.label = label + at;
         btn.classList.toggle('is-playing', on);
-        btn.querySelector('.ep-play-label').textContent = label;
+        btn.querySelector('.ep-play-label').innerHTML = `${label}${at ? ` <span class="ep-play-time">· <bdi>${at}</bdi></span>` : ''}`;
       }
     }
     A.querySelector('[data-vinyl]')?.classList.toggle('live', mine);
