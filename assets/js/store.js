@@ -128,14 +128,15 @@
 
   /* ---------- Cloudflare: אותו D1 ואותו אימות Google של אתר הסקר ---------- */
 
-  /** מאיפה הגיע הביקור הזה (לסטטיסטיקה, בלי שום פרט מזהה): וואטסאפ, גוגל, פייסבוק, ישיר או אחר */
+  /** מאיפה הגיע הביקור הזה (לסטטיסטיקה, בלי שום פרט מזהה): מייל, וואטסאפ, גוגל, פייסבוק, ישיר או אחר */
   function visitSource() {
     try {
       const saved = sessionStorage.getItem('rosh:ref'); if (saved) return saved;
       const utm = new URLSearchParams(location.search).get('utm_source') || '';
       const ref = document.referrer ? new URL(document.referrer) : null;
       const host = ref?.hostname || '';
-      const src = /whatsapp/i.test(utm) || /whatsapp|wa\.me/.test(host) ? 'whatsapp'
+      const src = /^(e-?mail|newsletter)$/i.test(utm) ? 'email'
+        : /whatsapp/i.test(utm) || /whatsapp|wa\.me/.test(host) ? 'whatsapp'
         : /google\./.test(host) || /google/i.test(utm) ? 'google'
         : /facebook|fb\.|instagram/.test(host) || /facebook/i.test(utm) ? 'facebook'
         : !ref ? 'direct'
@@ -206,24 +207,28 @@
       async toSurvey() { const { code } = await sb.handoff.create(); return `${new URL(sb.cfg.apiBase).origin}/api/program/handoff/${code}`; },
     },
     surveys: () => sb.call('/api/program/surveys'),
+    /** טוען את הספרייה של Google (כפתור הכניסה, והרשאות כמו יצירת טיוטות בג'ימייל) */
+    async loadGoogle() {
+      if (window.google?.accounts?.id) return window.google;
+      await new Promise((resolve, reject) => {
+        const failed = () => reject(new Error('כפתור Google לא נטען. בדקו את החיבור ונסו שוב.'));
+        const existing = document.querySelector('script[data-gsi]');
+        if (existing) { existing.addEventListener('load', resolve); existing.addEventListener('error', failed); if (window.google?.accounts?.id) resolve(); return; }
+        const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.defer = true; sc.dataset.gsi = '1';
+        // סקריפט שנכשל יוצא מהדף: הניסיון הבא (למשל אחרי מעבר לדף אחר) טוען אותו מחדש,
+        // במקום לחכות לאירוע טעינה שכבר עבר ולהשאיר את הכפתור ריק
+        sc.onload = resolve; sc.onerror = () => { sc.remove(); failed(); };
+        document.head.appendChild(sc);
+      });
+      if (!window.google?.accounts?.id) throw new Error('כפתור Google לא נטען.');
+      return window.google;
+    },
     /* כניסה ישירה עם Google מתוך האתר (בלי דף ביניים): כפתור Google נטען
        לתוך אלמנט, והאישור נשלח ל־Worker שמחזיר סשן. */
     async google(el, { onDone, onError } = {}) {
       const clientId = this.cfg?.googleClientId;
       if (!clientId || !el) throw new Error('כניסה עם Google אינה מוגדרת באתר הזה.');
-      if (!window.google?.accounts?.id) {
-        await new Promise((resolve, reject) => {
-          const failed = () => reject(new Error('כפתור Google לא נטען. בדקו את החיבור ונסו שוב.'));
-          const existing = document.querySelector('script[data-gsi]');
-          if (existing) { existing.addEventListener('load', resolve); existing.addEventListener('error', failed); if (window.google?.accounts?.id) resolve(); return; }
-          const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.defer = true; sc.dataset.gsi = '1';
-          // סקריפט שנכשל יוצא מהדף: הניסיון הבא (למשל אחרי מעבר לדף אחר) טוען אותו מחדש,
-          // במקום לחכות לאירוע טעינה שכבר עבר ולהשאיר את הכפתור ריק
-          sc.onload = resolve; sc.onerror = () => { sc.remove(); failed(); };
-          document.head.appendChild(sc);
-        });
-      }
-      if (!window.google?.accounts?.id) throw new Error('כפתור Google לא נטען.');
+      await this.loadGoogle();
       window.google.accounts.id.initialize({
         client_id: clientId, ux_mode: 'popup', auto_select: false, itp_support: true,
         callback: async ({ credential }) => {
@@ -318,6 +323,8 @@
       join: () => sb.call('/api/program/subscribe', { method: 'POST' }),
       leave: () => sb.call('/api/program/subscribe', { method: 'DELETE' }),
       count: () => sb.call('/api/program/subscribers/count'),
+      /** כל הכתובות הפעילות ברשימה (למנהלים; לטיוטת המייל על תוכנית חדשה) */
+      list: () => sb.call('/api/program/subscribers'),
     },
     /** מרענן את פרטי המשתמש מהשרת; מחזיר true רק למנהל. סשן שפג נמחק. */
     async isAdmin() {
@@ -381,7 +388,7 @@
       בכלל — כדי שהטעינה הראשונה תהיה מיידית, בלי מעבר לאתר הסקר וחזרה. */
   async function needsSso(params) {
     if (!sb.configured || sb.session?.token || state.embed || params.has('preview')) return false;
-    if (!/(?:me|admin)\.html$/.test(location.pathname)) return false;
+    if (!/(?:me|admin|mail)\.html$/.test(location.pathname)) return false;
     let here = false; try { here = location.origin === new URL(state.site.url).origin || !!localStorage.getItem('rosh:sso-test'); } catch { /* */ }
     if (!here || /bot|crawl|spider|preview/i.test(navigator.userAgent || '')) return false;
     const last = Number(read(LS.sso, 0)) || 0;

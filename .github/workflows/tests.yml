@@ -19,6 +19,8 @@ jobs:
         run: for f in assets/js/*.js sw.js; do node --check "$f"; done
       - name: Catalog, stream URLs and uploads
         run: node tests/catalog.cjs
+      - name: Newsletter email and Gmail draft encoding
+        run: node tests/newsletter.cjs
       - name: Install a browser for the page tests
         run: |
           npm i --no-save --no-package-lock playwright@1.56.1 http-server@14.1.1
@@ -29,3 +31,4 @@ jobs:
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:4180/index.html >/dev/null && break; sleep 1; done
           node tests/browser-smoke.mjs
           node tests/admin-smoke.mjs
+          node tests/mail-smoke.mjs
