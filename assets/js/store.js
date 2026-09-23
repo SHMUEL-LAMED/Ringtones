@@ -212,10 +212,13 @@
       if (!clientId || !el) throw new Error('כניסה עם Google אינה מוגדרת באתר הזה.');
       if (!window.google?.accounts?.id) {
         await new Promise((resolve, reject) => {
+          const failed = () => reject(new Error('כפתור Google לא נטען. בדקו את החיבור ונסו שוב.'));
           const existing = document.querySelector('script[data-gsi]');
-          if (existing) { existing.addEventListener('load', resolve); existing.addEventListener('error', reject); if (window.google?.accounts?.id) resolve(); return; }
+          if (existing) { existing.addEventListener('load', resolve); existing.addEventListener('error', failed); if (window.google?.accounts?.id) resolve(); return; }
           const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.defer = true; sc.dataset.gsi = '1';
-          sc.onload = resolve; sc.onerror = () => reject(new Error('כפתור Google לא נטען. בדקו את החיבור ונסו שוב.'));
+          // סקריפט שנכשל יוצא מהדף: הניסיון הבא (למשל אחרי מעבר לדף אחר) טוען אותו מחדש,
+          // במקום לחכות לאירוע טעינה שכבר עבר ולהשאיר את הכפתור ריק
+          sc.onload = resolve; sc.onerror = () => { sc.remove(); failed(); };
           document.head.appendChild(sc);
         });
       }
@@ -224,12 +227,16 @@
         client_id: clientId, ux_mode: 'popup', auto_select: false, itp_support: true,
         callback: async ({ credential }) => {
           try {
-            const r = await fetch(this.base('/api/program/auth/google'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential }) });
+            let r;
+            try { r = await fetch(this.base('/api/program/auth/google'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ credential }) }); }
+            catch { throw new Error('אין חיבור לשרת כרגע. נסו שוב.'); }
             const j = await r.json().catch(() => ({}));
             if (!r.ok || !j.token) throw new Error(j.error || 'ההתחברות לא הצליחה.');
             this.session = { token: j.token, user: { ...j.user, isAdmin: !!j.user?.isAdmin } };
             // כניסה אחת: מחברים מיד גם את אתר הסקר, והדף חוזר לכאן
             await me.load(); await me.save(true);
+            // הטוקן נדחה בינתיים והסשן נמחק: לא מודיעים "התחברתם" על כניסה שלא נשמרה
+            if (!this.session?.token) throw new Error('ההתחברות לא נשמרה. נסו שוב בעוד רגע.');
             if (await this.shareLogin()) return;
             await signedIn();
             onDone?.(this.user);
@@ -485,6 +492,12 @@
     sb.signOut(saved);
     me.reset(); likes.mine = new Set(); sessionChanged();
     try { await saved; } catch { /* */ }
+  }
+  /** השרת דחה את הטוקן של המכשיר הזה (401): הסשן נמחק כאן בלבד. זו לא בקשה של המשתמש
+      להתנתק, ולכן לא שולחים /logout — שמנתק את החשבון מכל המכשירים ומאתר הסקר. */
+  function forgetSession() {
+    sb.session = null;
+    me.reset(); likes.mine = new Set(); sessionChanged();
   }
 
   /* ---------- שאילתות ---------- */
@@ -827,7 +840,7 @@
   window.RoshStore = {
     state, ready, load, sb, prefs, positions, last, later, history, queue, listening, likes, moments, me, admin,
     episodes, seasons, bySlug, byId, latest, featured, neighbors, searchEpisodes, suggest,
-    bannerActive, scheduled, nowIL, todayIL, onSession, signedIn, signOut,
+    bannerActive, scheduled, nowIL, todayIL, onSession, signedIn, signOut, forgetSession,
     get site() { return state.site; },
     get data() { return state.data; },
     get settings() { return state.data.settings || { banner: null, updates: [] }; },

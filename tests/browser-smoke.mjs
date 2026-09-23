@@ -205,6 +205,44 @@ for (const mode of ['slow', 'down']) {
   await sctx.close();
 }
 
+/* ---------- תקלה בשרת אינה התנתקות ----------
+   כשמסד הסשנים לא עונה השרת עונה 503. הסשן במכשיר נשאר והכותרת עדיין מציגה את המאזין
+   כמחובר. רק 401 (הטוקן נדחה) מוחק את הסשן — וגם אז מקומית בלבד, בלי /logout שמנתק
+   את החשבון מכל המכשירים. */
+{
+  const seed = { token: 'test-token', user: { email: 'user@example.com', name: 'מאזין', isAdmin: false } };
+  const api = (status, body) => ({ status, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type' }, body: JSON.stringify(body) });
+  const mock = (answers, calls) => (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname.replace(/^.*\/api\/program\//, '');
+    if (req.method() === 'OPTIONS') return route.fulfill(api(204, {}));
+    calls.push(`${req.method()} ${path}`);
+    const answer = answers[path];
+    return answer ? route.fulfill(api(answer.status, answer.body)) : route.abort();
+  };
+  const open = async (answers, url) => {
+    const ctx2 = await browser.newContext({ locale: 'he-IL', viewport: { width: 1200, height: 900 }, ignoreHTTPSErrors: !!process.env.HTTPS_PROXY });
+    const p = await ctx2.newPage();
+    const calls = [];
+    await p.route('**/api/program/**', mock(answers, calls));
+    await p.goto(`${BASE}/index.html`, { waitUntil: 'domcontentloaded' });
+    await p.evaluate((s) => localStorage.setItem('rosh:cf:session', JSON.stringify(s)), seed);
+    await p.goto(`${BASE}/${url}`, { waitUntil: 'domcontentloaded' });
+    await p.waitForSelector('.site-nav .me-link');
+    await p.waitForTimeout(1500);
+    const session = await p.evaluate(() => localStorage.getItem('rosh:cf:session'));
+    const signed = (await p.locator('.site-nav .me-link.signed').count()) === 1;
+    await ctx2.close();
+    return { calls, session, signed };
+  };
+  const down = { status: 503, body: { error: 'השרת לא זמין כרגע.', unavailable: true } };
+  const outage = await open({ me: down, userdata: down, subscribe: down, likes: down }, 'me.html');
+  check(!!outage.session && outage.signed, `שרת בתקלה (503): הסשן במכשיר נשמר והכותרת עדיין "מחובר"${outage.signed ? '' : ` (calls: ${outage.calls.join(', ')})`}`);
+  const rejected = await open({ me: { status: 200, body: { user: seed.user } }, userdata: { status: 200, body: { data: null, updatedAt: null } }, subscribe: { status: 401, body: { error: 'צריך להתחבר.' } }, likes: { status: 200, body: { counts: {}, mine: [] } } }, 'index.html');
+  check(!rejected.session, 'טוקן שנדחה (401): הסשן במכשיר נמחק');
+  check(!rejected.calls.some((c) => /logout/.test(c)), `טוקן שנדחה: בלי /logout שמנתק את החשבון מכל המכשירים (calls: ${rejected.calls.join(', ')})`);
+}
+
 /* ---------- סיכום ---------- */
 // ה־Worker מאשר CORS רק ל־origin של האתר הפרוס, ולכן מול שרת מקומי הקטלוג נופל
 // לעותק שבמאגר (זה מה שהבדיקה בודקת) — שגיאת ה־CORS הזו אינה תקלה באתר.

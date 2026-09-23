@@ -599,7 +599,9 @@
     el.innerHTML = '<span class="cue-hint">בודקים…</span>';
     let subscribed = false;
     try { subscribed = (await S.sb.subscribe.status()).subscribed; }
-    catch (err) { if (err.status === 401) { S.signOut(); return mountSubscribe(el); } el.innerHTML = `<span class="cue-hint">${esc(err.message)}</span>`; return; }
+    // 401 = הטוקן של המכשיר הזה כבר לא תקף. מוחקים אותו כאן בלבד — לא S.signOut(), שמנתק את
+    // החשבון מכל המכשירים ומאתר הסקר בגלל בדיקה שקטה ברקע
+    catch (err) { if (err.status === 401) { S.forgetSession(); return mountSubscribe(el); } el.innerHTML = `<span class="cue-hint">${esc(err.message)}</span>`; return; }
     el.innerHTML = subscribed
       ? `<div class="subscribe-google"><span class="subscribe-state">✓ אתם ברשימת התפוצה (${esc(u.email)})</span><button type="button" class="btn ghost small" data-unsubscribe>הסרה מהרשימה</button></div>`
       : `<div class="subscribe-google"><button type="button" class="continue btn xl primary" data-subscribe>הצטרפות לתפוצה <span>←</span></button><span class="cue-hint" style="font-size:12px;color:var(--muted);font-weight:700">הכתובת: ${esc(u.email)}. הלחיצה היא ההסכמה — בלי דואר מיותר.</span></div>`;
