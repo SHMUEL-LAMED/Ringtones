@@ -1,0 +1,84 @@
+/* טיוטת המייל למאזינים: העורך (משמאל התצוגה המקדימה, מימין ההגדרות). בחלון בניהול ובדף mail.html.
+   נשען על הטוקנים של rosh.css, ולכן עובד במצב כהה ובמצב בהיר. */
+
+dialog.sheet.mail-sheet { width: min(1220px, calc(100% - 32px)); }
+.mail-page-card { padding: 20px 22px; border-radius: var(--radius-17); }
+.mail-lead { max-width: 640px; margin: 0; }
+
+.mail-composer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 22px; align-items: start; }
+.mc-form { display: grid; gap: 12px; min-width: 0; }
+.mc-sec { display: grid; gap: 12px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-13); background: rgb(var(--fg-rgb) / .03); }
+.mc-h { margin: 0; font-size: 12.5px; font-weight: 900; letter-spacing: .06em; color: var(--gold-ink); }
+.mc-sec .field textarea { min-height: 70px; }
+.mc-sec .form-grid { gap: 10px; }
+.mc-desc textarea { min-height: 150px; }
+.mc-desc-note { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.mc-desc-note .link-btn { font-size: 12px; }
+
+.mc-warn { display: grid; gap: 6px; }
+.mc-warn:empty { display: none; }
+.mc-warn p { margin: 0; padding: 8px 12px; border-radius: 10px; border: 1px solid rgb(var(--gold-rgb) / .4); background: rgb(var(--gold-rgb) / .1); color: var(--gold-ink); font-size: 13px; font-weight: 800; line-height: 1.55; }
+
+/* סגנונות */
+.mc-styles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.mc-style { display: grid; gap: 5px; padding: 10px; border: 1px solid var(--border-strong); border-radius: 14px; background: transparent; color: inherit; text-align: start; cursor: pointer; transition: border-color .18s, background .18s, box-shadow .18s; }
+.mc-style:hover { background: rgb(var(--fg-rgb) / .05); }
+.mc-style[aria-checked="true"] { border-color: var(--gold); background: var(--gold-selected); box-shadow: var(--ring-selected); }
+.mc-style b { font-size: 13.5px; font-weight: 900; color: var(--text-strong); }
+.mc-style small { font-size: 11.5px; font-weight: 700; color: var(--muted); line-height: 1.4; }
+.mc-swatch { display: flex; height: 26px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+.mc-swatch i { flex: 1; }
+.mc-swatch i:last-child { flex: .6; }
+.mc-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.mc-color input[type="color"] { width: 64px; min-height: 40px; padding: 3px; cursor: pointer; }
+.mc-sec .segmented { justify-self: start; flex-wrap: wrap; }
+.mc-sec .segmented button:disabled { opacity: .4; cursor: not-allowed; }
+
+.mc-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+.mc-checks .check.off { opacity: .55; cursor: default; }
+.mc-checks .check small { font-size: 11px; color: var(--muted); }
+
+/* הנמענים */
+.mc-list summary { cursor: pointer; font-size: 13px; font-weight: 800; color: var(--gold-ink); }
+.mc-list textarea { width: 100%; margin-top: 8px; min-height: 120px; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-10); background: var(--field-bg); color: var(--text-strong); font: 12.5px/1.6 var(--mono, monospace); resize: vertical; }
+.mc-list textarea:focus { outline: none; border-color: var(--gold); box-shadow: var(--ring-selected); }
+[data-m-count] .problems { display: block; margin: 0; }
+
+/* התצוגה המקדימה */
+.mc-preview { position: sticky; top: 8px; display: grid; gap: 10px; min-width: 0; }
+.mc-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.mc-preview-head .kicker { margin: 0; }
+.mc-inbox { display: grid; gap: 2px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 14px; background: rgb(var(--fg-rgb) / .04); font-size: 13px; min-width: 0; }
+.mc-inbox > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-inbox b { color: var(--text-strong); font-weight: 900; }
+.mc-inbox span { color: var(--text-strong); font-weight: 700; }
+.mc-inbox small { color: var(--muted); font-weight: 600; }
+.mc-frame-wrap { display: grid; justify-items: center; max-height: 74vh; overflow: auto; border: 1px solid var(--border-strong); border-radius: 18px; background: repeating-conic-gradient(rgb(var(--fg-rgb) / .05) 0 25%, transparent 0 50%) 0 0 / 18px 18px; scrollbar-width: thin; }
+.mc-frame-wrap iframe { display: block; width: 100%; height: 900px; border: 0; background: #fff; transition: width .25s var(--ease, ease); }
+.mc-frame-wrap.phone { padding: 14px 0; }
+.mc-frame-wrap.phone iframe { width: 390px; max-width: 100%; border-radius: 22px; box-shadow: 0 0 0 8px #111, 0 18px 40px rgba(0, 0, 0, .35); }
+
+/* הכפתורים והתוצאה — צמודים לתחתית החלון */
+.mc-foot { grid-column: 1 / -1; position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 -22px -22px; padding: 14px 22px 18px; border-top: 1px solid var(--divider); background: var(--panel-solid); }
+.mail-page-card .mc-foot { margin: 0 -22px -20px; border-radius: 0 0 var(--radius-17) var(--radius-17); }
+.mc-result { flex-basis: 100%; }
+.mc-result:empty { display: none; }
+.mc-result .problems { margin: 0; }
+.mc-done { display: grid; gap: 6px; padding: 12px 14px; border-radius: var(--radius-13); border: 1px solid var(--success-border); background: var(--success-bg); }
+.mc-done b { color: var(--success); font-size: 14.5px; }
+.mc-done span { font-size: 13px; font-weight: 700; color: var(--text-2); }
+.mc-done-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+
+/* בניהול: המייל אחרי הפרסום */
+.mail-check { margin-inline-start: 6px; }
+
+@media (max-width: 980px) {
+  .mail-composer { grid-template-columns: 1fr; }
+  .mc-preview { position: static; }
+  .mc-frame-wrap { max-height: none; }
+}
+@media (max-width: 640px) {
+  .mc-styles, .mc-checks { grid-template-columns: 1fr; }
+  .mc-foot .btn { flex: 1 1 auto; justify-content: center; }
+  .mc-foot { margin: 0 -22px -22px; }
+}

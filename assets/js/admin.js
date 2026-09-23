@@ -64,6 +64,7 @@
     surveys: null,         // הסקרים באתר הסקר, לקישור תוכנית
     base: null,            // הגרסה שבאתר כשהתחילו לערוך את הטיוטה — להגנה מדריסה בין מנהלים
     notify: true,          // לשלוח התראה למאזינים על תוכניות חדשות בפרסום
+    mailAfter: S.prefs.get('mailAfterPublish', true),   // לפתוח טיוטת מייל לרשימת התפוצה אחרי פרסום של תוכנית חדשה
     pushCount: null, epStats: new Map(), statsEp: '',
     ai: new Map(),         // מצב התמלול והסיכום לכל תוכנית
   };
@@ -552,6 +553,7 @@
       <button type="button" class="btn small editor-back" data-op="back-to-list">← לרשימה</button>
       <a class="btn small" href="episode.html?ep=${encodeURIComponent(e.slug)}" target="_blank" rel="noopener">צפייה באתר</a>
       <button type="button" class="btn small" data-op="share">טקסט לוואטסאפ</button>
+      ${CLOUD ? '<button type="button" class="btn small" data-op="mail">✉ מייל למאזינים</button>' : ''}
       <button type="button" class="btn small" data-op="dup">שכפול</button>
       <button type="button" class="btn small" data-op="history" ${CLOUD ? '' : 'disabled'}>גרסאות קודמות</button>
       <button type="button" class="btn small danger" data-op="del">מחיקה</button>
@@ -1163,7 +1165,7 @@ ${st.transcript != null ? `<details class="ai-transcript" open><summary>התמל
     if (A.tab === 'listeners') renderListeners();
   }
   /* ---------- סטטיסטיקה מעמיקה: מאיפה מגיעים, מתי מאזינים, מה אוהבים, ועד איפה שומעים ---------- */
-  const SOURCE_NAMES = { whatsapp: 'וואטסאפ', google: 'גוגל', facebook: 'פייסבוק', direct: 'ישיר (קישור או כתובת)', internal: 'מתוך האתר', other: 'אחר' };
+  const SOURCE_NAMES = { email: 'מייל (רשימת התפוצה)', whatsapp: 'וואטסאפ', google: 'גוגל', facebook: 'פייסבוק', direct: 'ישיר (קישור או כתובת)', internal: 'מתוך האתר', other: 'אחר' };
   function hbars(rows) {
     const max = Math.max(1, ...rows.map((r) => r.n));
     return `<div class="hbars">${rows.map((r) => `<div class="hbar"><span>${esc(r.label)}</span><i style="--w:${Math.round(r.n / max * 100)}%"></i><b>${n2(r.n)}</b></div>`).join('')}</div>`;
@@ -1378,6 +1380,7 @@ ${pushCard()}
       <button type="button" class="btn xl primary" data-op="publish" ${canPublish ? '' : 'disabled'}>${CLOUD ? 'פרסום לאתר' : 'הורדת הקובץ לפרסום'} <span>←</span></button>
       ${busy && ch?.any ? '<span class="cue-hint"><span class="notice-spinner" aria-hidden="true"></span> ממתינים לסיום העבודה</span>' : ''}
       ${CLOUD && fresh.length ? `<label class="check notify-check"><input type="checkbox" id="pub-notify" ${A.notify ? 'checked' : ''}> לשלוח התראה לטלפון של המאזינים על ${fresh.length === 1 ? 'התוכנית שעולה עכשיו לאתר' : `${fresh.length} התוכניות שעולות עכשיו לאתר`}</label>` : ''}
+      ${CLOUD && fresh.length ? `<label class="check mail-check"><input type="checkbox" id="pub-mail" ${A.mailAfter ? 'checked' : ''}> ואחרי הפרסום — להכין טיוטת מייל לרשימת התפוצה בג'ימייל</label>` : ''}
       ${ch?.any ? '<button type="button" class="btn" data-op="discard">ביטול כל השינויים</button>' : ''}
       ${!A.origin ? '<button type="button" class="btn" data-op="reload">בדיקה חוזרת</button>' : ''}
     </div>
@@ -1505,6 +1508,7 @@ ${proofCard()}
         if (A.conflict) { showDraftConflict(); throw new Error('קודם בחרו מה לעשות עם הטיוטה החדשה שבשרת.'); }
         // מפרסמים תמונת מצב: מה שמשתנה בזמן הפרסום נשאר בטיוטה לפרסום הבא
         const snap = clone(A.data);
+        const freshIds = newlyPublic().map((e) => e.id);   // לטיוטת המייל אחרי הפרסום
         const removedIds = A.origin ? A.origin.episodes.filter((o) => !snap.episodes.some((e) => e.id === o.id)).map((o) => o.id) : [];
         const r = await S.sb.push(snap, { removedIds, baseVersion: A.base ?? null, force, notify: A.notify });
         A.syncGen++; clearTimeout(A.syncTimer); A.syncTimer = null; A.syncState = '';
@@ -1516,6 +1520,9 @@ ${proofCard()}
         stop(); U.notify('פורסם! האתר מציג עכשיו את הגרסה החדשה.', 'success');
         paintStatus(); if (A.tab === 'publish') render();
         if (A.notify && r.notified) drainPush().then((n) => n && U.notify(n === 1 ? 'נשלחה התראה למכשיר אחד.' : `נשלחה התראה ל־${n} מכשירים.`, 'success'));
+        // תוכנית חדשה עלתה: טיוטת מייל לרשימת התפוצה (החדשה ביותר מביניהן; אפשר להחליף בחלון)
+        const fresh = A.data.episodes.filter((e) => freshIds.includes(e.id)).sort(byDate);
+        if (A.mailAfter && fresh.length) openMail(fresh[0].id);
       } finally { A.publishing = false; if (A.unsynced) scheduleSync(); }
     };
     try { await go(false); }
@@ -1528,6 +1535,15 @@ ${proofCard()}
       } else U.notify(`הפרסום לא הצליח: ${err.message}`, 'error');
     }
     finally { if (btn) btn.disabled = false; }
+  }
+  /** טיוטת מייל לרשימת התפוצה על תוכנית (החלון של mail-composer.js). "באתר" = כמו שמפורסם עכשיו. */
+  function openMail(id) {
+    window.RoshMailComposer.open({
+      episodes: () => A.data.episodes,
+      episodeId: id,
+      isLive: (e) => { const o = A.origin?.episodes.find((x) => x.id === e.id); return !!o && o.visible && !S.scheduled(o); },
+      contacts: () => A.data.settings?.contacts || {},
+    });
   }
   /** ההתראות נשלחות במנות קטנות (מגבלת השרת); הדף ממשיך לשלוח עד שכולן יצאו */
   async function drainPush(sent = 0) {
@@ -1673,6 +1689,7 @@ ${proofCard()}
     const t = ev.target;
     if (t.id === 'ep-filter') { A.filter = t.value; renderList(); return; }
     if (t.id === 'pub-notify') { A.notify = t.checked; return; }
+    if (t.id === 'pub-mail') { A.mailAfter = t.checked; S.prefs.set('mailAfterPublish', t.checked); return; }
     if (t.id === 'stats-ep') { loadEpStats(t.value); return; }
     if (t.dataset.op === 'bulk-season') {
       const v = t.value; if (!v) return;
@@ -1779,6 +1796,7 @@ ${proofCard()}
       case 'unschedule': if (e) { e.publishAt = ''; touch(); renderEditor(); renderList(); } break;
       case 'dup': if (e) duplicate(e); break;
       case 'del': if (e && confirm(`למחוק את "${label(e)}"?`)) removeMany([e.id]); break;
+      case 'mail': if (e) openMail(e.id); break;
       case 'share': if (e) { (await U.copy(shareText(e))) ? U.notify('הטקסט הועתק — הדביקו בוואטסאפ.', 'success') : U.notify('ההעתקה לא הצליחה.', 'error'); } break;
       case 'history': if (e) openHistory(e); break;
       case 'cover-clear': if (e) { e.cover = ''; e.thumb = ''; touch(); renderEditor(); } break;
