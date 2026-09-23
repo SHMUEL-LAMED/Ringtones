@@ -2,17 +2,17 @@
    נתוני התוכניות נטענים תמיד מהרשת קודם (ונופלים למטמון אם אין), וההקלטות
    עצמן לא נשמרות. ניווט שנכשל ואין לו עותק שמור מקבל את offline.html.
    הגופנים של Google נשמרים במטמון נפרד (שורד החלפת גרסה) כדי שהאתר ייראה נכון גם בלי רשת. */
-const VERSION = 'rosh-v14-mail';
+const VERSION = 'rosh-v15-mail';
 const FONTS = 'rosh-fonts-v1';
 const OFFLINE = './offline.html';
 const SHELL = [
   './', './index.html', './archive.html', './episode.html', './me.html', './updates.html', './negishut.html', OFFLINE,
-  './assets/css/rosh.css', './assets/css/features.css', './assets/js/theme.js', './assets/js/app-update.js', './assets/js/offline.js', './assets/js/ui.js', './assets/js/store.js', './assets/js/player.js', './assets/js/router.js',
+  './assets/css/rosh.css', './assets/css/features.css', './assets/js/theme.js', './assets/js/app-update.js', './assets/js/offline.js', './assets/js/ui.js', './assets/js/store.js', './assets/js/player.js', './assets/js/extras.js', './assets/js/router.js',
   './assets/js/home.js', './assets/js/archive.js', './assets/js/episode.js', './assets/js/me.js', './assets/js/updates.js', './assets/js/negishut.js',
   './assets/img/medallion.svg', './assets/img/icon-192.png', './assets/img/icon-512.png', './assets/img/icon-maskable-512.png',
   './assets/img/apple-touch-icon.png', './manifest.webmanifest',
 ];
-const FONT_CSS = 'https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800;900&family=Karantina:wght@300;400;700&display=swap';
+const FONT_CSS = 'https://fonts.googleapis.com/css2?family=Heebo:wght@400;600;700;800;900&family=Karantina:wght@400;700&display=swap';
 
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {

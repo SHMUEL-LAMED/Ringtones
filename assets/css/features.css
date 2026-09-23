@@ -141,3 +141,60 @@
 .hot-list { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
 .title-ideas { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .whatsapp-text { white-space: pre-line; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); margin-top: 8px; }
+
+/* ---------- מצב חג (extras.js): ברכה מתחת לשם, גוון חגיגי, וקישוט שנופל פעם אחת ---------- */
+.brand small.holiday-line { display: flex; align-items: center; gap: 6px; letter-spacing: .02em; font-size: 12px; font-weight: 800; color: hsl(var(--holiday-hue, 42) 85% 62%); }
+:root[data-theme="light"] .brand small.holiday-line { color: hsl(var(--holiday-hue, 42) 70% 34%); }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .brand small.holiday-line { color: hsl(var(--holiday-hue, 42) 70% 34%); } }
+.holiday-line .menorah { flex: none; color: currentColor; }
+.holiday-line .menorah path[fill="#ffb640"] { filter: drop-shadow(0 0 2px #ffb640); animation: flicker 1.6s ease-in-out infinite alternate; transform-box: fill-box; transform-origin: 50% 100%; }
+.holiday-icon { font-size: 14px; line-height: 1; }
+body.holiday .logo-ring { box-shadow: 0 0 0 2px hsl(var(--holiday-hue) 90% 60% / .55), 0 0 26px hsl(var(--holiday-hue) 90% 60% / .45); }
+body.holiday-yom-kippur .logo-ring { box-shadow: 0 0 0 2px rgba(255, 255, 255, .5), 0 0 22px rgba(255, 255, 255, .35); }
+@keyframes flicker { from { transform: scaleY(.85); opacity: .85; } to { transform: scaleY(1.1); opacity: 1; } }
+.holiday-rain { position: fixed; inset: 0; z-index: 60; pointer-events: none; overflow: hidden; }
+.holiday-rain i { position: absolute; top: -8vh; left: var(--x); font-style: normal; font-size: calc(22px * var(--s)); animation: holiday-fall var(--t) cubic-bezier(.3, .1, .6, 1) var(--d) forwards; opacity: 0; }
+@keyframes holiday-fall { 0% { transform: translateY(0) rotate(0); opacity: 0; } 10% { opacity: .95; } 85% { opacity: .9; } 100% { transform: translateY(112vh) rotate(var(--r)); opacity: 0; } }
+
+/* ---------- עטיפה חיה: התוכנית שמתנגנת נושמת ופועמת (הכלל עצמו נכתב ב־extras.js) ---------- */
+@keyframes cover-beat {
+  0%, 100% { transform: scale(1); filter: brightness(1) saturate(1); box-shadow: 0 0 0 0 var(--glow, transparent); }
+  14% { transform: scale(1.035); filter: brightness(1.12) saturate(1.15); box-shadow: 0 0 26px 2px var(--glow, transparent); }
+  38% { transform: scale(1.012); filter: brightness(1.04); }
+}
+.ep-card .ep-cover, .ep-card .cover-fallback, .featured-card .cover { transform-origin: 50% 50%; will-change: auto; }
+
+/* ---------- נגן צף (חלון Picture-in-Picture) ---------- */
+.pip-body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text); font-family: var(--sans, Heebo, Arial, sans-serif); overflow: hidden; }
+.pip { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 14px; align-items: center; width: 100%; padding: 14px; box-sizing: border-box; }
+.pip-art { width: 110px; height: 110px; border-radius: 16px; overflow: hidden; display: grid; place-items: center; background: linear-gradient(135deg, hsl(var(--h, 268) 70% 45%), hsl(calc(var(--h, 268) + 60) 70% 25%)); color: #fff; font-family: var(--display, Impact); font-size: 44px; box-shadow: 0 10px 30px rgba(0, 0, 0, .45); }
+.pip-body.is-playing .pip-art { animation: cover-beat .6s ease-in-out infinite; --glow: hsl(var(--h, 42) 90% 62% / .5); }
+.pip-art img { width: 100%; height: 100%; object-fit: cover; }
+.pip-main { display: grid; gap: 6px; min-width: 0; }
+.pip-title { font-size: 15px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-strong); }
+.pip-bar { height: 6px; border-radius: 99px; background: rgb(var(--fg-rgb, 255 255 255) / .15); cursor: pointer; overflow: hidden; }
+.pip-bar i { display: block; height: 100%; background: var(--gold, #f0c65a); border-radius: inherit; }
+.pip-time { font-size: 11.5px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pip-controls { display: flex; align-items: center; gap: 6px; }
+.pip-controls .dock-play { width: 46px; height: 46px; font-size: 16px; font-weight: 900; color: #15110a; }
+body.pip-open .dock [data-pip] { color: var(--gold); }
+
+/* ---------- טעינה מעוצבת: שלדים מנצנצים עד שהתוכן מגיע ---------- */
+.skel-block, .skel-line, .skel-tile .skel-img { position: relative; overflow: hidden; background: rgb(var(--fg-rgb) / .07); border-radius: 12px; }
+.skel-block::after, .skel-line::after, .skel-tile .skel-img::after { content: ""; position: absolute; inset: 0; transform: translateX(100%); background: linear-gradient(90deg, transparent, rgb(var(--fg-rgb) / .08), transparent); animation: skel-shine 1.4s ease-in-out infinite; }
+@keyframes skel-shine { to { transform: translateX(-100%); } }
+.skel-line { height: 14px; border-radius: 99px; }
+.skel-line.big { height: 38px; width: 70%; border-radius: 14px; }
+.skel-line.short { width: 45%; }
+.skel-featured { display: grid; grid-template-columns: minmax(160px, 300px) minmax(0, 1fr); gap: 24px; align-items: center; padding: clamp(18px, 3vw, 30px); border: 1px solid var(--border); border-radius: var(--radius-17, 22px); background: var(--glass-1, rgb(var(--fg-rgb) / .03)); margin: 30px 0; }
+.skel-featured .skel-block { aspect-ratio: 1; }
+.skel-lines { display: grid; gap: 14px; }
+.skel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; margin: 20px 0; }
+.skel-tile { display: grid; gap: 10px; }
+.skel-tile .skel-img { aspect-ratio: 1.45; border-radius: var(--radius-13, 16px); }
+.skel-ep { display: grid; grid-template-columns: minmax(200px, 300px) minmax(0, 1fr); gap: clamp(18px, 3vw, 32px); padding: clamp(18px, 3vw, 30px); }
+.skel-ep .skel-block { aspect-ratio: 1; border-radius: 50%; }
+@media (max-width: 700px) { .skel-featured, .skel-ep { grid-template-columns: 1fr; } .skel-featured .skel-block, .skel-ep .skel-block { max-width: 220px; } }
+
+/* ---------- מהירות: מה שמתחת למסך לא מצויר עד שמגיעים אליו ---------- */
+.site-footer, #about { content-visibility: auto; contain-intrinsic-size: auto 420px; }

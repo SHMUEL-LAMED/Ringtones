@@ -85,7 +85,7 @@
   function normSettings(raw) {
     const b = raw?.banner && typeof raw.banner === 'object' ? raw.banner : {};
     const sites = b.sites && typeof b.sites === 'object' ? b.sites : {};
-    const banner = { enabled: !!b.enabled, text: String(b.text || ''), link: String(b.link || ''), linkLabel: String(b.linkLabel || ''), until: String(b.until || '').slice(0, 10), sites: { program: sites.program !== false, survey: sites.survey === true } };
+    const banner = { enabled: !!b.enabled, text: String(b.text || ''), link: String(b.link || ''), linkLabel: String(b.linkLabel || ''), from: String(b.from || '').slice(0, 10), until: String(b.until || '').slice(0, 10), sites: { program: sites.program !== false, survey: sites.survey === true } };
     const sv = raw?.survey && typeof raw.survey === 'object' ? raw.survey : null;
     const survey = sv ? { id: String(sv.id || ''), name: String(sv.name || ''), open: !!sv.open, url: String(sv.url || '') } : null;
     const updates = (Array.isArray(raw?.updates) ? raw.updates : []).map((u, i) => ({
@@ -115,10 +115,11 @@
   /** "2026-09-22" — התאריך היום בישראל */
   const todayIL = (at) => nowIL(at).slice(0, 10);
 
-  /** ההודעה בדף הבית פעילה? (מסומנת, יש טקסט, התאריך לא עבר, ומיועדת לאתר הזה) */
+  /** ההודעה בדף הבית פעילה? (מסומנת, יש טקסט, הגיע יום ההתחלה, התאריך לא עבר, ומיועדת לאתר הזה) */
   function bannerActive(banner = state.data.settings?.banner) {
     if (!banner?.enabled || !banner.text || banner.sites?.program === false) return false;
-    return !banner.until || banner.until >= todayIL();
+    const today = todayIL();
+    return (!banner.from || banner.from <= today) && (!banner.until || banner.until >= today);
   }
   /** תוכנית מתוזמנת שעדיין לא הגיע זמנה (המועד נקבע בשעון ישראל) */
   function scheduled(e, now = new Date()) {
@@ -260,7 +261,7 @@
     },
     /** אירוע האזנה לסטטיסטיקה (ציבורי; בלי preflight, בלי המתנה) */
     event(kind, episodeId, seconds = 0, extra = {}, { beacon = false } = {}) {
-      if (!this.configured || state.preview) return;
+      if (!this.configured || state.preview || state.live) return;
       const device = matchMedia('(pointer: coarse)').matches ? 'phone' : 'desktop';
       const body = JSON.stringify({ kind, episodeId, seconds, device, ref: visitSource(), ...extra });
       // בסגירת הדף sendBeacon אמין יותר (הדפדפן שולח גם אחרי שהדף נסגר)
@@ -407,6 +408,17 @@
     catch (e) { state.site = { name: 'ראש בראש', tagline: 'מוזיקה ואקטואליה', storage: { provider: 'json' } }; }
     state.source = state.site.storage?.provider === 'cloudflare' && sb.configured ? 'cloudflare' : 'json';
 
+    // תצוגה חיה מתוך הניהול: הדף נטען ב־iframe של דף הניהול (אותו אתר) ומציג את הטיוטה
+    // שבזיכרון של הניהול — בלי שרת, בלי סטטיסטיקה ובלי נתונים אישיים
+    try {
+      if (new URLSearchParams(location.search).has('live') && window.parent !== window && typeof window.parent.RoshAdminLive === 'function') {
+        state.data = normalize(window.parent.RoshAdminLive());
+        state.live = true; state.loadedFrom = 'live';
+        me.loaded = true;
+        readyResolve(state);
+        return state;
+      }
+    } catch { /* לא בתוך הניהול */ }
 
     // הגעה מניהול אתר הסקר: קוד מעבר חד־פעמי הופך לסשן כאן, בלי כניסה נוספת
     try {
@@ -552,6 +564,41 @@
   };
   const termHit = (t, hay, words) => hay.includes(t) || (t.length >= 4 && words.some((w) => near(t, w) || (w.length > t.length && near(t, w.slice(0, t.length)))));
 
+  /* חיפוש סלחני (כשגם טעות הקלדה אחת לא מצאה כלום):
+     • כתיב חסר/מלא: ו ו־י באמצע המילה לא משנים ("סתו" = "סתיו", "שרים" = "שירים")
+     • אותיות השימוש בתחילת מילה: "הסתיו", "בסתיו", "לסתיו", "וכשהגיע" = "סתיו", "הגיע"
+     • עד שתי טעויות במילה ארוכה (7 אותיות ומעלה), כולל שתי אותיות שהתחלפו */
+  const PREFIXES = /^(?:[ו]?[ש]?[הבלמכ]|[וש])(?=..)/;
+  const variants = (w) => { const out = new Set([w]); let x = w; for (let i = 0; i < 3 && x.length > 3; i++) { const m = x.match(PREFIXES); if (!m) break; x = x.slice(m[0].length); out.add(x); } return [...out]; };
+  const skel = (w) => (w.length > 2 ? w[0] + w.slice(1, -1).replace(/[וי]/g, '') + w.slice(-1) : w);
+  /** מרחק עריכה (כולל החלפת שתי אותיות סמוכות), עם עצירה מוקדמת מעל max */
+  function editDistance(a, b, max) {
+    if (Math.abs(a.length - b.length) > max) return max + 1;
+    let prev2 = null, prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const row = [i]; let best = i;
+      for (let j = 1; j <= b.length; j++) {
+        let v = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        if (prev2 && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, prev2[j - 2] + 1);
+        row.push(v); if (v < best) best = v;
+      }
+      if (best > max) return max + 1;
+      prev2 = prev; prev = row;
+    }
+    return prev[b.length];
+  }
+  function looseHit(t, words) {
+    const tv = variants(t);
+    return words.some((w) => variants(w).some((b) => tv.some((a) => {
+      if (a.length < 2) return false;
+      if (b.startsWith(a) && a.length >= 3) return true;
+      const sa = skel(a);
+      if (a.length >= 3 && sa === skel(b)) return true;
+      const k = a.length >= 7 ? 2 : a.length >= 5 ? 1 : 0;
+      return k > 0 && (editDistance(a, b, k) <= k || (b.length > a.length && editDistance(a, b.slice(0, a.length), k) <= k));
+    })));
+  }
+
   function searchEpisodes(q, list = episodes()) {
     q = fold(q);
     if (!q) return list;
@@ -559,7 +606,10 @@
     const exact = list.filter((e) => { const hay = haystack(e); return terms.every((t) => hay.includes(t)); });
     if (exact.length) return exact;
     // אין התאמה מדויקת — סובלנות לטעות הקלדה
-    return list.filter((e) => { const hay = haystack(e), words = hay.split(' '); return terms.every((t) => termHit(t, hay, words)); });
+    const typo = list.filter((e) => { const hay = haystack(e), words = hay.split(' '); return terms.every((t) => termHit(t, hay, words)); });
+    if (typo.length) return typo;
+    // ועדיין כלום — כתיב חסר, אותיות שימוש ושתי טעויות במילים ארוכות
+    return list.filter((e) => { const hay = haystack(e), words = hay.split(' '); return terms.every((t) => hay.includes(t) || looseHit(t, words)); });
   }
   /** "אולי התכוונתם ל…": המילה הקרובה ביותר מתוך שמות התוכניות, האורחים והתגיות */
   function suggest(q, list = episodes()) {

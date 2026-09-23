@@ -51,13 +51,13 @@
   } else {
     const season = S.seasons().find((s) => s.id === feat.season);
     F.innerHTML = `
-<article class="card featured-card" style="${U.coverVars(feat)}">
+<article class="card featured-card" data-ep="${esc(feat.id)}" style="${U.coverVars(feat)}">
   <div class="section-title">
     <div><p class="kicker">${feat.featured ? 'התוכנית המומלצת' : 'התוכנית האחרונה'}${season ? ` · ${esc(season.title)}` : ''}</p><h2>${esc(feat.title)}</h2></div>
     ${feat.number != null ? `<strong>תוכנית ${feat.number}</strong>` : ''}
   </div>
   <div class="ep-hero">
-    <div class="cover">${feat.cover ? `<img src="${esc(feat.cover)}" alt="">` : `<div class="vinyl live" data-num="${feat.number ?? '♫'}" style="--label:${U.hue(feat)}" data-vinyl="${esc(feat.id)}"><i></i></div>`}</div>
+    <div class="cover">${feat.cover ? `<img src="${esc(feat.cover)}" alt="" fetchpriority="high" decoding="async">` : `<div class="vinyl live" data-num="${feat.number ?? '♫'}" style="--label:${U.hue(feat)}" data-vinyl="${esc(feat.id)}"><i></i></div>`}</div>
     <div>
       <div class="meta">
         ${feat.date ? `<span class="pill">${esc(U.fmtWeekday(feat.date))}, ${esc(fmtDate(feat.date))}</span><span class="pill">${esc(U.fmtHebDate(feat.date))}</span>` : ''}

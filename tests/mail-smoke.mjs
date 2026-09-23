@@ -237,6 +237,19 @@ await page.fill('#dlg-mail [data-m="description"]', 'רק למייל');
 await settle();
 check(published.episodes.find((e) => e.id === newId).description !== 'רק למייל' && (await page.locator('#dlg-mail [data-m-frame]').evaluate((f) => f.srcdoc.includes('רק למייל'))), 'התיאור במייל נערך — והתוכנית באתר לא השתנתה');
 
+// "פרסום של התוכנית הזו" לתוכנית חדשה — גם אז נפתחת טיוטת המייל
+await page.click('#dlg-mail [data-close]');
+await page.click('[data-tab="programs"]');
+await page.click('[data-op="new"]');
+await page.fill('[data-f="title"]', 'תוכנית שפורסמה לבד');
+await settle(300);
+await page.click('#editor [data-op="publish-one"]');
+await page.waitForSelector('#dlg-mail[open] .mail-composer', { timeout: 15000 });
+{
+  const id = await page.locator('#dlg-mail [data-m="ep"]').inputValue();
+  check(published?.episodes.some((e) => e.id === id && e.title === 'תוכנית שפורסמה לבד'), '"פרסום של התוכנית הזו" לתוכנית חדשה: נפתחת טיוטת המייל שלה');
+}
+
 const real = errors.filter((e) => !/favicon|manifest|sw\.js|serviceWorker|net::ERR_|accounts\.google|gsi|status of 40[1349]/i.test(e));
 check(real.length === 0, `אין שגיאות JavaScript${real.length ? `: ${real.join(' | ')}` : ''}`);
 await browser.close();

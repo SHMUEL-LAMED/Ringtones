@@ -33,6 +33,7 @@ await ctx.route(`${API}/**`, async (route) => {
     const b = req.postDataJSON(); publishBody = b;
     if ('baseVersion' in b && b.baseVersion !== latestVersion && !b.force) { conflicts++; return json({ error: 'מישהו אחר פרסם בינתיים.', conflict: true, latest: { id: latestVersion, by: 'other@example.com', createdAt: 1758600000 } }, 409); }
     published = { seasons: b.seasons, episodes: b.episodes }; if (b.settings) settings = { ...settings, ...b.settings };
+    serverDraft = null;   // כמו השרת האמיתי: כל פרסום מוחק את הטיוטה המשותפת
     latestVersion = `v${Number(latestVersion.slice(1)) + 1}`;
     return json({ ok: true, episodes: b.episodes.length, versionId: latestVersion, notified: 0 });
   }
@@ -124,6 +125,11 @@ check(!/רשימת השירים|זמר\/ת|הדבקת רשימה/.test(await pag
 await page.waitForFunction(() => document.querySelector('#status-text').textContent.includes('הכול מפורסם'), null, { timeout: 10000 }).catch(() => {});
 await page.waitForLoadState('networkidle');
 check((await page.locator('#status-text').innerText()).includes('הכול מפורסם'), 'המצב: הכול מפורסם');
+check((await page.locator('#editor .dash .dash-tile').count()) === 4, 'לוח בקרה כשאף תוכנית לא פתוחה: ארבעה מספרים');
+check((await page.locator('#ep-list .ep-item .cmp').count()) === 86, 'מד שלמות לכל תוכנית ברשימה');
+await page.click('#editor [data-op="filter"][data-filter="partial"]');
+check((await page.locator('#ep-filter').inputValue()) === 'partial' && (await page.locator('#ep-list .ep-item .cmp.full').count()) === 0, 'לחיצה על "תוכניות לא שלמות" מסננת את הרשימה');
+await page.selectOption('#ep-filter', 'all'); await page.dispatchEvent('#ep-filter', 'change');
 
 // תוכנית חדשה
 await page.click('[data-op="new"]');
@@ -136,6 +142,18 @@ await page.waitForTimeout(2000);
 check(draftPuts >= 1 && draftLog.at(-1).episodes === 87 && serverDraft?.data?.baseVersion === 'v1', 'הטיוטה נשמרת אוטומטית בשרת (טיוטה משותפת, עם הגרסה שממנה התחילו)');
 check(await noDeviceDraft(), 'שום טיוטה לא נשמרת במכשיר');
 check((await page.locator('#ep-list .ep-item').first().innerText()).includes('תוכנית בדיקה חדשה'), 'התוכנית החדשה מופיעה ברשימה');
+check((await page.locator('#cmp-bar [data-op="cmp-go"]').count()) >= 3, 'מד השלמות בעורך מראה מה חסר (הקלטה, תמונה…)');
+// תצוגה חיה: דף התוכנית כמו שייראה באתר, מהטיוטה שבזיכרון
+await page.click('#editor .inline-toggles [data-op="live"]');
+await page.frameLocator('#live-frame').locator('#episode h1').waitFor({ timeout: 15000 }).catch(() => {});
+check((await page.frameLocator('#live-frame').locator('#episode h1').innerText().catch(() => '')).includes('תוכנית בדיקה חדשה'), 'תצוגה חיה מציגה את התוכנית מהטיוטה (לפני פרסום)');
+await page.click('#editor .inline-toggles [data-op="live"]');
+check(!(await page.locator('#live-pane iframe').count()) && await page.locator('#ep-list').isVisible(), 'סגירת התצוגה החיה מחזירה את הרשימה');
+// ערכת שיתוף: טקסטים ותמונת סטורי
+await page.click('#editor [data-op="share"]');
+await page.waitForSelector('#dlg-share .story-frame.ready', { timeout: 15000 }).catch(() => {});
+check((await page.locator('#dlg-share .story-frame.ready').count()) === 1 && (await page.locator('#dlg-share .share-text').count()) === 3, 'ערכת שיתוף: תמונת סטורי ושלושה טקסטים מוכנים');
+await page.click('#dlg-share [data-close]');
 // תזמון
 await page.fill('[data-f="publishAt"]', '2031-01-01T20:00');
 await page.dispatchEvent('[data-f="publishAt"]', 'change');
@@ -225,13 +243,14 @@ await page.waitForSelector('.bars.retention .bar');
 check((await page.locator('.bars.retention .bar').count()) === 20, 'סטטיסטיקה: עד איפה מאזינים בתוכנית');
 check((await page.locator('.hot-list li').count()) === 2, 'הרגעים הכי חמים בתוכנית — גלוי רק בניהול');
 check((await page.locator('[data-push-send]').count()) === 1, 'שליחת התראה לכל המאזינים');
-check((await page.locator('#comments-card .mod.pending').count()) === 1, 'תגובה שממתינה לאישור מופיעה בניהול');
+check((await page.locator('#inbox-card .mod.pending').count()) === 1, 'תגובה שממתינה לאישור מופיעה בתיבת הדואר');
+check((await page.locator('#inbox-card .inbox-item').count()) === 2 && (await page.locator('#inbox-card .inbox-item').first().locator('.kind').count()) === 1, 'תיבת דואר אחת: הודעה ותגובה יחד, "צריך טיפול"');
 await page.fill('[data-reply-for="c1"]', 'תודה שרה!');
-await page.evaluate(() => { document.querySelector('#comments-card').dataset.probe = '1'; });
+await page.evaluate(() => { document.querySelector('#inbox-card').dataset.probe = '1'; });
 await page.click('[data-op="comment-status"][data-id="c1"][data-st="approved"]');
 await page.waitForTimeout(300);
 check(comments[0].status === 'approved' && comments[0].reply === 'תודה שרה!', 'אישור תגובה שומר גם את התשובה שהוקלדה');
-check(await page.evaluate(() => document.querySelector('#comments-card')?.dataset.probe === '1' && !!document.querySelector('.mod.approved[data-id="c1"]') && document.querySelector('[data-op="comments-filter"][data-f2="approved"]').textContent.includes('(1)')), 'אחרי אישור מתעדכנת רק התגובה (והמונים), בלי לצייר את החלק מחדש');
+check(await page.evaluate(() => document.querySelector('#inbox-card')?.dataset.probe === '1' && !!document.querySelector('.mod.approved[data-id="c1"]') && document.querySelector('[data-op="inbox-filter"][data-inbox="todo"]').textContent.includes('(1)')), 'אחרי אישור מתעדכנת רק התגובה (והמונים), בלי לצייר את החלק מחדש');
 await page.fill('[data-reply-for="c1"]', 'תקלה');
 await page.click('[data-op="comment-reply"][data-id="c1"]');
 await page.waitForTimeout(300);
@@ -275,6 +294,10 @@ check(/הכול תקין/.test(await page.locator('.tool-list').first().innerTex
 await page.click('[data-op="versions"]');
 await page.waitForSelector('.version');
 check((await page.locator('.version').count()) === 1, 'גרסאות קודמות מוצגות');
+await page.click('[data-op="compare"]');
+await page.waitForSelector('#dlg-compare[open]');
+check((await page.locator('#dlg-compare .diff-list > li').count()) >= 3, 'השוואת גרסאות: הגרסה שבאתר מול הטיוטה');
+await page.click('#dlg-compare [data-close]');
 await page.click('details.more-details > summary');
 await page.click('[data-op="preview-link"]');
 await page.waitForSelector('.preview-url input');
@@ -296,6 +319,21 @@ check(settings.banner.enabled && settings.banner.text.includes('חמישי') && 
 check(settings.banner.sites?.survey === true && settings.banner.sites?.program === true, 'ההודעה מסומנת לשני האתרים');
 check(published.episodes.some((e) => /^תוכנית (ה)?בדיקה חדשה$/.test(e.title) && e.surveyId === 'main'), 'הקישור למצעד נשמר בתוכנית');
 check(published.episodes.some((e) => e.title === 'תוכנית הבדיקה חדשה'), 'תיקון האיות שאושר נכנס לפרסום');
+// פרסום של תוכנית אחת: שתי תוכניות השתנו, רק אחת עולה לאתר, והשנייה נשארת בטיוטה
+await page.click('[data-tab="programs"]');
+await page.click('#ep-list .ep-item >> nth=4');
+await page.fill('[data-f="title"]', 'שינוי שנשאר בטיוטה');
+await page.click('#ep-list .ep-item >> nth=3');
+await page.fill('[data-f="title"]', 'שם לפרסום יחיד');
+await page.click('#editor [data-op="publish-one"]');
+await page.waitForFunction(() => /פורסמה באתר/.test(document.querySelector('.notice-host')?.innerText || ''), null, { timeout: 10000 }).catch(() => {});
+check(published.episodes.some((e) => e.title === 'שם לפרסום יחיד') && !published.episodes.some((e) => e.title === 'שינוי שנשאר בטיוטה'), 'פרסום של תוכנית אחת מעלה רק אותה');
+await page.waitForFunction(() => document.querySelector('#status-text').textContent.includes('לא פורסמו'), null, { timeout: 5000 }).catch(() => {});
+for (let t = 0; t < 40 && !serverDraft; t++) await page.waitForTimeout(100);
+check(serverDraft?.data?.episodes?.some((e) => e.title === 'שינוי שנשאר בטיוטה'), 'שאר השינויים נשארים בטיוטה המשותפת (נשמרת מחדש אחרי הפרסום)');
+await page.click('[data-tab="publish"]');
+await page.click('.pub-card [data-op="publish"]');
+await page.waitForFunction(() => document.querySelector('#status-text').textContent.includes('הכול מפורסם'), null, { timeout: 10000 });
 // דף ניהול אחד: הכתובת של ניהול התוכניות עוברת לדף הניהול המשותף, לאותו חלק, בלי כניסה נוספת
 await page.goto(`${BASE}/admin.html#site`);
 await page.waitForURL(/\/api\/program\/handoff\/c0ffee#prog-site$/, { timeout: 15000 }).catch(() => {});
