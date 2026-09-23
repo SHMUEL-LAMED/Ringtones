@@ -191,12 +191,13 @@
         return true;
       } catch { return false; }
     },
-    /** התנתקות מכל המקומות: גם הסשן של אתר הסקר לאותו חשבון נמחק בשרת. */
-    signOut() {
+    /** התנתקות מכל המקומות: גם הסשן של אתר הסקר לאותו חשבון נמחק בשרת.
+        after: הבטחה שההתנתקות בשרת מחכה לה (השמירה האחרונה של הנתונים האישיים). */
+    signOut(after) {
       const token = this.session?.token;
       this.session = null;
       write(LS.sso, Date.now());
-      if (token && this.configured) fetch(this.base('/api/program/logout'), { method:'POST', headers:{ Authorization:`Bearer ${token}` } }).catch(() => {});
+      if (token && this.configured) Promise.resolve(after).catch(() => {}).then(() => fetch(this.base('/api/program/logout'), { method:'POST', headers:{ Authorization:`Bearer ${token}` } })).catch(() => {});
     },
     /* כניסה אחת לשני האתרים: קוד חד־פעמי שעובר בין אתר התוכניות לאתר הסקר */
     handoff: {
@@ -451,8 +452,16 @@
   function sessionChanged() { sessionListeners.forEach((fn) => { try { fn(sb.user); } catch { /* */ } }); }
   /** אחרי כניסה: טוענים את הנתונים של החשבון ומודיעים לכל הדף */
   async function signedIn() { await me.load(); likes.load(true); sessionChanged(); }
-  /** התנתקות מכל המקומות */
-  function signOut() { me.save(true); sb.signOut(); me.reset(); likes.mine = new Set(); sessionChanged(); }
+  /** התנתקות מכל המקומות. השמירה האחרונה יוצאת עכשיו (עם הטוקן), וההתנתקות בשרת נשלחת רק
+      אחרי שהיא הסתיימה — אחרת השרת עלול למחוק את הסשן לפני שהנתונים נשמרו. הדף מתעדכן מיד
+      (הניהול וטופס התפוצה בודקים את המצב מיד אחרי הקריאה), וההבטחה מסתיימת אחרי השמירה. */
+  async function signOut() {
+    let saved;
+    try { saved = me.save(true); } catch { /* */ }
+    sb.signOut(saved);
+    me.reset(); likes.mine = new Set(); sessionChanged();
+    try { await saved; } catch { /* */ }
+  }
 
   /* ---------- שאילתות ---------- */
 
@@ -651,7 +660,8 @@
   const positions = {
     get(id) { return me.data.positions[id] || null; },
     set(id, t, dur) {
-      me.data.positions[id] = { t: Math.floor(t), dur: Math.floor(dur || 0), at: Date.now() };
+      // אורך 0 = עוד לא ידוע (לפני שההקלטה נטענה) — נשאר האורך שנמדד קודם
+      me.data.positions[id] = { t: Math.floor(t), dur: Math.floor(dur || 0) || me.data.positions[id]?.dur || 0, at: Date.now() };
       const ids = Object.keys(me.data.positions);
       if (ids.length > 400) ids.sort((a, b) => me.data.positions[a].at - me.data.positions[b].at).slice(0, ids.length - 400).forEach((x) => delete me.data.positions[x]);
       me.change();
@@ -740,8 +750,9 @@
     load(force = false) {
       if (!sb.configured) return Promise.resolve(this);
       if (this._p && !force) return this._p;
-      this._p = sb.call('/api/program/likes').then((r) => { this.counts = r.counts || {}; this.mine = new Set(r.mine || []); this.loaded = true; return this; }).catch(() => this);
-      return this._p;
+      // כישלון לא נשמר: הקריאה הבאה מנסה שוב
+      const p = this._p = sb.call('/api/program/likes').then((r) => { this.counts = r.counts || {}; this.mine = new Set(r.mine || []); this.loaded = true; return this; }).catch(() => { if (this._p === p) this._p = null; return this; });
+      return p;
     },
     count(id) { return Number(this.counts[id] || 0); },
     has(id) { return this.mine.has(id); },

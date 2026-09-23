@@ -115,26 +115,41 @@
       if (e.key === 'End') { e.preventDefault(); e.stopPropagation(); seek(dur() - 1); }
     });
 
-    // העדפות
+    // העדפות (החלה של מה ששמור — לא שינוי של המאזין, ולכן לא נשמר מחדש בחשבון)
     setRate(S.prefs.get('rate', 1), true);
     audio.volume = S.prefs.get('volume', 1);
+
+    // גובה הנגן בפועל (משתנה עם רוחב המסך, עם שבירת השורות ועם השוליים הבטוחים בטלפון),
+    // כדי שסוף הדף וההודעות לא יוסתרו מאחוריו. בלי ResizeObserver נשאר הערך הקבוע שב־rosh.css.
+    if (typeof ResizeObserver === 'function') {
+      P.fitDock = () => {
+        if (d.classList.contains('open')) document.body.style.setProperty('--dock-height', `${Math.ceil(d.offsetHeight)}px`);   // הנגן + השוליים שמתחתיו
+        else document.body.style.removeProperty('--dock-height');
+      };
+      const ro = new ResizeObserver(() => P.fitDock());
+      ro.observe(d.querySelector('.dock-inner'));
+      ro.observe(d);   // סיבוב המסך משנה גם את השוליים הבטוחים
+    }
   }
 
   const dur = () => (isFinite(audio.duration) && audio.duration) || P.episode?.duration || 0;
 
-  function open() { build(); P.dock.classList.add('open'); document.body.classList.add('has-dock'); }
+  function open() { build(); P.dock.classList.add('open'); document.body.classList.add('has-dock'); P.fitDock?.(); }
   function close() {
     pause();
     P.dock?.classList.remove('open');
     document.body.classList.remove('has-dock');
+    P.fitDock?.();
     emit('close');
   }
 
   /* ---------- טעינת תוכנית ---------- */
 
   /* ההקלטה מוזרמת ישירות לנגן של האתר (ep.stream) — גם כשהקובץ שמור בדרייב.
-     אין הפניה החוצה ואין נגן חיצוני. */
-  function load(ep, { at = null, autoplay = true, quiet = false } = {}) {
+     אין הפניה החוצה ואין נגן חיצוני.
+     restored: התוכנית האחרונה שמוכנה בנגן בטעינת הדף (restore) — עד שנוגעים בה לא נשמר
+     מיקום, והיא נכנסת להיסטוריה ולסטטיסטיקה רק כשמנגנים אותה באמת. */
+  function load(ep, { at = null, autoplay = true, quiet = false, restored = false } = {}) {
     const candidates = window.RoshUI.streamCandidates(ep);
     if (!candidates.length) { window.RoshUI.notify('לתוכנית הזו אין עדיין הקלטה להאזנה.', 'info'); return false; }
     open();
@@ -146,10 +161,9 @@
       P.candidateIndex = 0;
       audio.src = candidates[0];
       audio.load();
-      S.history.add(ep.id);
-      // סטטיסטיקה: האזנה אחת לכל טעינה של הקלטה (בלי פרטים מזהים)
-      S.sb.event('play', ep.id);
       P.listened = 0;
+      P.uncounted = true;
+      if (!restored) countPlay();
     }
     P.els.title.textContent = ep.title;
     P.els.link.href = `episode.html?ep=${encodeURIComponent(ep.slug)}`;
@@ -171,15 +185,25 @@
       }
     }
     if (start != null) seek(start);
+    P.restored = restored;   // אחרי seek (שמסמן נגיעה)
     if (autoplay) play();
     mediaSession();
     emit('episode');
     return true;
   }
+  /** האזנה לתוכנית: נכנסת להיסטוריה, ולסטטיסטיקה — האזנה אחת לכל טעינה של הקלטה (בלי פרטים מזהים) */
+  function countPlay() {
+    if (!P.uncounted || !P.episode) return;
+    P.uncounted = false;
+    S.history.add(P.episode.id);
+    S.sb.event('play', P.episode.id);
+  }
 
   function play() {
     if (!P.episode) return;
     P.wantPlay = true;
+    P.restored = false;
+    countPlay();
     audio.play().catch((err) => {
       if (err?.name === 'NotAllowedError') return; // דורש מחווה של המשתמש
       if (err?.name === 'AbortError' || err?.name === 'NotSupportedError') return; // מקור הוחלף / נכשל — מטופל ב־error
@@ -191,18 +215,22 @@
   function seek(t) {
     t = Math.min(Math.max(0, t), dur() ? dur() - 0.25 : t);
     if (!isFinite(t)) return;
+    P.restored = false;
     audio.currentTime = t;
     paint();
     updateNow();
-    save(true);
+    // לפני שהאורך האמיתי ידוע אין מה לשמור (אחרת האורך השמור נדרס ב־0); השמירה תגיע עם הניגון
+    if (isFinite(audio.duration) && audio.duration) save(true);
   }
+  /** silent: החלה של ההעדפה השמורה (בבניית הנגן) — בלי לשמור אותה שוב ובלי אירוע */
   function setRate(r, silent) {
     r = Number(r) || 1;
     r = RATES.reduce((best, x) => (Math.abs(x - r) < Math.abs(best - r) ? x : best), 1);
     audio.playbackRate = r;
     if (P.els.speed) P.els.speed.value = String(r);
+    if (silent) return;
     S.prefs.set('rate', r);
-    if (!silent) emit('rate', { rate: r });
+    emit('rate', { rate: r });
   }
   function setSleep(v) {
     P.sleepAt = null;
@@ -299,7 +327,9 @@
   }, 1000);
 
   function save(force) {
-    if (!P.episode) return;
+    // לא שומרים: תוכנית ששוחזרה בטעינת הדף ועוד לא נגעו בה (אחרת כל צפייה בדף "מעדכנת" את המיקום
+    // ושולחת שמירה לחשבון), ותוכנית שנגמרה (המיקום שלה נמחק ב־ended — לא מחזירים אותו בסוף)
+    if (!P.episode || P.restored || audio.ended) return;
     const now = Date.now();
     if (!force && now - P.lastSaved < 5000) return;
     P.lastSaved = now;
@@ -309,16 +339,21 @@
 
   /* ---------- Media Session ---------- */
 
+  /** סוג התמונה לפי הסיומת; כשלא ידוע — בלי סוג (הדפדפן מזהה לבד) */
+  const ART_TYPES = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+  const artType = (src) => ART_TYPES[(/\.([a-z0-9]+)$/i.exec(String(src || '').split(/[?#]/)[0]) || [])[1]?.toLowerCase()] || '';
+
   function mediaSession() {
     if (!('mediaSession' in navigator) || !P.episode) return;
     try {
+      const coverType = artType(P.episode.cover);
       navigator.mediaSession.metadata = new MediaMetadata({
         title: P.episode.title,
         artist: S.site?.name || 'ראש בראש',
         album: P.episode.title,
         // תמונת התוכנית במסך הנעילה ובשעון; כשאין תמונה — הלוגו של התוכנית
         artwork: P.episode.cover
-          ? [{ src: P.episode.cover, sizes: '1400x1400', type: 'image/jpeg' }]
+          ? [{ src: P.episode.cover, sizes: '1400x1400', ...(coverType ? { type: coverType } : {}) }]
           : [{ src: new URL('assets/img/icon-512.png', document.baseURI).href, sizes: '512x512', type: 'image/png' }],
       });
       const h = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession);
@@ -374,7 +409,8 @@
     if (!P.episode) return;
     const id = P.episode.id;
     flushListen();
-    S.positions.clear(id); S.listening.finish(id);
+    // ה־pause שלפני ended כבר לא שומר (audio.ended), ו"התוכנית האחרונה" חוזרת להתחלה — כדי שהביקור הבא לא ייפתח בסוף
+    S.positions.clear(id); S.last.set(id, 0); S.listening.finish(id);
     emit('end');
     const queued = S.queue.shift(id);
     if (queued) { window.RoshUI.notify(`ממשיכים בתור: ${queued.title}`, 'info', { ttl: 5000 }); load(queued, { at: 0 }); return; }
@@ -403,28 +439,36 @@
     });
     if (dl) P.els.download.href = dl;
   });
-  audio.addEventListener('volumechange', () => S.prefs.set('volume', audio.volume));
+  // רק שינוי אמיתי של העוצמה נשמר — לא החלת העוצמה השמורה בבניית הנגן ולא השתקה
+  audio.addEventListener('volumechange', () => { if (audio.volume !== S.prefs.get('volume', 1)) S.prefs.set('volume', audio.volume); });
   // כשהדף נסגר או עובר לרקע (בטלפון זה לפעמים הרגע האחרון) — שליחה ב־sendBeacon, שלא נחתכת
   document.addEventListener('visibilitychange', () => { if (document.hidden) { save(true); flushListen(true); } });
   window.addEventListener('pagehide', () => { save(true); flushListen(true); });
 
   /* ---------- קיצורי מקלדת ---------- */
 
+  // רווח על אחד מאלה מפעיל אותו (כפתור, קישור, בורר…) — ולא גם את הנגן
+  const CONTROLS = 'button,a,select,input,textarea,[role="button"],[role="slider"],[contenteditable]';
   document.addEventListener('keydown', (e) => {
     if (window.RoshUI.isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
-    if (!P.episode && e.key !== ' ' && e.key !== 'r' && e.key !== 'R') return;
+    // לפי המקש הפיזי (e.code), כדי שהקיצורים יעבדו גם כשהמקלדת בעברית; "?" נשאר לפי e.key (ui.js)
+    const code = e.code || (e.key === ' ' ? 'Space' : /^[a-z]$/i.test(e.key) ? `Key${e.key.toUpperCase()}` : '');
+    if (!P.episode && code !== 'Space' && code !== 'KeyR') return;
     const open = document.querySelector('dialog[open]');
     if (open) return;
-    switch (e.key) {
-      case ' ': case 'k': case 'K': if (P.episode) { e.preventDefault(); toggle(); } break;
+    switch (code) {
+      case 'Space': case 'KeyK':
+        if (code === 'Space' && e.target?.closest?.(CONTROLS)) break;
+        if (P.episode) { e.preventDefault(); toggle(); }
+        break;
       case 'ArrowRight': e.preventDefault(); e.shiftKey ? nextEpisode() : seek(audio.currentTime + 15); break;
       case 'ArrowLeft': e.preventDefault(); e.shiftKey ? prevEpisode() : seek(audio.currentTime - 15); break;
-      case 'j': case 'J': seek(audio.currentTime - 15); break;
-      case 'l': case 'L': seek(audio.currentTime + 15); break;
-      case 'm': case 'M': P.els.mute.click(); break;
-      case 'r': case 'R': random(); break;
-      case '+': case '=': setRate(RATES[Math.min(RATES.length - 1, RATES.indexOf(audio.playbackRate) + 1)] || 1); break;
-      case '-': setRate(RATES[Math.max(0, RATES.indexOf(audio.playbackRate) - 1)] || 1); break;
+      case 'KeyJ': seek(audio.currentTime - 15); break;
+      case 'KeyL': seek(audio.currentTime + 15); break;
+      case 'KeyM': P.els.mute.click(); break;
+      case 'KeyR': random(); break;
+      case 'Equal': case 'NumpadAdd': setRate(RATES[Math.min(RATES.length - 1, RATES.indexOf(audio.playbackRate) + 1)] || 1); break;
+      case 'Minus': case 'NumpadSubtract': setRate(RATES[Math.max(0, RATES.indexOf(audio.playbackRate) - 1)] || 1); break;
       default:
         if (/^[0-9]$/.test(e.key)) { e.preventDefault(); seek(dur() * (Number(e.key) / 10)); }
     }
@@ -432,13 +476,19 @@
 
   /* ---------- שחזור הנגן בכל דף ---------- */
 
-  // התוכנית האחרונה מהחשבון (בכל מכשיר) — מוכנה בנגן, מושהית
+  // התוכנית האחרונה מהחשבון (בכל מכשיר) — מוכנה בנגן, מושהית. עד שנוגעים בה לא נשמר
+  // שום מיקום (P.restored), כך שעצם הצפייה בדף לא משנה את מה ששמור בחשבון.
   const restore = () => {
     const l = S.last.get();
     const ep = l && S.byId(l.id);
-    if (ep && ep.visible && !S.scheduled(ep) && ep.stream && !P.episode) load(ep, { at: l.t, autoplay: false, quiet: true });
+    if (ep && ep.visible && !S.scheduled(ep) && ep.stream && !P.episode) load(ep, { at: l.t, autoplay: false, quiet: true, restored: true });
   };
-  S.ready.then(restore);
+  S.ready.then(() => {
+    restore();
+    if (S.me.loaded) return;
+    // ready לא מחכה לנתונים האישיים יותר מ־2.5 שניות: כשהם מגיעים באיחור — משחזרים אז, פעם אחת
+    const off = S.me.onChange(() => { if (!S.me.loaded) return; off(); restore(); });
+  });
   S.onSession(() => S.ready.then(restore));
 
   window.RoshPlayer = {

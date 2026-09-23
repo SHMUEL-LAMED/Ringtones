@@ -5,8 +5,11 @@
   const U = window.RoshUI, S = window.RoshStore, Pl = window.RoshPlayer;
   const { esc, fmtTime, fmtDate, fmtDuration } = U;
 
+  // האות נלקח לפני ההמתנה: אם עברו לדף אחר בזמן שהקטלוג נטען, הסקריפט הזה לא מצייר על הדף החדש
+  const signal = window.RoshApp?.signal;
   await S.ready;
-  const on = { signal: window.RoshApp?.signal };   // המאזינים מוסרים במעבר לדף אחר
+  if (signal?.aborted) return;
+  const on = { signal };   // המאזינים מוסרים במעבר לדף אחר
   const site = S.site || {};
   document.getElementById('site-header').innerHTML = U.header('home', site);
   document.getElementById('site-footer').innerHTML = U.footer(site);
@@ -15,7 +18,6 @@
     const el = document.querySelector(sel); if (el && site[key]) { el.textContent = site[key]; if (el.dataset.text != null) el.dataset.text = site[key]; }
   }
 
-  if (S.state.loadedFrom === 'override') U.notify('מוצגת טיוטה מקומית מאזור הניהול — רק במכשיר הזה.', 'info', { ttl: 6000 });
   else if (S.state.loadedFrom === 'json-fallback') U.notify('החיבור למקור הנתונים נכשל — מוצג העותק השמור באתר.', 'info', { ttl: 6000 });
   else if (S.state.error) U.notify('טעינת רשימת התוכניות נכשלה. בדקו את החיבור ונסו שוב.', 'error', { action: 'ניסיון חוזר', onAction: () => location.reload(), ttl: 0 });
 
@@ -35,9 +37,11 @@
   const latestPlayable = (feat?.stream ? feat : null) || shows.find((e) => e.stream) || null;
   if (!latestPlayable) playLatest.hidden = true;
 
-  // סרט נע: כל התוכניות בלולאה, פעמיים כדי שהמעבר יהיה חלק
-  const tick = shows.slice(0, 40).map((e) => `<a href="episode.html?ep=${encodeURIComponent(e.slug)}">${e.number != null ? `<small>${e.number}</small>` : ''}<b>${esc(e.title)}</b></a>`).join('');
-  document.getElementById('ticker').innerHTML = tick ? `<div class="ticker-track">${tick}${tick}</div>` : '';
+  // סרט נע: כל התוכניות בלולאה, פעמיים כדי שהמעבר יהיה חלק. קישוט בלבד (aria-hidden) —
+  // ולכן הקישורים מחוץ לסדר המעבר במקלדת, אבל עדיין אפשר ללחוץ עליהם בעכבר
+  const tick = shows.slice(0, 40).map((e) => `<a href="episode.html?ep=${encodeURIComponent(e.slug)}" tabindex="-1">${e.number != null ? `<small>${e.number}</small>` : ''}<b>${esc(e.title)}</b></a>`).join('');
+  const ticker = document.getElementById('ticker');
+  ticker.innerHTML = tick ? `<div class="ticker-track">${tick}${tick}</div>` : '';
 
   /* ---------- התוכנית האחרונה ---------- */
   const F = document.getElementById('featured');
@@ -72,13 +76,14 @@
 </article>`;
   }
 
-  /* ---------- המשך האזנה ---------- */
+  /* ---------- המשך האזנה ----------
+     מצויר שוב כשהנתונים האישיים משתנים — גם כשהם מגיעים מהחשבון אחרי שהדף כבר צויר
+     (ready לא מחכה להם יותר מ־2.5 שניות). */
   const R = document.getElementById('resume');
-  const resumable = S.positions.resumable().filter((r) => r.episode.id !== feat?.id).slice(0, 4);
-  if (resumable.length) {
-    R.className = 'grid-section';
-    R.setAttribute('data-reveal', '');
-    R.innerHTML = `
+  let resumeHtml = '';
+  function renderResume() {
+    const resumable = S.positions.resumable().filter((r) => r.episode.id !== feat?.id).slice(0, 4);
+    const html = resumable.length ? `
 <div class="grid-head"><div><p class="kicker">ממשיכים</p><h2>מאיפה שעצרתם</h2></div><a href="me.html">לאזור האישי ←</a></div>
 <div class="row-list">
   ${resumable.map((r) => `
@@ -89,8 +94,25 @@
     </button>
     <span class="time">${fmtTime(r.t)}</span>
   </div>`).join('')}
-</div>`;
+</div>` : '';
+    if (html === resumeHtml) return;
+    resumeHtml = html;
+    const focused = R.contains(document.activeElement) ? document.activeElement.dataset.cue : null;
+    R.classList.toggle('grid-section', !!html);
+    if (html) R.setAttribute('data-reveal', '');
+    R.innerHTML = html;
+    if (focused) R.querySelector(`[data-cue="${CSS.escape(focused)}"]`)?.focus();   // הפוקוס לא הולך לאיבוד בציור מחדש
   }
+  renderResume();
+  const offData = S.me.onChange(() => {
+    clearTimeout(renderResume.t);
+    renderResume.t = setTimeout(() => {
+      if (on.signal?.aborted) return;
+      renderResume(); U.reveal();
+      if (feat) U.paintActions(feat.id);   // "לאחר כך" / "בתור" של התוכנית המומלצת
+    }, 300);
+  });
+  on.signal?.addEventListener('abort', () => { offData(); clearTimeout(renderResume.t); });
 
   /* ---------- תוכניות אחרונות ---------- */
   const recent = shows.filter((e) => e.id !== feat?.id).slice(0, 8);

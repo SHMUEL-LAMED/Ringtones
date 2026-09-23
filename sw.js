@@ -2,7 +2,7 @@
    נתוני התוכניות נטענים תמיד מהרשת קודם (ונופלים למטמון אם אין), וההקלטות
    עצמן לא נשמרות. ניווט שנכשל ואין לו עותק שמור מקבל את offline.html.
    הגופנים של Google נשמרים במטמון נפרד (שורד החלפת גרסה) כדי שהאתר ייראה נכון גם בלי רשת. */
-const VERSION = 'rosh-v10-episode-pages';
+const VERSION = 'rosh-v11-fixes';
 const FONTS = 'rosh-fonts-v1';
 const OFFLINE = './offline.html';
 const SHELL = [
@@ -58,9 +58,9 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== location.origin) return;
   // הקלטות: ישר מהרשת, בלי מטמון
   if (/\.(mp3|m4a|wav|ogg|aac|flac|opus|webm)$/i.test(url.pathname) || req.headers.has('range')) return;
-  // נתונים: רשת קודם, מטמון כגיבוי
+  // נתונים: רשת קודם, מטמון כגיבוי (רק תשובה תקינה נשמרת — שגיאה לא דורסת את העותק הטוב)
   if (url.pathname.includes('/data/')) {
-    e.respondWith(fetch(req).then((r) => { const copy = r.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); return r; }).catch(() => caches.match(req).then((hit) => hit || Response.error())));
+    e.respondWith(fetch(req).then((r) => { if (r.ok) { const copy = r.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); } return r; }).catch(() => caches.match(req).then((hit) => hit || Response.error())));
     return;
   }
   // קובצי האפליקציה: תמיד מאומתים מול הרשת כדי שפריסה חדשה לא תתערבב עם ישנה

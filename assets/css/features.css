@@ -120,7 +120,7 @@
   .ep-list { max-height: 45vh; }
   .editor-back { display: inline-flex; }
   .bulk-bar, .bulk-actions { flex-wrap: wrap; }
-  dialog.sheet, dialog.sheet.wide { width: 100%; max-width: none; max-height: 100dvh; height: 100dvh; margin: 0; border-radius: 0; }
+  body[data-page="admin"] dialog.sheet, body[data-page="admin"] dialog.sheet.wide { width: 100%; max-width: none; max-height: 100dvh; height: 100dvh; margin: 0; border-radius: 0; }
   .dates-list li { grid-template-columns: 34px 1fr; }
   .dates-list input[type="date"] { grid-column: 1 / -1; width: 100%; }
   .hg-head .btn, .mod-ops .btn, .proof-ops .btn { flex: 1 1 auto; justify-content: center; }

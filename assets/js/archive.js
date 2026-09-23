@@ -4,13 +4,16 @@
   const U = window.RoshUI, S = window.RoshStore, Pl = window.RoshPlayer;
   const { esc, fmtTime, fmtDate, fmtDuration } = U;
 
+  // האות נלקח לפני ההמתנה: אם עברו לדף אחר בזמן שהקטלוג נטען, הסקריפט הזה לא מצייר על הדף החדש
+  const signal = window.RoshApp?.signal;
   await S.ready;
-  const on = { signal: window.RoshApp?.signal };   // המאזינים מוסרים במעבר לדף אחר
+  if (signal?.aborted) return;
+  const on = { signal };   // המאזינים מוסרים במעבר לדף אחר
   const site = S.site || {};
   document.getElementById('site-header').innerHTML = U.header('archive', site);
   document.getElementById('site-footer').innerHTML = U.footer(site);
   if (S.state.loadedFrom === 'json-fallback') U.notify('החיבור למקור הנתונים נכשל — מוצג העותק השמור באתר.', 'info', { ttl: 6000 });
-  else if (S.state.error && S.state.loadedFrom !== 'override') U.notify('טעינת רשימת התוכניות נכשלה. בדקו את החיבור ונסו שוב.', 'error', { action: 'ניסיון חוזר', onAction: () => location.reload(), ttl: 0 });
+  else if (S.state.error) U.notify('טעינת רשימת התוכניות נכשלה. בדקו את החיבור ונסו שוב.', 'error', { action: 'ניסיון חוזר', onAction: () => location.reload(), ttl: 0 });
 
   const params = new URLSearchParams(location.search);
   const state = {
@@ -116,7 +119,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
     return `
 <div class="row${Pl.isCurrent(e.id) ? ' selected' : ''}" data-ep="${esc(e.id)}" style="${U.coverVars(e)}">
   <a class="row-main" href="episode.html?ep=${encodeURIComponent(e.slug)}">
-    <i aria-hidden="true" style="background:hsl(var(--h) 70% 40% / .5);border-color:hsl(var(--h) 80% 60% / .6)">${e.number ?? '♫'}</i>
+    <i aria-hidden="true" style="background:hsl(var(--h) 70% var(--hue-bg-l) / .5);border-color:hsl(var(--h) 80% 60% / .6)">${e.number ?? '♫'}</i>
     <span class="txt"><b>${mark(e.title, state.q)}</b><small>${esc(fmtDate(e.date))}${e.guests.length ? ` · עם ${esc(e.guests.join(', '))}` : ''}</small></span>
   </a>
   ${e.duration ? `<span class="time">${fmtTime(e.duration)}</span>` : ''}
@@ -141,7 +144,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
       for (const e of list) { const k = e.season || ''; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
       R.innerHTML = [...groups.entries()].map(([id, eps]) => {
         const s = seasons.find((x) => x.id === id);
-        return `<section class="season-block" style="${U.seasonVars(id)}"><div class="season-head"><h2 style="color:hsl(var(--h) 90% 78%)">${esc(s?.title || 'ללא עונה')}</h2><span class="line" aria-hidden="true" style="background:linear-gradient(90deg,hsl(var(--h) 90% 65%),transparent)"></span><span class="pill">${eps.length} תוכניות</span></div><div class="ep-grid">${eps.map(card).join('')}</div></section>`;
+        return `<section class="season-block" style="${U.seasonVars(id)}"><div class="season-head"><h2 style="color:hsl(var(--h) 90% var(--hue-l))">${esc(s?.title || 'ללא עונה')}</h2><span class="line" aria-hidden="true" style="background:linear-gradient(90deg,hsl(var(--h) 90% 65%),transparent)"></span><span class="pill">${eps.length} תוכניות</span></div><div class="ep-grid">${eps.map(card).join('')}</div></section>`;
       }).join('');
     } else R.innerHTML = `<div class="ep-grid">${list.map(card).join('')}</div>`;
     syncUrl();
@@ -149,6 +152,17 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
 
   renderFilters();
   render();
+
+  // "לאחר כך" מהחשבון הגיע אחרי שהדף צויר (ready לא מחכה לו יותר מ־2.5 שניות), או השתנה:
+  // כשהסינון "לאחר כך" פעיל — התוצאות והספירה מתעדכנות
+  let laterKey = S.later.list().join('\n');
+  const offData = S.me.onChange(() => {
+    const k = S.later.list().join('\n');
+    if (k === laterKey) return;
+    laterKey = k;
+    if (state.later && !on.signal?.aborted) render();
+  });
+  on.signal?.addEventListener('abort', () => offData());
 
   document.addEventListener('click', (e) => {
     const s = e.target.closest('[data-season]');

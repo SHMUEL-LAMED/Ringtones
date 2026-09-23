@@ -27,11 +27,11 @@
     return parts.reduce((acc, p) => acc * 60 + p, 0);
   }
 
-  /** מספר שניות → "58 דקות" / "שעה ו־3 דקות" */
+  /** מספר שניות → "58 דקות" / "שעה ו־3 דקות". העיגול לדקות קודם לחלוקה לשעות (3599 → "שעה", לא "60 דקות") */
   function fmtDuration(sec) {
     sec = Number(sec) || 0;
     if (!sec) return '';
-    const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+    const total = Math.round(sec / 60), h = Math.floor(total / 60), m = total % 60;
     if (!h) return m === 1 ? 'דקה אחת' : `${m} דקות`;
     const hw = h === 1 ? 'שעה' : h === 2 ? 'שעתיים' : `${h} שעות`;
     return m ? `${hw} ו${m === 1 ? 'דקה אחת' : `־${m} דקות`}` : hw;
