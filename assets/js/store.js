@@ -320,10 +320,16 @@
       if (j.user) this.session = { ...this.session, user:{ ...this.session.user, ...j.user, isAdmin: !!j.user.isAdmin } };
       return !!j.user?.isAdmin;
     },
-    async pull(auth = false) {
-      const r = await fetch(this.base('/api/program/catalog'), { headers:this.headers(auth), cache:'no-store' });
-      if (!r.ok) throw new Error(`Cloudflare: ${r.status}`);
-      return r.json();
+    /** הקטלוג מהשרת. timeout (במילישניות): שרת איטי (למשל מיד אחרי פריסה) לא משאיר
+        את הדף ריק — הבקשה נכשלת, והטעינה נופלת לעותק השמור באתר. */
+    async pull(auth = false, { timeout = 0 } = {}) {
+      const c = timeout ? new AbortController() : null;
+      const t = c ? setTimeout(() => c.abort(), timeout) : 0;
+      try {
+        const r = await fetch(this.base('/api/program/catalog'), { headers:this.headers(auth), cache:'no-store', signal:c?.signal });
+        if (!r.ok) throw new Error(`Cloudflare: ${r.status}`);
+        return await r.json();
+      } finally { clearTimeout(t); }
     },
     /** פרסום. baseVersion = הגרסה שהייתה באתר כשהתחלנו לערוך; אם מנהל אחר פרסם
         בינתיים, השרת מחזיר 409 (err.conflict) ולא דורס — אלא אם force. */
@@ -378,6 +384,9 @@
     try { const c = new AbortController(); const t = setTimeout(() => c.abort(), 2000); const r = await fetch(sb.base('/api/program/banner'), { signal: c.signal, cache: 'no-store' }); clearTimeout(t); return r.ok; } catch { return false; }
   }
 
+  // כמה זמן הדף מחכה לקטלוג מהשרת לפני שהוא מציג את העותק השמור באתר
+  const CATALOG_TIMEOUT = 8000;
+
   async function load() {
     state.error = null;
     try { state.site = await fetchJSON('data/site.json'); }
@@ -431,10 +440,10 @@
     // תמיד מה שפורסם (או תצוגה מקדימה בקישור). טיוטת הניהול נטענת מהשרת בדף הניהול עצמו.
     if (state.preview && state.source === 'cloudflare') {
       try { state.data = normalize((await sb.preview.open(state.preview)).data); state.loadedFrom = 'preview'; }
-      catch (e) { state.error = e; state.preview = null; try { sessionStorage.removeItem(LS.preview); } catch { /* */ } state.data = normalize(await sb.pull().catch(() => ({}))); state.loadedFrom = state.source; }
+      catch (e) { state.error = e; state.preview = null; try { sessionStorage.removeItem(LS.preview); } catch { /* */ } state.data = normalize(await sb.pull(false, { timeout: CATALOG_TIMEOUT }).catch(() => ({}))); state.loadedFrom = state.source; }
     } else {
       try {
-        const raw = state.source === 'cloudflare' ? await sb.pull() : await fetchJSON('data/episodes.json');
+        const raw = state.source === 'cloudflare' ? await sb.pull(false, { timeout: CATALOG_TIMEOUT }) : await fetchJSON('data/episodes.json');
         const remote = normalize(raw);
         // חיבור חדש ל־D1 מחזיר קטלוג תקין אך ריק. במקרה כזה מציגים מיד את
         // הקטלוג המלא שנבנה מתיקיית הדרייב של התוכנית, במקום אתר ריק. מנהל
