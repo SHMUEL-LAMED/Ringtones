@@ -202,7 +202,7 @@
   <a class="brand" href="index.html">
     <span class="logo-ring" aria-hidden="true"></span>
     <img class="logo-mark" src="assets/img/medallion.svg" alt="" width="46" height="46">
-    <div><strong>${esc(site?.name || 'ראש בראש')}</strong><small>${esc(site?.tagline || 'מוזיקה ואקטואליה')}</small></div>
+    <div><strong>${esc(site?.name || 'ראש בראש')}</strong>${window.RoshHoliday?.current?.() ? `<small class="holiday-line">${window.RoshHoliday.line()}</small>` : `<small>${esc(site?.tagline || 'מוזיקה ואקטואליה')}</small>`}</div>
   </a>
   <nav class="site-nav" aria-label="ניווט ראשי">
     ${nav}
@@ -585,6 +585,13 @@
 
   /* ---------- רשימת התפוצה: בלחיצה אחת עם חשבון Google ---------- */
 
+  /** מריץ פעם אחת כשהאלמנט מתקרב לאזור הנראה (400px לפניו); בלי IntersectionObserver — מיד */
+  function whenNear(el, fn) {
+    if (!el || typeof IntersectionObserver !== 'function') { fn(); return; }
+    const io = new IntersectionObserver((entries) => { if (entries.some((x) => x.isIntersecting)) { io.disconnect(); fn(); } }, { rootMargin: '400px 0px' });
+    io.observe(el);
+  }
+
   /** מציג את מצב ההרשמה בתוך אלמנט: מחוברים → כפתור הצטרפות/הסרה; אחרת כפתור Google. */
   async function mountSubscribe(el) {
     const S = window.RoshStore;
@@ -592,8 +599,12 @@
     const u = S.sb.user;
     if (!u) {
       el.innerHTML = '<div class="subscribe-google"><span>מתחברים עם Google, וההצטרפות היא בלחיצה אחת — בלי להקליד כתובת.</span><div class="google-slot" data-google></div><a class="btn ghost small" href="#" data-subscribe-fallback>בעיה עם הכפתור? כניסה דרך אתר הסקר</a></div>';
-      try { await S.sb.google(el.querySelector('[data-google]'), { onDone: () => mountSubscribe(el), onError: (err) => notify(`ההתחברות לא הצליחה: ${err.message}`, 'error') }); }
-      catch (err) { el.querySelector('[data-google]').innerHTML = `<span class="cue-hint">${esc(err.message)}</span>`; }
+      // הכפתור של Google (סקריפט חיצוני כבד) נטען רק כשהכרטיס מתקרב למסך — לא בטעינת הדף
+      const slot = el.querySelector('[data-google]');
+      whenNear(slot, async () => {
+        try { await S.sb.google(slot, { onDone: () => mountSubscribe(el), onError: (err) => notify(`ההתחברות לא הצליחה: ${err.message}`, 'error') }); }
+        catch (err) { slot.innerHTML = `<span class="cue-hint">${esc(err.message)}</span>`; }
+      });
       return;
     }
     el.innerHTML = '<span class="cue-hint">בודקים…</span>';
