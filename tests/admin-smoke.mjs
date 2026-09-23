@@ -152,7 +152,7 @@ await page.waitForSelector('.admin-stats', { timeout: 10000 });
 check((await page.locator('.admin-stats .stat').count()) === 4, 'סטטיסטיקות מוצגות');
 check((await page.locator('.bars:not(.hours):not(.retention) .bar').count()) === 2, 'גרף ימים');
 check((await page.locator('.msg.unread').count()) === 1, 'הודעה מהמאזינים מוצגת');
-check((await page.locator('#tab-unread').innerText()) === '1', 'תג הודעות שלא נקראו');
+check((await page.locator('#tab-unread').innerText()) === '2', 'תג: הודעה שלא נקראה ותגובה שממתינה לאישור');
 check((await page.locator('.hbars .hbar').count()) === 2, 'סטטיסטיקה: מאיפה הגיעו המאזינים');
 check((await page.locator('.bars.hours .bar').count()) === 24, 'סטטיסטיקה: האזנות לפי שעה');
 await page.selectOption('#stats-ep', { index: 1 });

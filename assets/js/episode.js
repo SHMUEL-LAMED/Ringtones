@@ -30,6 +30,7 @@
   document.querySelector('meta[name="description"]').setAttribute('content', ep.description.slice(0, 160) || ep.title);
 
   // נתונים מובנים למנועי חיפוש
+  document.querySelectorAll('script[type="application/ld+json"]').forEach((x) => x.remove());   // בדף הסטטי כבר יש אחד
   const ld = document.createElement('script');
   ld.type = 'application/ld+json';
   ld.textContent = JSON.stringify({
