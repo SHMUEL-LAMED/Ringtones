@@ -43,6 +43,11 @@ dialog.sheet.mail-sheet { width: min(1220px, calc(100% - 32px)); }
 .mc-list textarea { width: 100%; margin-top: 8px; min-height: 120px; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-10); background: var(--field-bg); color: var(--text-strong); font: 12.5px/1.6 var(--mono, monospace); resize: vertical; }
 .mc-list textarea:focus { outline: none; border-color: var(--gold); box-shadow: var(--ring-selected); }
 [data-m-count] .problems { display: block; margin: 0; }
+.mc-addrow { margin-top: -4px; }
+.mc-list-help { margin: 8px 0 0; font-size: 13px; }
+.mc-save { display: grid; gap: 6px; justify-items: start; margin-top: 10px; padding: 10px 12px; border: 1px dashed rgb(var(--gold-rgb) / .55); border-radius: var(--radius-10); background: var(--gold-selected); }
+.mc-save b { font-size: 13.5px; color: var(--gold-ink); }
+.mc-save small { font-size: 11.5px; font-weight: 700; color: var(--muted); }
 
 /* התצוגה המקדימה */
 .mc-preview { position: sticky; top: 8px; display: grid; gap: 10px; min-width: 0; }

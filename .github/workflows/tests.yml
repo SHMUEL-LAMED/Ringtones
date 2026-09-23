@@ -21,6 +21,8 @@ jobs:
         run: node tests/catalog.cjs
       - name: Newsletter email and Gmail draft encoding
         run: node tests/newsletter.cjs
+      - name: Mailing-list import from Excel and CSV
+        run: node tests/sheet-read.cjs
       - name: Install a browser for the page tests
         run: |
           npm i --no-save --no-package-lock playwright@1.56.1 http-server@14.1.1

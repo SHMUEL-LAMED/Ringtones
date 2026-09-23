@@ -4,6 +4,7 @@
           node tests/mail-smoke.mjs   (בחלון שני; דורש Playwright כמו שאר הבדיקות) */
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
+import zlib from 'node:zlib';
 
 const BASE = process.env.BASE || 'http://127.0.0.1:4180';
 const API = 'https://rosh-berosh.smwlyqswkwt232.workers.dev';
@@ -14,6 +15,7 @@ const EP = catalog.episodes.slice().sort((a, b) => (b.date || '').localeCompare(
 const SUBS = ['one@example.com', 'Two@Example.com', 'two@example.com', 'three@example.com', 'not-an-email'];
 
 let admin = true, subsMode = 'ok', gmailMode = 'ok', userdata = null, published = null;
+const listAdds = [];   // מה שנשלח להוספה לרשימת התפוצה
 const drafts = []; let tokenRequests = 0;
 
 const browser = await chromium.launch(process.env.PW_EXECUTABLE ? { executablePath: process.env.PW_EXECUTABLE } : {});
@@ -31,6 +33,14 @@ await ctx.route(`${API}/**`, async (route) => {
   if (p === '/api/program/draft') return json({ ok: true, updatedAt: new Date().toISOString(), by: 'admin@example.com' });
   if (p === '/api/program/userdata' && m === 'GET') return auth ? json({ data: userdata }) : json({ error: 'x' }, 401);
   if (p === '/api/program/userdata' && m === 'PUT') { userdata = req.postDataJSON().data; return json({ ok: true }); }
+  if (p === '/api/program/subscribers' && m === 'POST') {
+    if (!admin) return json({ error: 'אין הרשאת ניהול.' }, 403);
+    const content = req.postDataJSON().content; listAdds.push(content);
+    const emails = [...new Set((content.match(/[^\s@,;<>"']+@[^\s@,;<>"']+\.[a-z]{2,}/gi) || []).map((e) => e.toLowerCase()))];
+    const fresh = emails.filter((e) => !SUBS.some((x) => x.toLowerCase() === e));
+    SUBS.push(...fresh);
+    return json({ ok: true, found: emails.length, added: fresh.length, duplicates: emails.length - fresh.length, optedOut: 0, skipped: 0 });
+  }
   if (p === '/api/program/subscribers') {
     if (!admin) return json({ error: 'אין הרשאת ניהול.' }, 403);
     if (subsMode === 'missing') return json({ error: 'הנתיב לא נמצא.' }, 404);
@@ -202,6 +212,49 @@ await page.setInputFiles('[data-m-file]', { name: 'subscribers.csv', mimeType: '
 await page.waitForFunction(() => /2 כתובות/.test(document.querySelector('[data-m-count]')?.textContent || ''));
 check(true, 'ייבוא CSV מאקסל: 2 כתובות, בלי כפילויות');
 subsMode = 'ok';
+
+/* ---------- הוספת כתובות לרשימת התפוצה: הדבקה, קובץ אקסל, ושמירה ברשימה ---------- */
+await page.goto(`${BASE}/mail.html?ep=${encodeURIComponent(EP.slug)}`);
+await page.waitForSelector('.mail-composer');
+await page.waitForFunction(() => /3 כתובות/.test(document.querySelector('[data-m-count]')?.textContent || ''));
+check(await page.locator('[data-m-save]').isHidden(), 'כשהרשימה כמו בשרת — אין מה לשמור');
+await page.click('[data-mop="add-open"]');
+check(await page.locator('[data-m-listbox]').evaluate((d) => d.open) && await page.locator('[data-m="list"]').evaluate((t) => document.activeElement === t), '"+ הוספת כתובות לרשימה" פותח את התיבה, מוכנה להקלדה בסוף');
+await page.keyboard.type('דוד לוי <David@New.com>');
+await page.waitForSelector('[data-m-save]:not([hidden])');
+check((await page.locator('[data-m-save-text]').innerText()).includes('כתובת אחת חדשה'), 'כתובת שהודבקה ועוד אינה ברשימה: מוצעת שמירה ברשימת התפוצה');
+check(/4 כתובות/.test(await page.locator('[data-m-count]').innerText()), 'והיא נכנסת כבר לטיוטה הזו');
+// קובץ אקסל (xlsx) עם שמות
+{
+  const zipOf = (files) => {
+    const locals = [], centrals = []; let offset = 0;
+    for (const [name, text] of files) {
+      const nb = Buffer.from(name), raw = Buffer.from(text), data = zlib.deflateRawSync(raw);
+      const l = Buffer.alloc(30); l.writeUInt32LE(0x04034b50, 0); l.writeUInt16LE(8, 8); l.writeUInt32LE(data.length, 18); l.writeUInt32LE(raw.length, 22); l.writeUInt16LE(nb.length, 26);
+      const c = Buffer.alloc(46); c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(8, 10); c.writeUInt32LE(data.length, 20); c.writeUInt32LE(raw.length, 24); c.writeUInt16LE(nb.length, 28); c.writeUInt32LE(offset, 42);
+      locals.push(l, nb, data); centrals.push(c, nb); offset += 30 + nb.length + data.length;
+    }
+    const cd = Buffer.concat(centrals), end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10); end.writeUInt32LE(cd.length, 12); end.writeUInt32LE(offset, 16);
+    return Buffer.concat([...locals, cd, end]);
+  };
+  const xlsx = zipOf([
+    ['xl/sharedStrings.xml', '<sst><si><t>מייל</t></si><si><t>שם</t></si><si><t>rivka@list.org</t></si><si><t>רבקה</t></si><si><t>one@example.com</t></si></sst>'],
+    ['xl/worksheets/sheet1.xml', '<worksheet><sheetData><row r="1"><c t="s"><v>0</v></c><c t="s"><v>1</v></c></row><row r="2"><c t="s"><v>2</v></c><c t="s"><v>3</v></c></row><row r="3"><c t="s"><v>4</v></c></row></sheetData></worksheet>'],
+  ]);
+  await page.setInputFiles('[data-m-file]', { name: 'רשימה.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: xlsx });
+  await page.waitForFunction(() => /5 כתובות/.test(document.querySelector('[data-m-count]')?.textContent || ''));
+  check((await page.locator('[data-m-save-text]').innerText()).includes('2 כתובות חדשות'), 'ייבוא מאקסל: כתובת חדשה נוספה, וזו שכבר ברשימה לא הוכפלה');
+}
+if (process.env.SHOTS) await page.locator('.mc-sec:has([data-m-listbox])').screenshot({ path: `${process.env.SHOTS}/list-add.png` });
+await page.click('[data-mop="save-list"]');
+await page.waitForFunction(() => document.querySelector('[data-m-save]')?.hidden && /5 כתובות מרשימת התפוצה/.test(document.querySelector('[data-m-count]')?.textContent || ''), null, { timeout: 10000 });
+{
+  const sent = listAdds.at(-1) || '';
+  check(listAdds.length === 1 && sent.includes('דוד לוי <David@New.com>') && sent.includes('rivka@list.org\tרבקה') && !/one@example\.com/.test(sent), 'שמירה ברשימת התפוצה: רק הכתובות החדשות, עם השמות שלידן');
+  check((await page.locator('.notice-host .notice-text').last().innerText()).includes('2 כתובות נוספו לרשימת התפוצה'), 'הודעה כמה נוספו');
+  check(await page.locator('[data-m-save]').isHidden(), 'אחרי השמירה הרשימה נטענת מהשרת, ואין עוד מה לשמור');
+}
 
 /* ---------- מנהל שאינו מנהל ---------- */
 admin = false;

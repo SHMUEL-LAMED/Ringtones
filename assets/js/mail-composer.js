@@ -98,6 +98,8 @@
       id: '', opts: null, prefs: savedPrefs(), view: 'desktop', busy: false, results: {}, progress: '',
       mode: 'all', to: S.sb.user?.email || '', replyTo: '', chunk: 400,
       rcp: { state: 'loading', list: [], error: '', source: '' },
+      server: new Set(), serverOk: false,   // מה שכבר ברשימת התפוצה בשרת (כתובות חדשות אפשר לשמור בה)
+      lines: new Map(),                      // כתובת → השורה שממנה נלקחה (עם השם), לשמירה ברשימה
     };
     st.chunk = Math.min(2000, Math.max(1, Number(st.prefs.chunk) || 400));
     st.replyTo = String(st.prefs.replyTo || '');
@@ -218,14 +220,21 @@
         <button type="button" data-mmode="me" aria-pressed="${st.mode === 'me'}">רק אליי — לבדיקה</button>
       </div>
       <p class="help" data-m-count></p>
+      <div class="mc-addrow" data-m-addrow><button type="button" class="btn small" data-mop="add-open">+ הוספת כתובות לרשימה</button></div>
       <details class="mc-list" data-m-listbox>
-        <summary>הרשימה — הצגה, עריכה או ייבוא מקובץ</summary>
+        <summary>הרשימה — הוספת כתובות, ייבוא מאקסל ועריכה</summary>
+        <p class="help mc-list-help">מדביקים כתובות בסוף התיבה (אחת בכל שורה, שורות מאקסל, או "שם &lt;כתובת&gt;") או מייבאים קובץ אקסל / CSV. הן נכנסות לטיוטה הזו — ובלחיצה על "שמירה ברשימת התפוצה" גם לרשימה עצמה, לכל המיילים הבאים.</p>
         <textarea data-m="list" class="ltr" rows="5" spellcheck="false" aria-label="כתובות רשימת התפוצה, אחת בכל שורה"></textarea>
         <div class="actions" style="margin-top:8px">
-          <button type="button" class="btn small" data-mop="import">ייבוא מקובץ (CSV / טקסט)</button>
+          <button type="button" class="btn small" data-mop="import">ייבוא מקובץ (אקסל / CSV / טקסט)</button>
           <button type="button" class="btn small" data-mop="reload-list">טעינה מחדש מהשרת</button>
           <button type="button" class="btn small ghost" data-mop="copy-list">העתקת הכתובות</button>
-          <input type="file" data-m-file accept=".csv,.txt,text/csv,text/plain" hidden>
+          <input type="file" data-m-file accept=".xlsx,.csv,.txt,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+        </div>
+        <div class="mc-save" data-m-save hidden>
+          <b data-m-save-text></b>
+          <button type="button" class="btn small primary" data-mop="save-list">שמירה ברשימת התפוצה <span>←</span></button>
+          <small>הוסיפו רק אנשים שביקשו לקבל את המיילים. מי שהסיר את עצמו בעבר לא יחזור לרשימה.</small>
         </div>
       </details>
       <div class="form-grid">
@@ -283,13 +292,34 @@
       else count.textContent = `${n.toLocaleString('he-IL')} כתובות${r.source === 'manual' ? ' (רשימה שערכתם כאן)' : ' מרשימת התפוצה'} ייכנסו בעותק מוסתר${drafts > 1 ? ` — ${drafts} טיוטות, עד ${st.chunk.toLocaleString('he-IL')} נמענים בכל אחת` : ''}.`;
       if (ta && fillBox) ta.value = r.list.join('\n');
       const box = $('[data-m-listbox]'); if (box && st.mode === 'all' && !n && r.state !== 'loading') box.open = true;
+      const addrow = $('[data-m-addrow]'); if (addrow) addrow.hidden = st.mode === 'me';
+      // כתובות שנוספו כאן ועוד אינן ברשימת התפוצה בשרת — אפשר לשמור אותן בה
+      const fresh = st.serverOk ? r.list.filter((e) => !st.server.has(e)) : [];
+      const saveBox = $('[data-m-save]'); if (saveBox) saveBox.hidden = st.mode === 'me' || !fresh.length;
+      const saveText = $('[data-m-save-text]'); if (saveText) saveText.textContent = fresh.length === 1 ? 'כתובת אחת חדשה שעוד אינה ברשימת התפוצה' : `${fresh.length.toLocaleString('he-IL')} כתובות חדשות שעוד אינן ברשימת התפוצה`;
+    }
+    /** זוכרים מאיזו שורה הגיעה כל כתובת — כדי שהשם שלידה יישמר ברשימה */
+    function rememberLines(text) {
+      for (const line of String(text || '').split(/\r?\n/)) for (const e of M.parseEmails(line)) if (!st.lines.has(e) || line.trim().length > st.lines.get(e).length) st.lines.set(e, line.trim());
+    }
+    /** שומרים ברשימת התפוצה בשרת את הכתובות החדשות, וטוענים את הרשימה מחדש */
+    async function saveToList(btn) {
+      const fresh = st.rcp.list.filter((e) => !st.server.has(e)); if (!fresh.length) return;
+      btn.disabled = true;
+      try {
+        const r = await S.sb.subscribe.add(fresh.map((e) => st.lines.get(e) || e).join('\n'));
+        const added = Number(r.added) || 0, gone = Number(r.optedOut) || 0;
+        U.notify(`${added ? (added === 1 ? 'כתובת אחת נוספה' : `${added.toLocaleString('he-IL')} כתובות נוספו`) + ' לרשימת התפוצה' : 'לא נוספו כתובות חדשות'}${gone ? ` · ${gone.toLocaleString('he-IL')} הסירו את עצמם בעבר ולא נוספו` : ''}.`, added ? 'success' : 'info', { ttl: 8000 });
+        await loadRecipients();
+      } catch (err) { U.notify(`השמירה ברשימה לא הצליחה: ${err.message}`, 'error'); btn.disabled = false; }
     }
     async function loadRecipients() {
       st.rcp = { state: 'loading', list: [], error: '', source: '' }; paintRecipients(true);
       try {
         const r = await S.sb.subscribe.list();
         st.rcp = { state: 'ready', list: M.parseEmails((r.subscribers || []).map((x) => (typeof x === 'string' ? x : x?.email)).join('\n')), error: '', source: 'server' };
-      } catch (err) { st.rcp = { state: err.status === 404 ? 'missing' : 'error', list: [], error: err.message, source: '' }; }
+        st.server = new Set(st.rcp.list); st.serverOk = true;
+      } catch (err) { st.rcp = { state: err.status === 404 ? 'missing' : 'error', list: [], error: err.message, source: '' }; st.serverOk = false; }
       paintRecipients(true);
     }
 
@@ -363,7 +393,7 @@
     root.addEventListener('input', (ev) => {
       const t = ev.target, k = t.dataset.m; if (!k || !st.opts) return;
       if (k === 'ep') return;
-      if (k === 'list') { st.rcp = { ...st.rcp, state: 'ready', list: M.parseEmails(t.value), source: 'manual' }; st.error = ''; paintRecipients(false); paintResult(); return; }
+      if (k === 'list') { rememberLines(t.value); st.rcp = { ...st.rcp, state: 'ready', list: M.parseEmails(t.value), source: 'manual' }; st.error = ''; paintRecipients(false); paintResult(); return; }
       if (k === 'to') { st.to = t.value.trim(); return; }
       if (k === 'replyTo') { st.replyTo = t.value.trim(); save(); return; }
       if (k === 'chunk') { st.chunk = Math.min(2000, Math.max(1, Math.floor(Number(t.value) || 1))); paintRecipients(false); save(); return; }
@@ -378,7 +408,11 @@
       if (t.dataset.mshow) { st.opts.show[t.dataset.mshow] = t.checked; save(); preview(); return; }
       if (t.matches('[data-m-file]')) {
         const f = t.files?.[0]; t.value = ''; if (!f) return;
-        const found = M.parseEmails(await f.text());
+        let content = '';
+        try { content = await (window.RoshSheet ? window.RoshSheet.text(f) : f.text()); }
+        catch (err) { U.notify(err.message, 'error'); return; }
+        rememberLines(content);
+        const found = M.parseEmails(content);
         if (!found.length) { U.notify('לא נמצאו כתובות מייל בקובץ.', 'error'); return; }
         const merged = [...new Set([...st.rcp.list, ...found])], added = merged.length - st.rcp.list.length;
         st.rcp = { state: 'ready', list: merged, error: '', source: 'manual' }; st.error = '';
@@ -399,6 +433,8 @@
         case 'desc-reset': { const e = ep(); if (!e) break; st.opts.description = String(e.description || ''); const ta = $('[data-m="description"]'); if (ta) ta.value = st.opts.description; paintDescNote(); preview(); break; }
         case 'reset': if (confirm('לחזור לעיצוב ולניסוח של ברירת המחדל?')) { st.prefs = {}; S.prefs.set(PREF, {}); st.opts = optionsFor(ep()); render(); } break;
         case 'import': $('[data-m-file]')?.click(); break;
+        case 'add-open': { const box = $('[data-m-listbox]'), ta = $('[data-m="list"]'); if (!box || !ta) break; box.open = true; if (ta.value && !ta.value.endsWith('\n')) ta.value += '\n'; ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); ta.scrollTop = ta.scrollHeight; box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); break; }
+        case 'save-list': saveToList(b); break;
         case 'reload-list': loadRecipients(); break;
         case 'copy-list': (await U.copy(st.rcp.list.join(', '))) ? U.notify(`${st.rcp.list.length.toLocaleString('he-IL')} כתובות הועתקו.`, 'success') : U.notify('ההעתקה לא הצליחה.', 'error'); break;
       }
