@@ -1,0 +1,46 @@
+/* תוספות: כפתורי אהבתי ותור, הצעת חיפוש, בדיקת התקינות המקובצת בניהול,
+   כרטיס ה־AI, גרפים של הסטטיסטיקה המעמיקה, והתראות. נשען על הטוקנים של
+   rosh.css, ולכן עובד במצב כהה ובמצב בהיר. */
+
+#main:focus { outline: none; }
+
+/* ---------- אהבתי ---------- */
+.like-btn[aria-pressed="true"] { color: var(--pink); border-color: color-mix(in srgb, var(--pink) 55%, transparent); }
+.like-count { font-variant-numeric: tabular-nums; opacity: .75; margin-inline-start: 2px; }
+[data-queue][aria-pressed="true"], [data-later][aria-pressed="true"] { border-color: var(--gold); }
+
+/* ---------- "אולי התכוונתם ל…" ---------- */
+.link-btn { padding: 0; border: 0; background: none; color: var(--gold-ink); font: inherit; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+
+/* ---------- ניהול: בדיקת תקינות מקובצת ---------- */
+.health-groups { display: grid; gap: 10px; }
+.health-group { border: 1px solid var(--border); border-radius: var(--radius-13); padding: 12px 14px; background: rgb(var(--fg-rgb, 255 255 255) / .03); }
+.hg-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hg-head > b { font-size: 22px; font-variant-numeric: tabular-nums; min-width: 2.2ch; color: var(--gold-ink); }
+.hg-head > span:not(.cue-hint) { flex: 1; font-weight: 800; }
+.hg-head .cue-hint { display: inline-flex; align-items: center; gap: 6px; }
+.health-group details { margin-top: 6px; }
+.health-group summary { cursor: pointer; color: var(--muted); font-size: 12.5px; font-weight: 700; }
+
+/* ---------- ניהול: AI ---------- */
+.ai-result { margin-top: 14px; padding: 14px 16px; border-radius: var(--radius-13); border: 1px solid var(--gold-tint); background: var(--gold-selected); }
+.ai-result p { margin: 0 0 10px; line-height: 1.7; }
+.ai-transcript { margin-top: 14px; }
+.ai-transcript summary { cursor: pointer; font-weight: 800; }
+.transcript-text { margin-top: 8px; max-height: 360px; overflow: auto; white-space: pre-wrap; line-height: 1.8; font-size: 14px; padding: 12px 14px; border-radius: var(--radius-10); border: 1px solid var(--border); background: rgb(var(--fg-rgb, 255 255 255) / .03); }
+.upload-status .notice-spinner { display: inline-block; vertical-align: middle; }
+
+/* ---------- ניהול: סטטיסטיקה מעמיקה ---------- */
+.hbars { display: grid; gap: 6px; margin-top: 8px; }
+.hbar { display: grid; grid-template-columns: minmax(90px, 30%) 1fr auto; align-items: center; gap: 10px; font-size: 13px; }
+.hbar i { display: block; height: 10px; width: var(--w); min-width: 2px; border-radius: 99px; background: linear-gradient(90deg, var(--gold-deep), var(--gold-ink)); }
+.hbar b { font-variant-numeric: tabular-nums; color: var(--gold-ink); }
+.bars.hours, .bars.retention { height: 110px; gap: 2px; }
+.bars.retention .bar i { background: linear-gradient(180deg, var(--cyan), color-mix(in srgb, var(--cyan) 35%, transparent)); }
+.notify-check { margin-inline-start: 6px; }
+.push-form .actions { margin-top: 12px; }
+
+@media (max-width: 760px) {
+  .hbar { grid-template-columns: minmax(80px, 38%) 1fr auto; }
+  .bars.hours .bar:nth-child(even) small { visibility: visible; }
+}

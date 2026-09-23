@@ -8,13 +8,8 @@
   'use strict';
 
   const LS = {
-    override: 'rosh:override',      // טיוטה מקומית של כל הנתונים
-    pos: 'rosh:pos:',               // מיקום האזנה לכל תוכנית
-    last: 'rosh:last',              // התוכנית האחרונה שנוגנה
-    later: 'rosh:later',            // "לאחר כך"
-    sb: 'rosh:cf:session',          // סשן מנהל Cloudflare
-    prefs: 'rosh:prefs',            // מהירות, עוצמה, תצוגת ארכיון
-    history: 'rosh:history',        // היסטוריית האזנה (במכשיר הזה)
+    override: 'rosh:override',      // טיוטת הניהול (גיבוי מקומי של הטיוטה המשותפת)
+    sb: 'rosh:cf:session',          // סשן ההתחברות
     overrideAt: 'rosh:override-at', // מתי הטיוטה המקומית נשמרה (להשוואה עם הטיוטה המשותפת)
     preview: 'rosh:preview',        // קישור תצוגה מקדימה (sessionStorage)
     sso: 'rosh:sso-checked',        // מתי נבדק לאחרונה אם מחוברים באתר הסקר
@@ -99,17 +94,46 @@
     })).filter((u) => u.title || u.text);
     return { banner, updates, survey };
   }
+  /* ---------- שעון ישראל ----------
+     התאריכים באתר (תאריך שידור, "הודעה עד", פרסום מתוזמן) הם לפי שעון ישראל,
+     גם כשהגולש בחו"ל וגם בין חצות לשלוש, כשהשעון העולמי עוד ב"אתמול". */
+  const ilParts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  /** "2026-09-22T23:45" — הזמן עכשיו בישראל */
+  function nowIL(at = new Date()) {
+    const p = Object.fromEntries(ilParts.formatToParts(at).map((x) => [x.type, x.value]));
+    return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+  }
+  /** "2026-09-22" — התאריך היום בישראל */
+  const todayIL = (at) => nowIL(at).slice(0, 10);
+
   /** ההודעה בדף הבית פעילה? (מסומנת, יש טקסט, התאריך לא עבר, ומיועדת לאתר הזה) */
   function bannerActive(banner = state.data.settings?.banner) {
     if (!banner?.enabled || !banner.text || banner.sites?.program === false) return false;
-    return !banner.until || banner.until >= new Date().toISOString().slice(0, 10);
+    return !banner.until || banner.until >= todayIL();
   }
-  /** תוכנית מתוזמנת שעדיין לא הגיע זמנה */
+  /** תוכנית מתוזמנת שעדיין לא הגיע זמנה (המועד נקבע בשעון ישראל) */
   function scheduled(e, now = new Date()) {
-    return !!e.publishAt && new Date(e.publishAt) > now;
+    return !!e.publishAt && e.publishAt > nowIL(now);
   }
 
   /* ---------- Cloudflare: אותו D1 ואותו אימות Google של אתר הסקר ---------- */
+
+  /** מאיפה הגיע הביקור הזה (לסטטיסטיקה, בלי שום פרט מזהה): וואטסאפ, גוגל, פייסבוק, ישיר או אחר */
+  function visitSource() {
+    try {
+      const saved = sessionStorage.getItem('rosh:ref'); if (saved) return saved;
+      const utm = new URLSearchParams(location.search).get('utm_source') || '';
+      const ref = document.referrer ? new URL(document.referrer) : null;
+      const host = ref?.hostname || '';
+      const src = /whatsapp/i.test(utm) || /whatsapp|wa\.me/.test(host) ? 'whatsapp'
+        : /google\./.test(host) || /google/i.test(utm) ? 'google'
+        : /facebook|fb\.|instagram/.test(host) || /facebook/i.test(utm) ? 'facebook'
+        : !ref ? 'direct'
+        : ref.origin === location.origin || /workers\.dev$/.test(host) ? 'internal' : 'other';
+      sessionStorage.setItem('rosh:ref', src);
+      return src;
+    } catch { return 'other'; }
+  }
 
   const sb = {
     get cfg() { return state.site?.storage?.cloudflare || null; },
@@ -140,7 +164,7 @@
           if (event.origin !== origin || event.data?.type !== 'rosh-program-auth') return;
           if (!event.data.token || !event.data.user) return finish(() => reject(new Error('ההתחברות לא הושלמה. נסו שוב.')));
           this.session = { token:event.data.token, user:{ ...event.data.user, isAdmin: !!event.data.user.isAdmin } };
-          finish(() => resolve(this.user));
+          signedIn().catch(() => {}).then(() => finish(() => resolve(this.user)));
         };
         window.addEventListener('message', receive);
       });
@@ -195,7 +219,9 @@
             if (!r.ok || !j.token) throw new Error(j.error || 'ההתחברות לא הצליחה.');
             this.session = { token: j.token, user: { ...j.user, isAdmin: !!j.user?.isAdmin } };
             // כניסה אחת: מחברים מיד גם את אתר הסקר, והדף חוזר לכאן
+            await me.load(); await me.save(true);
             if (await this.shareLogin()) return;
+            await signedIn();
             onDone?.(this.user);
           } catch (err) { onError?.(err); }
         },
@@ -211,10 +237,10 @@
       return j;
     },
     /** אירוע האזנה לסטטיסטיקה (ציבורי; בלי preflight, בלי המתנה) */
-    event(kind, episodeId, seconds = 0) {
+    event(kind, episodeId, seconds = 0, extra = {}) {
       if (!this.configured || state.preview) return;
       const device = matchMedia('(pointer: coarse)').matches ? 'phone' : 'desktop';
-      try { fetch(this.base('/api/program/events'), { method: 'POST', keepalive: true, headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ kind, episodeId, seconds, device }) }).catch(() => {}); } catch { /* */ }
+      try { fetch(this.base('/api/program/events'), { method: 'POST', keepalive: true, headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ kind, episodeId, seconds, device, ref: visitSource(), ...extra }) }).catch(() => {}); } catch { /* */ }
     },
     draft: {
       get: () => sb.call('/api/program/draft'),
@@ -263,13 +289,15 @@
       if (!r.ok) throw new Error(`Cloudflare: ${r.status}`);
       return r.json();
     },
-    async push(data, { removedIds = [] } = {}) {
+    /** פרסום. baseVersion = הגרסה שהייתה באתר כשהתחלנו לערוך; אם מנהל אחר פרסם
+        בינתיים, השרת מחזיר 409 (err.conflict) ולא דורס — אלא אם force. */
+    async push(data, { removedIds = [], baseVersion, force = false, notify = false } = {}) {
       if (!await this.isAdmin()) throw new Error('צריך להתחבר עם חשבון מנהל כדי לפרסם');
-      const r = await fetch(this.base('/api/program/catalog'), {
-        method:'POST', headers:this.headers(), body:JSON.stringify({ seasons:data.seasons, episodes:data.episodes, removedIds, settings:data.settings || {} }),
-      });
+      const payload = { seasons:data.seasons, episodes:data.episodes, removedIds, settings:data.settings || {}, notify, force };
+      if (baseVersion !== undefined) payload.baseVersion = baseVersion;
+      const r = await fetch(this.base('/api/program/catalog'), { method:'POST', headers:this.headers(), body:JSON.stringify(payload) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || `שמירת התוכניות נכשלה (${r.status})`);
+      if (!r.ok) { const err = new Error(j.error || `שמירת התוכניות נכשלה (${r.status})`); err.status = r.status; err.conflict = !!j.conflict; err.latest = j.latest || null; throw err; }
       return j;
     },
     async importDrive(episode) {
@@ -298,15 +326,17 @@
   let readyResolve;
   const ready = new Promise((res) => { readyResolve = res; });
 
-  /** צריך לבדוק באתר הסקר אם כבר מחוברים שם? רק באתר עצמו, בלי סשן כאן,
-      ולא יותר מפעם בכמה שעות (בדף האישי ובניהול — פעם בכל ביקור). */
+  /** צריך לבדוק באתר הסקר אם כבר מחוברים שם? רק באזור האישי ובניהול, בלי
+      סשן כאן, ולא יותר מפעם בכמה שעות (ופעם בכל ביקור). בשאר הדפים לא בודקים
+      בכלל — כדי שהטעינה הראשונה תהיה מיידית, בלי מעבר לאתר הסקר וחזרה. */
   async function needsSso(params) {
     if (!sb.configured || sb.session?.token || state.embed || params.has('preview')) return false;
+    if (!/(?:me|admin)\.html$/.test(location.pathname)) return false;
     let here = false; try { here = location.origin === new URL(state.site.url).origin || !!localStorage.getItem('rosh:sso-test'); } catch { /* */ }
     if (!here || /bot|crawl|spider|preview/i.test(navigator.userAgent || '')) return false;
     const last = Number(read(LS.sso, 0)) || 0;
     let fresh = Date.now() - last < SSO_TTL;
-    if (/(?:me|admin)\.html$/.test(location.pathname)) { try { fresh = fresh && !!sessionStorage.getItem('rosh:sso-visit'); sessionStorage.setItem('rosh:sso-visit', '1'); } catch { /* */ } }
+    try { fresh = fresh && !!sessionStorage.getItem('rosh:sso-visit'); sessionStorage.setItem('rosh:sso-visit', '1'); } catch { /* */ }
     if (fresh) return false;
     // השרת זמין? (אחרת לא שולחים את הדפדפן לדף שגיאה)
     try { const c = new AbortController(); const t = setTimeout(() => c.abort(), 2000); const r = await fetch(sb.base('/api/program/banner'), { signal: c.signal, cache: 'no-store' }); clearTimeout(t); return r.ok; } catch { return false; }
@@ -346,9 +376,15 @@
         location.replace(`${sb.base('/api/program/sso')}?return=${encodeURIComponent(location.href)}`);
         return new Promise(() => {});   // הדף עובר; לא ממשיכים לטעון
       }
-      // מחוברים כאן? מוודאים מול השרת (התנתקות באתר הסקר מנתקת גם כאן)
-      if (sb.configured && sb.session?.token) await Promise.race([sb.isAdmin().catch(() => {}), new Promise((r) => setTimeout(r, 2500))]);
     } catch { /* */ }
+    // מחוברים כאן? מוודאים מול השרת ברקע (התנתקות באתר הסקר מנתקת גם כאן),
+    // בלי לעכב את הדף: הכותרת מתעדכנת כשהתשובה מגיעה.
+    const verify = sb.configured && sb.session?.token
+      ? sb.isAdmin().catch(() => {}).then(() => { if (!sb.session?.token) me.reset(); sessionChanged(); })
+      : Promise.resolve();
+    state.verified = verify;
+    // הנתונים האישיים נטענים מהחשבון במקביל לקטלוג (לכל היותר 2.5 שניות המתנה)
+    const personal = Promise.race([me.load(), new Promise((r) => setTimeout(r, 2500))]);
     // תצוגה מקדימה של הטיוטה דרך קישור (?preview=טוקן) — נשמר לכל הביקור
     try {
       const fromUrl = new URLSearchParams(location.search).get('preview');
@@ -390,9 +426,19 @@
         } else state.data = normalize({});
       }
     }
+    await personal;
     readyResolve(state);
     return state;
   }
+
+  /* ---------- שינוי בחיבור: כניסה, יציאה, או אימות מול השרת ---------- */
+  const sessionListeners = new Set();
+  function onSession(fn) { sessionListeners.add(fn); return () => sessionListeners.delete(fn); }
+  function sessionChanged() { sessionListeners.forEach((fn) => { try { fn(sb.user); } catch { /* */ } }); }
+  /** אחרי כניסה: טוענים את הנתונים של החשבון ומודיעים לכל הדף */
+  async function signedIn() { await me.load(); likes.load(true); sessionChanged(); }
+  /** התנתקות מכל המקומות */
+  function signOut() { me.save(true); sb.signOut(); me.reset(); likes.mine = new Set(); sessionChanged(); }
 
   /* ---------- שאילתות ---------- */
 
@@ -418,61 +464,259 @@
     return { newer: i > 0 ? list[i - 1] : null, older: i >= 0 && i < list.length - 1 ? list[i + 1] : null };
   }
 
-  const fold = (s) => String(s || '').toLowerCase().replace(/[֑-ׇ]/g, '').replace(/[״"'׳]/g, '').replace(/\s+/g, ' ').trim();
+  /* ---------- חיפוש ----------
+     מתעלם מניקוד, מגרשיים ומאותיות סופיות, מחפש גם בשם העונה ובאורחים,
+     וסולח על טעות הקלדה אחת במילים של ארבע אותיות ומעלה. */
+  const FINALS = { 'ך': 'כ', 'ם': 'מ', 'ן': 'נ', 'ף': 'פ', 'ץ': 'צ' };
+  const fold = (s) => String(s || '').toLowerCase().replace(/[\u0591-\u05C7]/g, '').replace(/[״"'׳`]/g, '').replace(/[ךםןףץ]/g, (c) => FINALS[c]).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  function near(a, b) {   // מרחק עריכה ≤ 1
+    if (Math.abs(a.length - b.length) > 1) return false;
+    let i = 0, j = 0, edits = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { i++; j++; continue; }
+      if (++edits > 1) return false;
+      if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+    }
+    return edits + (a.length - i) + (b.length - j) <= 1;
+  }
+  const haystack = (e) => {
+    const season = state.data.seasons.find((x) => x.id === e.season);
+    return fold([e.title, e.description, e.number, e.date, season?.title, ...e.tags, ...e.guests].join(' '));
+  };
+  const termHit = (t, hay, words) => hay.includes(t) || (t.length >= 4 && words.some((w) => near(t, w) || (w.length > t.length && near(t, w.slice(0, t.length)))));
 
   function searchEpisodes(q, list = episodes()) {
     q = fold(q);
     if (!q) return list;
     const terms = q.split(' ');
-    return list.filter((e) => {
-      const hay = fold([e.title, e.description, e.number, e.date, ...e.tags, ...e.guests].join(' '));
-      return terms.every((t) => hay.includes(t));
+    const exact = list.filter((e) => { const hay = haystack(e); return terms.every((t) => hay.includes(t)); });
+    if (exact.length) return exact;
+    // אין התאמה מדויקת — סובלנות לטעות הקלדה
+    return list.filter((e) => { const hay = haystack(e), words = hay.split(' '); return terms.every((t) => termHit(t, hay, words)); });
+  }
+  /** "אולי התכוונתם ל…": המילה הקרובה ביותר מתוך שמות התוכניות, האורחים והתגיות */
+  function suggest(q, list = episodes()) {
+    const raw = String(q || '').trim().split(/\s+/).filter(Boolean);
+    if (!raw.length) return '';
+    const vocab = new Map();   // מילה מקופלת → המילה כפי שהיא כתובה
+    list.forEach((e) => [e.title, state.data.seasons.find((x) => x.id === e.season)?.title, ...e.tags, ...e.guests].join(' ').replace(/[\u0591-\u05C7]/g, '').split(/[^\p{L}\p{N}"'״׳]+/u).forEach((w) => { const f = fold(w); if (f.length >= 3 && !vocab.has(f)) vocab.set(f, w); }));
+    let changed = false;
+    const out = raw.map((r) => {
+      const t = fold(r);
+      if (vocab.has(t) || t.length < 3) return r;
+      const hit = [...vocab.keys()].find((w) => near(t, w));
+      if (hit) { changed = true; return vocab.get(hit); }
+      return r;
     });
+    return changed ? out.join(' ') : '';
   }
 
-  /* ---------- העדפות ומיקומי האזנה ---------- */
+  /* ---------- הנתונים האישיים: נשמרים רק בחשבון Google ----------
+     שום דבר אישי לא נשמר במכשיר. מי שמחובר — הנתונים שלו (איפה עצר, "לאחר
+     כך", היסטוריה, תור, העדפות, זמן האזנה) נטענים מהחשבון ונשמרים בו, כך
+     שהם זהים בכל מכשיר. מי שלא מחובר — הנתונים חיים רק בזיכרון של הביקור
+     הנוכחי, ומצטרפים לחשבון כשהוא מתחבר. */
+
+  const ME_KEYS = ['positions', 'later', 'history', 'prefs', 'queue', 'finished', 'last', 'listenSeconds'];
+  const blank = () => ({ positions: {}, later: [], history: [], prefs: {}, queue: [], finished: [], last: null, listenSeconds: 0 });
+  function cleanMe(raw) {
+    const d = blank();
+    if (!raw || typeof raw !== 'object') return d;
+    if (raw.positions && typeof raw.positions === 'object') {
+      for (const [id, p] of Object.entries(raw.positions)) if (p && Number.isFinite(Number(p.t))) d.positions[id] = { t: Math.floor(Number(p.t)), dur: Math.floor(Number(p.dur) || 0), at: Number(p.at) || 0 };
+    }
+    const ids = (v) => (Array.isArray(v) ? [...new Set(v.map(String).filter(Boolean))] : []);
+    d.later = ids(raw.later); d.queue = ids(raw.queue); d.finished = ids(raw.finished);
+    d.history = (Array.isArray(raw.history) ? raw.history : []).filter((h) => h && h.id).map((h) => ({ id: String(h.id), at: Number(h.at) || 0 }));
+    d.prefs = raw.prefs && typeof raw.prefs === 'object' ? { ...raw.prefs } : {};
+    d.last = raw.last && raw.last.id ? { id: String(raw.last.id), t: Math.floor(Number(raw.last.t) || 0) } : null;
+    d.listenSeconds = Math.max(0, Math.floor(Number(raw.listenSeconds) || 0));
+    return d;
+  }
+  const hasContent = (d) => !!(Object.keys(d.positions).length || d.later.length || d.history.length || d.queue.length || d.listenSeconds || d.last);
+  /** מיזוג: מה שנעשה בביקור הזה (לפני שהתחברו, או במכשיר הזה) נוסף לחשבון */
+  function mergeMe(base, extra) {
+    const out = cleanMe(base), x = cleanMe(extra);
+    for (const [id, p] of Object.entries(x.positions)) if (!out.positions[id] || p.at > out.positions[id].at) out.positions[id] = p;
+    out.later = [...new Set([...x.later, ...out.later])];
+    out.queue = [...new Set([...out.queue, ...x.queue])];
+    out.finished = [...new Set([...out.finished, ...x.finished])];
+    const hist = new Map(); for (const h of [...out.history, ...x.history]) if (!hist.has(h.id) || hist.get(h.id).at < h.at) hist.set(h.id, h);
+    out.history = [...hist.values()].sort((a, b) => b.at - a.at);
+    out.prefs = { ...out.prefs, ...x.prefs };
+    if (x.last) out.last = x.last;
+    out.listenSeconds += x.listenSeconds;
+    return out;
+  }
+
+  const me = {
+    data: blank(),
+    account: null,       // המייל שהנתונים שייכים לו
+    loaded: false,
+    dirty: false,
+    timer: null,
+    listeners: new Set(),
+    onChange(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
+    emit() { this.listeners.forEach((fn) => { try { fn(this.data); } catch { /* */ } }); },
+    /** טוען את הנתונים מהחשבון (ומצרף אליהם את מה שנעשה בביקור הזה) */
+    async load() {
+      const email = sb.user?.email || null;
+      if (!email || !sb.configured) { this.account = null; this.loaded = true; return this.data; }
+      try {
+        const r = await sb.call('/api/program/userdata');
+        const visit = this.account === email || !hasContent(this.data) ? null : this.data;   // מה שנעשה לפני ההתחברות
+        const server = cleanMe(r.data);
+        this.data = visit ? mergeMe(server, visit) : (this.dirty ? mergeMe(server, this.data) : server);
+        // העברה חד־פעמית: נתונים ישנים שנשמרו פעם במכשיר עוברים לחשבון ונמחקים מהמכשיר
+        const legacy = takeLegacy();
+        if (legacy) this.data = mergeMe(this.data, legacy);
+        this.account = email; this.loaded = true;
+        if (visit || legacy || this.dirty) this.save(true);
+      } catch (e) {
+        if (e.status === 401) sb.session = null;
+        this.account = null; this.loaded = true;
+      }
+      this.emit();
+      return this.data;
+    },
+    /** נקרא אחרי כל שינוי. שמירה בחשבון באיחור קצר (מאגדת שינויים רצופים). */
+    change() {
+      this.dirty = true;
+      this.emit();
+      if (!this.account) return;
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => this.save(), 2500);
+    },
+    async save(now = false, { keepalive = false } = {}) {
+      clearTimeout(this.timer); this.timer = null;
+      if (!this.account || !sb.session?.token || !this.dirty && !now) return;
+      this.dirty = false;
+      try {
+        const body = JSON.stringify({ data: this.data });
+        const r = await fetch(sb.base('/api/program/userdata'), { method: 'PUT', headers: sb.headers(), body, keepalive: keepalive && body.length < 60000, cache: 'no-store' });
+        if (!r.ok) { if (r.status === 401) { sb.session = null; this.account = null; } else this.dirty = true; }
+      } catch { this.dirty = true; }
+    },
+    /** אחרי מחיקת הנתונים מהחשבון */
+    clear() { clearTimeout(this.timer); this.data = blank(); this.dirty = false; this.emit(); },
+    /** התנתקות: הנתונים של החשבון יוצאים מהדף */
+    reset() { clearTimeout(this.timer); this.data = blank(); this.account = null; this.dirty = false; this.emit(); },
+  };
+  /** נתונים ישנים מהתקופה שבה האתר שמר במכשיר — נאספים פעם אחת ונמחקים */
+  function takeLegacy() {
+    try {
+      const d = blank(); let found = false;
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i); if (!k) continue;
+        if (k.startsWith('rosh:pos:')) { const p = read(k, null); if (p) { d.positions[k.slice(9)] = p; found = true; } localStorage.removeItem(k); }
+      }
+      const later = read('rosh:later', null), hist = read('rosh:history', null), prefs = read('rosh:prefs', null), lastEp = read('rosh:last', null);
+      if (later) { d.later = later; found = true; } if (hist) { d.history = hist; found = true; }
+      if (prefs) { d.prefs = { rate: prefs.rate, archiveView: prefs.archiveView }; found = true; }
+      if (lastEp) { d.last = lastEp; found = true; }
+      ['rosh:later', 'rosh:history', 'rosh:prefs', 'rosh:last'].forEach((k) => localStorage.removeItem(k));
+      return found ? d : null;
+    } catch { return null; }
+  }
+  window.addEventListener('pagehide', () => { if (me.dirty) me.save(true, { keepalive: true }); });
+  document.addEventListener?.('visibilitychange', () => {
+    if (document.hidden) { if (me.dirty) me.save(true, { keepalive: true }); }
+    else if (me.account && !me.dirty && Date.now() - (me.pulledAt || 0) > 60000) { me.pulledAt = Date.now(); me.load(); }   // עדכונים ממכשיר אחר
+  });
 
   const prefs = {
-    get all() { return read(LS.prefs, {}); },
-    get(k, fb) { const v = this.all[k]; return v == null ? fb : v; },
-    set(k, v) { write(LS.prefs, { ...this.all, [k]: v }); },
+    get all() { return me.data.prefs; },
+    get(k, fb) { const v = me.data.prefs[k]; return v == null ? fb : v; },
+    set(k, v) { if (me.data.prefs[k] === v) return; me.data.prefs[k] = v; me.change(); },
   };
 
   const positions = {
-    get(id) { return read(LS.pos + id, null); },
-    set(id, t, dur) { write(LS.pos + id, { t: Math.floor(t), dur: Math.floor(dur || 0), at: Date.now() }); },
-    clear(id) { write(LS.pos + id, null); },
+    get(id) { return me.data.positions[id] || null; },
+    set(id, t, dur) {
+      me.data.positions[id] = { t: Math.floor(t), dur: Math.floor(dur || 0), at: Date.now() };
+      const ids = Object.keys(me.data.positions);
+      if (ids.length > 400) ids.sort((a, b) => me.data.positions[a].at - me.data.positions[b].at).slice(0, ids.length - 400).forEach((x) => delete me.data.positions[x]);
+      me.change();
+    },
+    clear(id) { if (me.data.positions[id]) { delete me.data.positions[id]; me.change(); } },
+    clearAll() { me.data.positions = {}; me.data.last = null; me.change(); },
     /** תוכניות שהתחלתם ולא סיימתם, מהאחרונה */
     resumable() {
       const out = [];
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (!k.startsWith(LS.pos)) continue;
-          const p = read(k, null), e = byId(k.slice(LS.pos.length));
-          if (e && e.visible && p && p.t > 20 && (!p.dur || p.t < p.dur - 30)) out.push({ episode: e, ...p });
-        }
-      } catch { /* */ }
+      for (const [id, p] of Object.entries(me.data.positions)) {
+        const e = byId(id);
+        if (e && e.visible && !scheduled(e) && p.t > 20 && (!p.dur || p.t < p.dur - 30)) out.push({ episode: e, ...p });
+      }
       return out.sort((a, b) => b.at - a.at);
     },
   };
 
   const last = {
-    get() { return read(LS.last, null); },
-    set(id, t) { write(LS.last, { id, t: Math.floor(t || 0) }); },
+    get() { return me.data.last; },
+    set(id, t) { me.data.last = { id, t: Math.floor(t || 0) }; me.change(); },
   };
 
-  /** היסטוריית האזנה: התוכניות שנוגנו במכשיר הזה, מהאחרונה. */
+  /** היסטוריית האזנה: התוכניות שנוגנו, מהאחרונה. */
   const history = {
-    list() { return read(LS.history, []); },
-    add(id) { const l = this.list().filter((x) => x.id !== id); l.unshift({ id, at: Date.now() }); write(LS.history, l.slice(0, 60)); },
-    clear() { write(LS.history, null); },
+    list() { return me.data.history; },
+    add(id) { me.data.history = [{ id, at: Date.now() }, ...me.data.history.filter((x) => x.id !== id)].slice(0, 300); me.change(); },
+    clear() { me.data.history = []; me.change(); },
   };
 
   const later = {
-    list() { return read(LS.later, []); },
-    has(id) { return this.list().includes(id); },
-    toggle(id) { const l = this.list(); const i = l.indexOf(id); i >= 0 ? l.splice(i, 1) : l.unshift(id); write(LS.later, l); return i < 0; },
+    list() { return me.data.later; },
+    has(id) { return me.data.later.includes(id); },
+    toggle(id) { const on = !this.has(id); me.data.later = on ? [id, ...me.data.later] : me.data.later.filter((x) => x !== id); me.change(); return on; },
+  };
+
+  /** תור האזנה: מה מתנגן אחרי התוכנית הנוכחית */
+  const queue = {
+    list() { return me.data.queue; },
+    has(id) { return me.data.queue.includes(id); },
+    add(id) { if (!this.has(id)) { me.data.queue = [...me.data.queue, id]; me.change(); } },
+    remove(id) { if (this.has(id)) { me.data.queue = me.data.queue.filter((x) => x !== id); me.change(); } },
+    toggle(id) { this.has(id) ? this.remove(id) : this.add(id); return this.has(id); },
+    clear() { me.data.queue = []; me.change(); },
+    /** התוכנית הבאה בתור (ומוציא אותה מהתור) */
+    shift(currentId) {
+      const ids = me.data.queue.filter((x) => x !== currentId);
+      const nextId = ids.find((x) => { const e = byId(x); return e && e.visible && !scheduled(e) && e.stream; });
+      me.data.queue = nextId ? ids.slice(ids.indexOf(nextId) + 1) : ids;
+      me.change();
+      return nextId ? byId(nextId) : null;
+    },
+  };
+
+  /** סיכום האזנה לאזור האישי: זמן האזנה אמיתי ותוכניות שנשמעו עד הסוף */
+  const listening = {
+    tick(seconds = 1) { me.data.listenSeconds += seconds; me.dirty = true; if (me.account && !me.timer) me.timer = setTimeout(() => me.save(), 30000); },
+    finish(id) { if (!me.data.finished.includes(id)) { me.data.finished = [id, ...me.data.finished]; me.change(); } },
+    get seconds() { return me.data.listenSeconds; },
+    get finished() { return me.data.finished; },
+  };
+
+  /* ---------- "אהבתי" ---------- */
+  const likes = {
+    counts: {}, mine: new Set(), loaded: false, _p: null,
+    load(force = false) {
+      if (!sb.configured) return Promise.resolve(this);
+      if (this._p && !force) return this._p;
+      this._p = sb.call('/api/program/likes').then((r) => { this.counts = r.counts || {}; this.mine = new Set(r.mine || []); this.loaded = true; return this; }).catch(() => this);
+      return this._p;
+    },
+    count(id) { return Number(this.counts[id] || 0); },
+    has(id) { return this.mine.has(id); },
+    async toggle(id) {
+      const on = !this.mine.has(id);
+      const r = await sb.call('/api/program/likes', { method: 'POST', body: { episodeId: id, like: on } });
+      if (r.liked) this.mine.add(id); else this.mine.delete(id);
+      this.counts[id] = Number(r.count) || 0;
+      return r.liked;
+    },
+    top(n = 8) {
+      return Object.entries(this.counts).filter(([id, c]) => c > 0 && byId(id)).sort((a, b) => b[1] - a[1]).slice(0, n)
+        .map(([id]) => byId(id)).filter((e) => e && e.visible && !scheduled(e));
+    },
   };
 
   /* ---------- ניהול ---------- */
@@ -484,7 +728,10 @@
     clearOverride() { write(LS.override, null); write(LS.overrideAt, null); },
     /** הנתונים כפי שהם במקור (בלי הטיוטה המקומית) */
     async pullOrigin() {
-      return normalize(state.source === 'cloudflare' ? await sb.pull(true) : await fetchJSON('data/episodes.json'));
+      const raw = state.source === 'cloudflare' ? await sb.pull(true) : await fetchJSON('data/episodes.json');
+      const data = normalize(raw);
+      data.versionId = raw?.versionId ?? null;   // הגרסה שבאתר עכשיו (להגנה מדריסה)
+      return data;
     },
     export(data) {
       return JSON.stringify({ version: 1, updated: new Date().toISOString().slice(0, 10), seasons: data.seasons, episodes: data.episodes, settings: data.settings || {} }, null, 2);
@@ -512,9 +759,9 @@
   };
 
   window.RoshStore = {
-    state, ready, load, sb, prefs, positions, last, later, history, admin,
-    episodes, seasons, bySlug, byId, latest, featured, neighbors, searchEpisodes,
-    bannerActive, scheduled,
+    state, ready, load, sb, prefs, positions, last, later, history, queue, listening, likes, me, admin,
+    episodes, seasons, bySlug, byId, latest, featured, neighbors, searchEpisodes, suggest,
+    bannerActive, scheduled, nowIL, todayIL, onSession, signedIn, signOut,
     get site() { return state.site; },
     get data() { return state.data; },
     get settings() { return state.data.settings || { banner: null, updates: [] }; },

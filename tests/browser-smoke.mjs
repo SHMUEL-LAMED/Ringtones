@@ -47,7 +47,7 @@ check(await page.locator('.dock.open').count() === 1, 'הנגן הקבוע נפ�
 const apiBase = await page.evaluate(() => window.RoshStore.site?.storage?.cloudflare?.apiBase || '');
 const src = await page.evaluate(() => window.RoshPlayer.src);
 check(apiBase ? src.startsWith(`${apiBase}/api/program/stream/`) : /^https:\/\/drive\.usercontent\.google\.com\//.test(src), 'הנגן מזרים דרך ה־Worker (בלי נגן חיצוני)');
-check(/^https:\/\/drive\.usercontent\.google\.com\//.test(await page.locator('.dock [data-download]').getAttribute('href')), 'כפתור ההורדה בנגן מצביע לקובץ עצמו');
+check((await page.locator('.dock [data-download]').getAttribute('href')).startsWith(`${apiBase}/api/program/download/`), 'ההורדה מהאחסון של האתר, בשם התוכנית (לא מהדרייב)');
 if (process.env.STREAM) {
   // דורש Worker פרוס עם /api/program/stream ורשת
   const streaming = await page.waitForFunction(() => window.RoshPlayer.duration > 60 && window.RoshPlayer.time > 0.5, null, { timeout: 45000 }).then(() => true).catch(() => false);
@@ -61,10 +61,18 @@ if (process.env.STREAM) {
   console.log('· (STREAM=1 מפעיל גם את בדיקת ההזרמה עצמה מול ה־Worker)');
   await page.evaluate(() => { window.RoshPlayer.pause(); window.RoshPlayer.seek(1200); });
 }
+await page.evaluate(() => { window.__sameDocument = true; });
 await page.click('.site-nav a[href="archive.html"]');
 await page.waitForSelector('#results .ep-card');
 check(await page.locator('.dock.open').count() === 1, 'הנגן נשאר פתוח במעבר לארכיון');
+check(await page.evaluate(() => window.__sameDocument === true), 'המעבר בין דפים בלי טעינה מחדש (הנגן לא נעצר)');
 check((await page.evaluate(() => window.RoshPlayer.time)) >= 1000, 'המיקום בהקלטה נשמר בין דפים');
+check(page.url().endsWith('/archive.html'), 'הכתובת מתעדכנת במעבר');
+await page.goBack();
+await page.waitForSelector('#featured .card');
+check(await page.evaluate(() => window.__sameDocument === true) && (await page.locator('#recent .ep-card').count()) >= 3, 'כפתור "אחורה" מחזיר לדף הקודם בלי טעינה');
+await page.goForward();
+await page.waitForSelector('#results .ep-card');
 
 /* ---------- ארכיון ---------- */
 check((await page.locator('#results .ep-card').count()) === 86, 'הארכיון מציג את כל התוכניות');
@@ -94,18 +102,35 @@ check((await page.locator('#episode h1').innerText()).includes(featured.title.sl
 check((await page.locator('iframe').count()) === 0, 'אין נגן חיצוני בדף התוכנית');
 check(!(await page.locator('#main').innerText()).includes('Drive'), 'שום אזכור של ספק האחסון בדף התוכנית');
 check((await page.locator('#episode a[download]').count()) === 1, 'כפתור הורדת ההקלטה');
+check((await page.locator('#episode [data-later]').count()) === 1 && (await page.locator('#episode [data-queue]').count()) === 1 && (await page.locator('#episode [data-like]').count()) === 1, 'כפתורי לאחר כך, תור ואהבתי');
+check((await page.locator('.theme-toggle').count()) === 1, 'כפתור מצב בהיר/כהה בכותרת');
+await page.click('#episode [data-queue]');
+check(await page.evaluate(() => window.RoshStore.queue.list().length === 1), 'התוכנית נוספה לתור');
+await page.click('#episode [data-play]');
+await page.waitForSelector('.dock.open');
 check((await page.locator('#prevnext a').count()) >= 1, 'קישורי קודמת/הבאה');
 check((await page.locator('#more .ep-card').count()) >= 1, 'עוד מאותה תקופה');
+await page.goto(`${BASE}/archive.html`);
+await page.waitForSelector('#results .ep-card');
+await page.fill('#q', 'מצעךד');
+await page.waitForFunction(() => document.querySelectorAll('#results .ep-card').length < 86);
+check((await page.locator('#results .ep-card').count()) > 0, 'חיפוש סולח על טעות הקלדה');
+check(await page.evaluate(() => window.RoshStore.suggest('מצאד') === 'מצעד'), '"אולי התכוונתם ל…" מציע את המילה הנכונה');
 await page.goto(`${BASE}/episode.html?ep=לא-קיים`);
 await page.waitForSelector('#episode .state.error');
 check(true, 'תוכנית שלא קיימת מציגה הודעה ברורה');
 
 /* ---------- האזור האישי ---------- */
-await page.goto(`${BASE}/me.html`);
+await page.goto(`${BASE}/episode.html?ep=${encodeURIComponent(featured.slug)}`);
+await page.waitForSelector('#episode .ep-hero');
+await page.click('#episode [data-play]');
+await page.waitForSelector('.dock.open');
+await page.click('.site-nav .me-link');
 await page.waitForSelector('#me-profile .profile-hero');
 check((await page.locator('[data-login]').count()) === 1, 'האזור האישי מציע התחברות');
 check((await page.locator('#me-profile a[href="admin.html"]').count()) === 0, 'בלי כפתור ניהול למי שלא מחובר');
-check((await page.locator('#me-history .row').count()) >= 1, 'היסטוריית ההאזנה מציגה את מה שנוגן');
+check((await page.locator('#me-history .row').count()) >= 1, 'בביקור הנוכחי: ההיסטוריה מציגה את מה שנוגן');
+check(!(await page.evaluate(() => Object.keys(localStorage).some((k) => /^rosh:(later|pos:|history|prefs|last)/.test(k)))), 'בלי התחברות שום נתון אישי לא נשמר במכשיר');
 await page.evaluate(() => localStorage.setItem('rosh:cf:session', JSON.stringify({ token: 'test', user: { email: 'admin@example.com', name: 'בדיקה', isAdmin: true } })));
 await page.reload();
 await page.waitForSelector('#me-profile .profile-hero');

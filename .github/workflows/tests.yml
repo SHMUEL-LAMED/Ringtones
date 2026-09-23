@@ -1,0 +1,31 @@
+name: Tests
+# הבדיקות האוטומטיות רצות על כל שינוי מוצע (PR). הפריסה עצמה (pages.yml)
+# מריצה אותן שוב, ומפרסמת רק אם הן עברו.
+on:
+  pull_request:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax of every script
+        run: for f in assets/js/*.js sw.js; do node --check "$f"; done
+      - name: Catalog, stream URLs and uploads
+        run: node tests/catalog.cjs
+      - name: Install a browser for the page tests
+        run: |
+          npm i --no-save --no-package-lock playwright@1.56.1 http-server@14.1.1
+          npx playwright install --with-deps chromium
+      - name: Browser tests (site and admin, against a mocked server)
+        run: |
+          npx http-server -p 4180 -s . &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:4180/index.html >/dev/null && break; sleep 1; done
+          node tests/browser-smoke.mjs
+          node tests/admin-smoke.mjs

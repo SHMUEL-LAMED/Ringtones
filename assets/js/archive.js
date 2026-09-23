@@ -5,6 +5,7 @@
   const { esc, fmtTime, fmtDate, fmtDuration } = U;
 
   await S.ready;
+  const on = { signal: window.RoshApp?.signal };   // המאזינים מוסרים במעבר לדף אחר
   const site = S.site || {};
   document.getElementById('site-header').innerHTML = U.header('archive', site);
   document.getElementById('site-footer').innerHTML = U.footer(site);
@@ -16,7 +17,7 @@
     q: params.get('q') || '',
     season: params.get('season') || '',
     audio: params.get('audio') === '1',
-    later: params.get('later') === '1',
+    later: params.get('later') === '1',   // רק מה ששמרתם "לאחר כך"
     sort: params.get('sort') || 'new',
     view: params.get('view') || S.prefs.get('archiveView', 'grid'),
   };
@@ -29,7 +30,7 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === '/' && !U.isTyping(e)) { e.preventDefault(); qEl.focus(); qEl.select(); }
     if (e.key === 'Escape' && document.activeElement === qEl) { qEl.value = ''; state.q = ''; render(); }
-  });
+  }, on);
 
   const seasons = S.seasons();
   const all = S.episodes();
@@ -51,7 +52,7 @@
 <button type="button" class="chip" data-season="" aria-pressed="${!state.season}">כל העונות</button>
 ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" data-season="${esc(s.id)}" style="${U.seasonVars(s.id)}" aria-pressed="${state.season === s.id}">${esc(s.title)} <span style="opacity:.6">${s.count}</span></button>`).join('')}
 <button type="button" class="chip" data-audio aria-pressed="${state.audio}">עם הקלטה</button>
-<button type="button" class="chip" data-later aria-pressed="${state.later}">לאחר כך</button>
+<button type="button" class="chip" data-filter-later aria-pressed="${state.later}">לאחר כך</button>
 <span class="spacer"></span>
 <label class="visually-hidden" for="sort">מיון</label>
 <select id="sort" class="input" style="width:auto;min-height:36px;padding-block:6px;border-radius:99px;font-size:12px;font-weight:800">
@@ -59,6 +60,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
   <option value="old" ${state.sort === 'old' ? 'selected' : ''}>מהישנה לחדשה</option>
   <option value="num" ${state.sort === 'num' ? 'selected' : ''}>לפי מספר תוכנית</option>
   <option value="long" ${state.sort === 'long' ? 'selected' : ''}>הארוכות קודם</option>
+  ${S.sb.configured ? `<option value="liked" ${state.sort === 'liked' ? 'selected' : ''}>הכי אהובות</option>` : ''}
 </select>
 <div class="segmented" role="group" aria-label="תצוגה">
   <button type="button" data-view="grid" aria-pressed="${state.view === 'grid'}">רשת</button>
@@ -78,14 +80,36 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
       old: (a, b) => (a.date || '').localeCompare(b.date || '') || (a.number || 0) - (b.number || 0),
       num: (a, b) => (b.number || 0) - (a.number || 0),
       long: (a, b) => (b.duration || 0) - (a.duration || 0),
+      liked: (a, b) => S.likes.count(b.id) - S.likes.count(a.id),
     }[state.sort] || (() => 0);
     return list.slice().sort(by);
   }
 
+  /* הדגשת מילות החיפוש: ההתאמה נעשית על הטקסט המקורי (לפני ההמרה ל־HTML),
+     ומתעלמת מניקוד, מגרשיים ומאותיות סופיות — בדיוק כמו החיפוש עצמו. */
+  const FINAL = { 'ך': 'כ', 'ם': 'מ', 'ן': 'נ', 'ף': 'פ', 'ץ': 'צ' };
   const mark = (text, q) => {
-    if (!q) return esc(text);
-    const terms = q.trim().split(/\s+/).filter(Boolean).map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    return esc(text).replace(new RegExp(`(${terms.join('|')})`, 'gi'), '<mark>$1</mark>');
+    text = String(text || '');
+    const terms = String(q || '').toLowerCase().replace(/[\u0591-\u05C7״"'׳`]/g, '').replace(/[ךםןףץ]/g, (c) => FINAL[c]).split(/\s+/).filter(Boolean);
+    if (!terms.length) return esc(text);
+    let folded = ''; const at = [];   // folded[i] ↔ text[at[i]]
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (/[\u0591-\u05C7״"'׳`]/.test(c)) continue;
+      folded += (FINAL[c] || c).toLowerCase(); at.push(i);
+    }
+    const hit = new Array(text.length).fill(false);
+    for (const t of terms) {
+      let from = 0, i;
+      while ((i = folded.indexOf(t, from)) >= 0) { for (let k = at[i]; k <= at[i + t.length - 1]; k++) hit[k] = true; from = i + 1; }
+    }
+    let out = '', open = false;
+    for (let i = 0; i < text.length; i++) {
+      if (hit[i] && !open) { out += '<mark>'; open = true; }
+      if (!hit[i] && open) { out += '</mark>'; open = false; }
+      out += esc(text[i]);
+    }
+    return open ? `${out}</mark>` : out;
   };
 
   const card = (e) => U.epCard(e, { titleHtml: mark(e.title, state.q) });
@@ -108,7 +132,8 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
     const R = document.getElementById('results');
 
     if (!list.length) {
-      R.innerHTML = `<div class="state"><span class="mark">♫</span><h3>לא נמצאו תוכניות</h3><p>${state.q ? `אין תוכנית שמתאימה ל"${esc(state.q)}". נסו מילה אחרת או נקו את הסינון.` : 'עדיין אין תוכניות בעונה הזו.'}</p>${state.q || state.season || state.audio || state.later ? '<button type="button" class="btn" data-clear>ניקוי הסינון</button>' : ''}</div>`;
+      const alt = state.q ? S.suggest(state.q) : '';
+      R.innerHTML = `<div class="state"><span class="mark">♫</span><h3>לא נמצאו תוכניות</h3><p>${state.q ? `אין תוכנית שמתאימה ל"${esc(state.q)}". נסו מילה אחרת או נקו את הסינון.` : 'עדיין אין תוכניות בעונה הזו.'}</p>${alt ? `<p>אולי התכוונתם ל־<button type="button" class="link-btn" data-suggest="${esc(alt)}">${esc(alt)}</button>?</p>` : ''}${state.q || state.season || state.audio || state.later ? '<button type="button" class="btn" data-clear>ניקוי הסינון</button>' : ''}</div>`;
       syncUrl();
       return;
     }
@@ -131,22 +156,20 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
     const s = e.target.closest('[data-season]');
     if (s) { state.season = s.dataset.season; renderFilters(); render(); return; }
     if (e.target.closest('[data-audio]')) { state.audio = !state.audio; renderFilters(); render(); return; }
-    if (e.target.closest('[data-later]')) { state.later = !state.later; renderFilters(); render(); return; }
+    if (e.target.closest('[data-filter-later]')) { state.later = !state.later; renderFilters(); render(); return; }
+    const sug = e.target.closest('[data-suggest]');
+    if (sug) { qEl.value = state.q = sug.dataset.suggest; render(); return; }
     const v = e.target.closest('[data-view]');
     if (v) { state.view = v.dataset.view; renderFilters(); render(); return; }
     if (e.target.closest('[data-clear]')) { Object.assign(state, { q: '', season: '', audio: false, later: false }); qEl.value = ''; renderFilters(); render(); return; }
     const play = e.target.closest('[data-play]');
-    if (play) { const ep = S.byId(play.dataset.play); if (ep) Pl.load(ep); return; }
-    const hit = e.target.closest('[data-hit]');
-    if (hit) {
-      const ep = S.byId(hit.dataset.hit);
-      if (ep?.stream) { e.preventDefault(); Pl.isCurrent(ep.id) ? (Pl.seek(Number(hit.dataset.at)), Pl.play()) : Pl.load(ep, { at: Number(hit.dataset.at) }); }
-    }
-  });
-  document.addEventListener('change', (e) => { if (e.target.id === 'sort') { state.sort = e.target.value; render(); } });
+    if (play) { const ep = S.byId(play.dataset.play); if (ep) Pl.isCurrent(ep.id) ? Pl.toggle() : Pl.load(ep); }
+  }, on);
+  document.addEventListener('change', (e) => { if (e.target.id === 'sort') { state.sort = e.target.value; if (state.sort === 'liked') S.likes.load().then(render); else render(); } }, on);
+  if (state.sort === 'liked') S.likes.load().then(() => { if (!on.signal?.aborted) render(); });
 
   window.addEventListener('rosh:player', (ev) => {
     const id = ev.detail.episode?.id;
     document.querySelectorAll('[data-ep]').forEach((c) => { c.classList.toggle('current', c.dataset.ep === id); c.classList.toggle('selected', c.classList.contains('row') && c.dataset.ep === id); });
-  });
+  }, on);
 })();

@@ -61,6 +61,18 @@ async function uploadCheck() {
  assert.equal(url,'https://api.example/media/program/ep-90/file.mp3');
  assert.equal(request.method,'POST'); assert.equal(request.headers.Authorization,'Bearer secret');
  assert.deepEqual(request.body,Buffer.from(await file.arrayBuffer())); assert(progress.includes(100));
+ // קובץ גדול (הקלטה של שעה וחצי) עולה בחלקים, בלי מגבלת 50MB
+ const big=new Blob([new Uint8Array(45*1024*1024).fill(7)],{type:'audio/mpeg'}); big.name='long.mp3';
+ const parts=[]; const calls=[];
+ class XHR2 extends XHR { async send(body){ if(this.method==='PUT'){ parts.push({url:this.url,size:body.size}); this.upload.onprogress?.({lengthComputable:true,loaded:body.size}); this.status=200; this.responseText=JSON.stringify({etag:`e${parts.length}`}); this.onload(); } else return super.send(body); } }
+ sb.call=async(path,opts)=>{ calls.push({path,body:opts?.body}); if(path.includes('/upload/start')) return {key:'program/ep-90/x.mp3',uploadId:'u1',partSize:20*1024*1024}; if(path.includes('/upload/complete')) return {url:'https://api.example/media/program/ep-90/x.mp3'}; return {}; };
+ const ctx2={window:{RoshStore:{sb}},XMLHttpRequest:XHR2,encodeURIComponent,Promise,setTimeout};
+ vm.runInNewContext(fs.readFileSync('assets/js/upload.js','utf8'),ctx2);
+ const bigProgress=[];
+ assert.equal(await ctx2.window.RoshUpload(big,'ep-90','audio',p=>bigProgress.push(p)),'https://api.example/media/program/ep-90/x.mp3');
+ assert.equal(parts.length,3); assert.equal(parts.reduce((n,p)=>n+p.size,0),big.size);
+ assert.equal(JSON.stringify(calls.find(c=>c.path.includes('/upload/complete')).body.parts),JSON.stringify([{part:1,etag:'e1'},{part:2,etag:'e2'},{part:3,etag:'e3'}]));
+ assert(bigProgress.includes(100));
  sb.isAdmin=async()=>false;
  await assert.rejects(ctx.window.RoshUpload(file,'ep-90','audio',()=>{}),/מנהל/);
  console.log('Catalog, stream URLs, public links, Cloudflare upload authorization and byte integrity passed.');

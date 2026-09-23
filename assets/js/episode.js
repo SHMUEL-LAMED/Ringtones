@@ -6,6 +6,7 @@
   const { esc, fmtTime, fmtDate, fmtDuration, fmtWeekday } = U;
 
   await S.ready;
+  const on = { signal: window.RoshApp?.signal };   // המאזינים מוסרים במעבר לדף אחר
   const site = S.site || {};
   document.getElementById('site-header').innerHTML = U.header('episode', site);
   document.getElementById('site-footer').innerHTML = U.footer(site);
@@ -14,7 +15,8 @@
   const slug = U.qs('ep');
   const ep = slug ? S.bySlug(slug) : null;
 
-  if (!ep || (!ep.visible && !S.admin.hasOverride)) {
+  // תוכנית מוסתרת, או מתוזמנת שעוד לא הגיע זמנה — רק מנהלים רואים אותה
+  if (!ep || ((!ep.visible || S.scheduled(ep)) && !S.sb.user?.isAdmin)) {
     document.title = `התוכנית לא נמצאה — ${site.name || 'ראש בראש'}`;
     A.innerHTML = `<div class="state error"><span class="mark">!</span><h3>התוכנית לא נמצאה</h3><p>${S.state.error ? 'טעינת רשימת התוכניות נכשלה. בדקו את החיבור ונסו שוב.' : 'ייתכן שהקישור ישן או שהתוכנית הוסרה מהארכיון.'}</p><div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">${S.state.error ? '<button type="button" class="btn" onclick="location.reload()">ניסיון חוזר</button>' : ''}<a class="btn primary" href="archive.html">לארכיון התוכניות <span>←</span></a></div></div>`;
     return;
@@ -36,7 +38,6 @@
   });
   document.head.appendChild(ld);
 
-  const isLater = S.later.has(ep.id);
   const links = U.publicLinks(ep);
   A.style.cssText = U.coverVars(ep);
   A.innerHTML = `
@@ -56,7 +57,7 @@
     ${ep.description ? `<p class="desc">${esc(ep.description)}</p>` : ''}
     <div class="actions">
       ${stream ? `<button type="button" class="btn xl primary" data-play>האזנה לתוכנית <span>▶</span></button>` : `<span class="pill">אין עדיין הקלטה לתוכנית הזו</span>`}
-      <button type="button" class="btn" data-later aria-pressed="${isLater}">${isLater ? '✓ שמור לאחר כך' : '+ לאחר כך'}</button>
+      ${U.actionButtons(ep)}
       <button type="button" class="btn" data-share>שיתוף</button>
       ${U.downloadUrl(ep) ? `<a class="btn ghost" href="${esc(U.downloadUrl(ep))}" download="${esc(ep.title)}.mp3" rel="noopener">הורדת ההקלטה</a>` : ''}
       ${links.map((l) => `<a class="btn ghost" href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join('')}
@@ -65,7 +66,7 @@
 </div>
 <div class="now-playing-strip" id="now-strip" hidden></div>
 ${ep.surveyId && S.settings.survey?.id === ep.surveyId ? `<div class="card-body" style="padding-top:0"><div class="site-banner${S.settings.survey.open ? ' vote' : ''}" style="margin:0"><span class="site-banner-mark" aria-hidden="true">${S.settings.survey.open ? '✓' : '✦'}</span><p>${S.settings.survey.open ? `המצעד של התוכנית הזו פתוח להצבעה${S.settings.survey.name ? ` — <b>${esc(S.settings.survey.name)}</b>` : ''}` : `התוכנית הזו מקושרת למצעד${S.settings.survey.name ? ` "${esc(S.settings.survey.name)}"` : ''} — ההצבעה הסתיימה`}</p>${S.settings.survey.open ? `<a class="btn small primary" href="${esc(S.settings.survey.url)}" target="_blank" rel="noopener">הצביעו עכשיו <span>←</span></a>` : ''}</div></div>` : ''}
-${U.messageForm({ episodeId: ep.id, title: 'תגובה על התוכנית', hint: 'מה חשבתם? ההודעה מגיעה למגישים.' }) ? `<div class="card-body" style="padding-top:0">${U.messageForm({ episodeId: ep.id, title: 'תגובה על התוכנית', hint: 'מה חשבתם? ההודעה מגיעה למגישים.' })}</div>` : ''}
+${(() => { const form = U.messageForm({ episodeId: ep.id, title: 'תגובה על התוכנית', hint: 'מה חשבתם? ההודעה מגיעה למגישים.' }); return form ? `<div class="card-body" style="padding-top:0">${form}</div>` : ''; })()}
 `;
 
   // קודמת / הבאה
@@ -93,19 +94,14 @@ ${nb.newer ? `<a href="episode.html?ep=${encodeURIComponent(nb.newer.slug)}"><sm
   /* ---------- אירועים ---------- */
   A.addEventListener('click', async (e) => {
     if (e.target.closest('[data-play]')) { Pl.isCurrent(ep.id) ? Pl.toggle() : Pl.load(ep); return; }
-    const later = e.target.closest('[data-later]');
-    if (later) { const on = S.later.toggle(ep.id); later.setAttribute('aria-pressed', String(on)); later.textContent = on ? '✓ שמור לאחר כך' : '+ לאחר כך'; U.notify(on ? 'נשמר לרשימת "לאחר כך".' : 'הוסר מרשימת "לאחר כך".', 'success'); return; }
     if (e.target.closest('[data-share]')) {
-      const url = new URL(`episode.html?ep=${encodeURIComponent(ep.slug)}`, location.href).href;
+      const url = U.shareUrl(ep);
       if (navigator.share) { try { await navigator.share({ title: ep.title, text: ep.description.slice(0, 120), url }); return; } catch { /* בוטל */ } }
       (await U.copy(url)) ? U.notify('הקישור לתוכנית הועתק.', 'success') : U.notify('ההעתקה נכשלה. הכתובת: ' + url, 'error');
       return;
     }
   });
-  document.addEventListener('click', (e) => {
-    const play = e.target.closest('#more [data-play]');
-    if (play) { const other = S.byId(play.dataset.play); if (other) Pl.load(other); }
-  });
+  S.likes.load().then(() => { if (!on.signal?.aborted) U.paintActions(ep.id); });
 
   const strip = document.getElementById('now-strip');
   window.addEventListener('rosh:player', (ev) => {
@@ -118,5 +114,5 @@ ${nb.newer ? `<a href="episode.html?ep=${encodeURIComponent(nb.newer.slug)}"><sm
       strip.hidden = false;
       strip.innerHTML = `<span>${Pl.paused ? 'מושהה ב־' : 'מתנגן עכשיו ·'} ${fmtTime(ev.detail.time)}</span>`;
     } else strip.hidden = true;
-  });
+  }, on);
 })();
