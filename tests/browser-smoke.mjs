@@ -176,6 +176,20 @@ await page.waitForSelector('#admin-gate');
 await page.waitForTimeout(500);
 check(await page.evaluate(() => document.body.classList.contains('admin-locked')), 'אזור הניהול נעול למי שלא מחובר');
 
+/* ---------- שרת איטי: הדף לא נשאר ריק ----------
+   מיד אחרי פריסה של ה־Worker הקטלוג יכול להתעכב. הדף מחכה לו עד 8 שניות ואז מציג
+   את העותק השמור באתר, במקום לחכות בלי סוף. */
+{
+  const slowCtx = await browser.newContext({ locale: 'he-IL', viewport: { width: 1200, height: 900 }, ignoreHTTPSErrors: !!process.env.HTTPS_PROXY });
+  const slow = await slowCtx.newPage();
+  await slow.route('**/api/program/catalog*', () => { /* לא עונים: שרת תקוע */ });
+  const t0 = Date.now();
+  await slow.goto(`${BASE}/index.html`);
+  const shown = await slow.waitForSelector('#featured .card', { timeout: 15000 }).then(() => true, () => false);
+  check(shown, `שרת איטי: דף הבית מוצג מהעותק השמור (${Math.round((Date.now() - t0) / 1000)} שניות)`);
+  await slowCtx.close();
+}
+
 /* ---------- סיכום ---------- */
 // ה־Worker מאשר CORS רק ל־origin של האתר הפרוס, ולכן מול שרת מקומי הקטלוג נופל
 // לעותק שבמאגר (זה מה שהבדיקה בודקת) — שגיאת ה־CORS הזו אינה תקלה באתר.
