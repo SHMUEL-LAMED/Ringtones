@@ -457,9 +457,10 @@
         }
       } catch (e) {
         state.error = e;
-        // נפילה חזרה לקובץ המקומי אם Cloudflare לא זמין
+        // נפילה חזרה לקובץ המקומי אם Cloudflare לא זמין. שרת שרק לא ענה בזמן (AbortError —
+        // למשל מופע חדש של ה־Worker שמתעורר) אינו תקלה: 'json-slow', והעותק מוצג בלי הודעה
         if (state.source === 'cloudflare') {
-          try { state.data = normalize(await fetchJSON('data/episodes.json')); state.loadedFrom = 'json-fallback'; }
+          try { state.data = normalize(await fetchJSON('data/episodes.json')); state.loadedFrom = e?.name === 'AbortError' ? 'json-slow' : 'json-fallback'; }
           catch { state.data = normalize({}); }
         } else state.data = normalize({});
       }

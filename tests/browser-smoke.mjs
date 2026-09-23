@@ -177,17 +177,32 @@ await page.waitForTimeout(500);
 check(await page.evaluate(() => document.body.classList.contains('admin-locked')), 'אזור הניהול נעול למי שלא מחובר');
 
 /* ---------- שרת איטי: הדף לא נשאר ריק ----------
-   מיד אחרי פריסה של ה־Worker הקטלוג יכול להתעכב. הדף מחכה לו עד 8 שניות ואז מציג
-   את העותק השמור באתר, במקום לחכות בלי סוף. */
-{
-  const slowCtx = await browser.newContext({ locale: 'he-IL', viewport: { width: 1200, height: 900 }, ignoreHTTPSErrors: !!process.env.HTTPS_PROXY });
-  const slow = await slowCtx.newPage();
-  await slow.route('**/api/program/catalog*', () => { /* לא עונים: שרת תקוע */ });
+   מיד אחרי פריסה של ה־Worker, או כשמופע חדש שלו מתעורר, הקטלוג יכול להתעכב. הדף מחכה
+   לו עד 8 שניות ואז מציג את העותק השמור באתר, במקום לחכות בלי סוף — ובלי הודעת כשל,
+   כי שום דבר לא נכשל. שרת שעונה בשגיאה כן מקבל את ההודעה "החיבור נכשל". */
+for (const mode of ['slow', 'down']) {
+  const label = mode === 'slow' ? 'שרת איטי' : 'שרת בתקלה';
+  const sctx = await browser.newContext({ locale: 'he-IL', viewport: { width: 1200, height: 900 }, ignoreHTTPSErrors: !!process.env.HTTPS_PROXY });
+  // כל הודעה שהופיעה נרשמת — גם כזו שכבר נסגרה לבד עד שהבדיקה מסתכלת
+  await sctx.addInitScript(() => {
+    window.__notices = [];
+    new MutationObserver((list) => { for (const m of list) for (const n of m.addedNodes) if (n.classList?.contains('notice')) window.__notices.push(n.textContent); })
+      .observe(document, { childList: true, subtree: true });
+  });
+  const p = await sctx.newPage();
+  await p.route('**/api/program/catalog*', (route) => {
+    if (mode === 'down') route.fulfill({ status: 500, headers: { 'access-control-allow-origin': '*' }, body: '{}' });
+    /* slow: לא עונים — שרת תקוע */
+  });
   const t0 = Date.now();
-  await slow.goto(`${BASE}/index.html`);
-  const shown = await slow.waitForSelector('#featured .card', { timeout: 15000 }).then(() => true, () => false);
-  check(shown, `שרת איטי: דף הבית מוצג מהעותק השמור (${Math.round((Date.now() - t0) / 1000)} שניות)`);
-  await slowCtx.close();
+  await p.goto(`${BASE}/index.html`, { waitUntil: 'domcontentloaded' });
+  const shown = await p.waitForSelector('#featured .card', { timeout: 15000 }).then(() => true, () => false);
+  check(shown, `${label}: דף הבית מוצג מהעותק השמור (${Math.round((Date.now() - t0) / 1000)} שניות)`);
+  await p.waitForTimeout(300);
+  const notices = (await p.evaluate(() => window.__notices)).join(' | ');
+  if (mode === 'slow') check(!/נכשל/.test(notices), `${label}: בלי הודעת כשל${notices ? ` (${notices})` : ''}`);
+  else check(/החיבור למקור הנתונים נכשל/.test(notices), `${label}: הודעה שמוצג העותק השמור${notices ? ` (${notices})` : ''}`);
+  await sctx.close();
 }
 
 /* ---------- סיכום ---------- */
