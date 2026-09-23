@@ -160,7 +160,7 @@
     --fg-rgb: 40 30 14;
     --hue-l: 38%;
     --hue-bg-l: 86%;
-    --hue-tint: .9;
+    --hue-tint: .6;
     --border: rgba(60, 44, 18, .13);
     --border-soft: rgba(60, 44, 18, .09);
     --border-strong: rgba(60, 44, 18, .24);
@@ -256,7 +256,7 @@
   --fg-rgb: 40 30 14;
   --hue-l: 38%;
   --hue-bg-l: 86%;
-  --hue-tint: .9;
+  --hue-tint: .6;
   --border: rgba(60, 44, 18, .13);
   --border-soft: rgba(60, 44, 18, .09);
   --border-strong: rgba(60, 44, 18, .24);
@@ -727,8 +727,8 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
 
 /* ---------- דף תוכנית: "עמוד אלבום" ----------
    רצועת פתיחה בגוון של התוכנית (--h מ־coverVars): עטיפה ותקליט שמציץ ממנה, כותרת,
-   שורת פרטים אחת ופס פעולות — ההאזנה ראשונה. מתחת: על התוכנית ותגובות, ובצד פרטים
-   והודעה פרטית. הכול תחת #episode, כדי ש־.ep-hero של דף הבית לא ישתנה. */
+   שורת פרטים אחת ופס פעולות — ההאזנה ראשונה. מתחת: על התוכנית (עם הפרטים בצד),
+   תגובות והודעה פרטית. הכול תחת #episode, כדי ש־.ep-hero של דף הבית לא ישתנה. */
 #episode { display: grid; gap: 18px; margin: 18px 0 0; }
 #episode .card + .card { margin: 0; }
 
@@ -744,12 +744,6 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
     radial-gradient(70% 120% at 0% 100%, hsl(calc(var(--h) + 60) 80% var(--hue-bg-l) / .22), transparent 65%),
     var(--hero-bg);
   box-shadow: var(--shadow-panel), inset 0 1px 0 var(--inset-hi);
-}
-/* המספר הענק ברקע — מתוך data-n, כדי שלא ייכנס לטקסט של הדף */
-#episode .ep-hero[data-n]::before {
-  content: attr(data-n); position: absolute; z-index: -1; inset-inline-end: -.02em; top: -.12em;
-  font-family: var(--display); font-weight: 700; font-size: clamp(200px, 30vw, 400px); line-height: 1;
-  color: hsl(var(--h) 80% var(--hue-l) / .055); pointer-events: none;
 }
 
 /* עטיפה ותקליט */
@@ -782,6 +776,7 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
 /* כותרת ופרטים */
 #episode .ep-head { grid-area: head; min-width: 0; padding-bottom: 4px; }
 #episode .ep-head .kicker { margin: 0 0 12px; }
+#episode .ep-kick > span { white-space: nowrap; }
 #episode .ep-head h1 {
   margin: 0; font-family: var(--display); font-weight: 700; font-size: clamp(52px, 7vw, 104px); line-height: .9; letter-spacing: .005em;
   color: var(--text-strong); text-wrap: balance; overflow-wrap: anywhere;
@@ -829,15 +824,27 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
 
 #episode .ep-tools { display: flex; flex-wrap: wrap; gap: 8px; }
 #episode .ep-tools .btn {
-  min-height: 44px; padding: 8px 16px; font-size: 14px;
+  min-height: 44px; padding: 8px 16px; padding-inline-start: 13px; font-size: 14px;
   background: rgb(var(--fg-rgb) / .06); border-color: var(--border-strong);
   -webkit-backdrop-filter: none; backdrop-filter: none;
 }
 #episode .ep-tools .btn:hover { background: rgb(var(--fg-rgb) / .12); border-color: rgb(var(--gold-rgb) / .55); }
 #episode .ep-tools .btn[aria-pressed="true"]:not(.like-btn) { background: var(--gold-selected); border-color: rgb(var(--gold-rgb) / .55); color: var(--gold-ink); }
+#episode .ep-tools .like-btn[aria-pressed="true"] { color: var(--pink); border-color: color-mix(in srgb, var(--pink) 50%, transparent); }
+
+/* אייקונים לכפתורים (data-ico): מסכה בצבע הטקסט; במצב "לחוץ" האייקון מתחלף */
+[data-ico]::before { content: ""; flex: none; width: 18px; height: 18px; background: currentColor; -webkit-mask: var(--ico) center / contain no-repeat; mask: var(--ico) center / contain no-repeat; }
+[data-ico="later"] { --ico: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='8.5'/><path d='M12 7.5V12l3 2'/></svg>"); }
+[data-ico="later"][aria-pressed="true"] { --ico: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='8.5'/><path d='m8.4 12.3 2.5 2.5 4.8-5.1'/></svg>"); }
+[data-ico="queue"] { --ico: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6.5h12M4 12h12M4 17.5h7M18 14.5v6M15 17.5h6'/></svg>"); }
+[data-ico="queue"][aria-pressed="true"] { --ico: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 6.5h12M4 12h12M4 17.5h7M14.5 17.6l2.2 2.2 4.3-4.6'/></svg>"); }
+[data-ico="like"] { --ico: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linejoin='round'><path d='M12 20s-7.2-4.4-8.8-9C2 7.6 4.2 4.8 7.3 4.8c1.9 0 3.5 1 4.7 2.7 1.2-1.7 2.8-2.7 4.7-2.7 3.1 0 5.3 2.8 4.1 6.2C19.2 15.6 12 20 12 20z'/></svg>"); }
+[data-ico="like"][aria-pressed="true"] { --ico: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black' stroke='black' stroke-width='2' stroke-linejoin='round'><path d='M12 20s-7.2-4.4-8.8-9C2 7.6 4.2 4.8 7.3 4.8c1.9 0 3.5 1 4.7 2.7 1.2-1.7 2.8-2.7 4.7-2.7 3.1 0 5.3 2.8 4.1 6.2C19.2 15.6 12 20 12 20z'/></svg>"); }
+[data-ico="share"] { --ico: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3.5v11M7.8 7.7 12 3.5l4.2 4.2M5.5 12.5V18a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-5.5'/></svg>"); }
+[data-ico="download"] { --ico: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3.5v11M7.8 10.3 12 14.5l4.2-4.2M5.5 19.5h13'/></svg>"); }
 
 /* "מתנגן עכשיו" */
-#episode .ep-now { grid-area: now; margin: 16px 0 0; gap: 10px; }
+#episode .ep-now { grid-area: now; justify-self: start; width: fit-content; margin: 16px 0 0; padding: 8px 16px; gap: 10px; border-radius: 999px; }
 #episode .ep-now b { font-variant-numeric: tabular-nums; }
 #episode .ep-eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; }
 #episode .ep-eq i { width: 3px; height: 100%; border-radius: 2px; background: currentColor; transform-origin: bottom; animation: ep-eq .8s ease-in-out infinite alternate; }
@@ -849,8 +856,7 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
 #episode .ep-survey { margin: 0; }
 
 /* מתחת לרצועה: תוכן בטור הראשי, פרטים והודעה פרטית בצד */
-#episode .ep-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: 18px; align-items: start; }
-#episode .ep-main, #episode .ep-side { display: grid; gap: 18px; min-width: 0; }
+#episode .ep-body { display: grid; gap: 18px; min-width: 0; }
 #episode .ep-section .grid-head { margin: 0 0 18px; }
 #episode .ep-section .grid-head h2 { font-size: clamp(36px, 4vw, 48px); }
 #episode .comments { border-top: 1px solid var(--border); }
@@ -877,9 +883,10 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
 #episode .ep-more::after { content: ""; width: 7px; height: 7px; border: solid currentColor; border-width: 0 2px 2px 0; transform: translateY(-2px) rotate(45deg); transition: transform .25s var(--ease); }
 #episode .ep-more[aria-expanded="true"]::after { transform: translateY(2px) rotate(-135deg); }
 
-/* פרטי התוכנית */
-#episode .ep-info .kicker { margin-bottom: 14px; }
-#episode .ep-details { display: grid; gap: 16px; margin: 0; }
+/* פרטי התוכנית: בצד התיאור, באותו כרטיס */
+#episode .ep-about { display: grid; grid-template-columns: minmax(0, 1fr) minmax(200px, 250px); gap: 22px clamp(28px, 4vw, 60px); align-items: start; }
+#episode .ep-about-main { min-width: 0; }
+#episode .ep-details { display: grid; gap: 16px; margin: 0; padding-inline-start: clamp(22px, 3vw, 36px); border-inline-start: 1px solid var(--divider); }
 #episode .ep-details > div { display: grid; gap: 8px; }
 #episode .ep-details > div + div { padding-top: 16px; border-top: 1px solid var(--divider); }
 #episode .ep-details dt { font-size: 12px; font-weight: 800; color: var(--muted); }
@@ -908,34 +915,37 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
 #prevnext .ep-nb { display: flex; align-items: center; gap: 14px; }
 #prevnext .ep-nb > span:not(.ep-nb-arrow) { flex: 1; display: grid; gap: 4px; min-width: 0; }
 #prevnext .ep-nb b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#prevnext .ep-nb em { font-style: normal; font-size: 12px; font-weight: 700; color: var(--muted); }
 #prevnext .ep-nb-arrow { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border-strong); color: var(--gold-ink); font-weight: 900; transition: background .2s, color .2s, border-color .2s; }
 #prevnext .ep-nb:hover .ep-nb-arrow { background: var(--gold); border-color: var(--gold); color: #15110a; }
 
 @media (max-width: 1000px) {
-  /* טור אחד, בסדר של קריאה: על התוכנית, פרטים, תגובות, הודעה פרטית */
-  #episode .ep-body { grid-template-columns: minmax(0, 1fr); }
-  #episode .ep-main, #episode .ep-side { display: contents; }
-  #episode .ep-about { order: 1; }
-  #episode .ep-info { order: 2; }
-  #episode .comments { order: 3; }
-  #episode .ep-private { order: 4; }
-  #episode .ep-details { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+  /* הפרטים מתחת לתיאור, בשורה */
+  #episode .ep-about { grid-template-columns: minmax(0, 1fr); }
+  #episode .ep-details { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); padding: 20px 0 0; border: 0; border-top: 1px solid var(--divider); }
   #episode .ep-details > div + div { padding-top: 0; border-top: 0; }
 }
+@media (max-width: 910px) { #episode .ep-actionbar:empty { min-height: 150px; } }   /* כאן הכפתורים יורדים לשורה שנייה */
 @media (max-width: 760px) {
   #episode { gap: 14px; margin-top: 10px; }
   /* בטלפון: עטיפה קטנה ליד הכותרת, וההאזנה במסך הראשון */
-  #episode .ep-hero { --art: 124px; column-gap: 16px; align-items: center; padding: 18px 16px; border-radius: 22px; }
-  #episode .ep-hero[data-n]::before { display: none; }   /* המספר כבר על העטיפה */
+  /* העטיפה ליד שורת התוכנית והתאריך, והכותרת ברוחב מלא מתחתיהן */
+  #episode .ep-hero { --art: 104px; grid-template-areas: "art kick" "art facts" "title title" "bar bar" "now now"; column-gap: 14px; align-items: center; padding: 18px 16px; border-radius: 22px; }
+  #episode .ep-head { display: contents; }
+  #episode .ep-head .kicker { grid-area: kick; align-self: end; }
+  #episode .ep-head h1 { grid-area: title; margin-top: 14px; }
+  #episode .ep-facts { grid-area: facts; align-self: start; }
+  #episode .ep-kick > span { display: block; }
+  #episode .ep-kick > .ep-kick-sep { display: none; }
   #episode .ep-sleeve { border-radius: 8px; }
   #episode .ep-sleeve b { font-size: 58px; }
   #episode .ep-sleeve small { display: none; }
   #episode .ep-disc .vinyl::after { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .2), 0 0 0 3px #0c0c12; }
-  #episode .ep-head .kicker { display: block; margin-bottom: 6px; font-size: 10.5px; letter-spacing: .1em; line-height: 1.5; }
+  #episode .ep-head .kicker { display: block; margin-bottom: 6px; font-size: 11px; letter-spacing: .1em; line-height: 1.5; }
   #episode .ep-head .kicker::before { display: none; }
-  #episode .ep-head h1 { font-size: clamp(40px, 11.5vw, 52px); line-height: .92; }
+  #episode .ep-head h1 { font-size: clamp(40px, 12vw, 54px); line-height: .92; }
   /* בטור צר: כל פרט בשורה משלו, בלי נקודות מפרידות שנשארות תלויות בסוף שורה */
-  #episode .ep-facts { display: grid; gap: 0; margin-top: 8px; font-size: 12.5px; line-height: 1.55; }
+  #episode .ep-facts { display: grid; gap: 0; margin-top: 0; font-size: 12.5px; line-height: 1.55; }
   #episode .ep-facts i { display: none; }
   #episode .ep-actionbar { flex-direction: column; align-items: stretch; gap: 10px; margin-top: 16px; padding-top: 16px; }
   #episode .ep-play {
@@ -950,18 +960,24 @@ body:not(.is-playing) .hero-eq i { animation-duration: calc(var(--p, 1s) * 2.4);
   #episode .ep-play-disc i { width: 15px; height: 17px; }
   #episode .ep-play-disc i::before, #episode .ep-play-disc i::after { background: var(--gold); }
   #episode .ep-play-label { flex: 1; text-align: center; }
-  #episode .ep-tools { gap: 8px; }
-  #episode .ep-tools > * { flex: 1 1 28%; padding-inline: 8px; }
-  #episode .ep-actionbar:empty { min-height: 181px; }
+  /* שאר הפעולות: שורה אחת של אריחים — אייקון ומתחתיו התווית */
+  #episode .ep-tools { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
+  #episode .ep-tools .btn { flex-direction: column; gap: 5px; min-height: 62px; padding: 8px 2px; border-radius: 16px; font-size: 12px; }
+  #episode .ep-tools .btn::before { width: 20px; height: 20px; }
+  #episode .ep-actionbar:empty { min-height: 147px; }
   #episode .ep-desc-text { font-size: 16px; }
   #episode .ep-private summary { padding: 16px; }
   #episode .ep-private-body { padding: 4px 16px 16px; }
 }
 @media (max-width: 370px) {
-  #episode .ep-hero { --art: 100px; column-gap: 12px; padding: 16px 14px; }
+  #episode .ep-hero { --art: 92px; column-gap: 12px; padding: 16px 14px; }
   #episode .ep-sleeve b { font-size: 48px; }
   #episode .ep-head h1 { font-size: 38px; }
-  #episode .ep-tools .btn { font-size: 13px; padding-inline: 6px; }
+  #episode .ep-tools { gap: 4px; }
+  #episode .ep-tools .btn { font-size: 11.5px; }
+}
+@media (pointer: coarse) {
+  #episode .ep-details dd > a:not(.chip) { display: inline-block; padding-block: 10px; margin-block: -10px; }
 }
 [data-lite="1"] #episode .ep-sleeve::before, [data-lite="1"] #episode .ep-play-disc::before { display: none; }
 [data-lite="1"] #episode .ep-hero { box-shadow: var(--shadow-card); }

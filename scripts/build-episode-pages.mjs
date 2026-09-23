@@ -55,7 +55,7 @@ function hue(e) {
   const b = seasonHue[e?.season] ?? (hash(e?.season || 'x') % 360);
   return (b + (hash(e?.id || e?.slug || '') % 46) - 23 + 360) % 360;
 }
-/* תיאור: פסקאות קצרות וקישורים — כמו paragraphs() ו־linkify() ב־episode.js */
+/* תיאור: פסקאות קצרות וקישורים — כמו paragraphs() ו־linkify() ב־episode.js (לעדכן יחד) */
 function paragraphs(text) {
   return String(text || '').split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).flatMap((block) => {
     if (block.length < 480 || block.includes('\n')) return [block];
@@ -69,12 +69,15 @@ function paragraphs(text) {
   });
 }
 const URL_TAIL = /(?:&amp;|&quot;|&#39;|&lt;|&gt;|[.,;:!?)\]}״׳])+$/;
+const unesc = (s) => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, x) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[x]);
 function linkify(safe) {   // מקבל טקסט שכבר עבר esc
   return safe.replace(/\bhttps?:\/\/(?:(?!&quot;|&#39;|&lt;|&gt;)[^\s<>"'])+/gi, (m) => {   // הכתובת נגמרת ברווח או במירכאה/סוגר זווית (מוברחים)
     const tail = m.match(URL_TAIL)?.[0] || '';
-    const url = m.slice(0, m.length - tail.length);
-    if (!/^https?:\/\/[\w֐-׿-]/i.test(url)) return m;
-    return `<a class="ep-link" href="${url}" target="_blank" rel="noopener nofollow ugc" dir="ltr">${url.replace(/^https?:\/\//i, '')}</a>${tail}`;
+    const raw = unesc(m.slice(0, m.length - tail.length));
+    let u; try { u = new URL(raw); } catch { return m; }
+    if (!/^https?:$/.test(u.protocol) || !u.hostname) return m;
+    const shown = raw.replace(/^https?:\/\/(www\.)?/i, '');
+    return `<a class="ep-link" href="${esc(u.href)}" title="${esc(u.href)}" target="_blank" rel="noopener nofollow ugc" dir="ltr">${esc(shown.length > 36 ? `${shown.slice(0, 34)}…` : shown)}</a>${tail}`;
   });
 }
 /** 160 תווים ראשונים, בלי לחתוך באמצע מילה כשאפשר */
@@ -91,7 +94,12 @@ const isHttps = (u) => { try { return new URL(u).protocol === 'https:'; } catch 
     כשהסקריפט מצייר אותו מחדש עם הנגן. מקום פס הפעולות נשמר ריק (.ep-actionbar:empty). */
 function staticArticle(e, season) {
   const num = e.number != null && e.number !== '' ? e.number : null;
-  const kicker = [num != null ? `תוכנית ${num}` : (e.season === 'sets' ? 'סט' : 'תוכנית'), season?.title].filter(Boolean).join(' · ');
+  const kicker = `<span class="ep-kick"><span>${num != null ? `תוכנית ${esc(num)}` : (e.season === 'sets' ? 'סט' : 'תוכנית')}</span>${season?.title ? `<span class="ep-kick-sep"> · </span><span>${esc(season.title)}</span>` : ''}</span>`;
+  const tags = (Array.isArray(e.tags) ? e.tags : []).map(String).filter(Boolean);
+  const details = [
+    season?.title ? `<div><dt>עונה</dt><dd><a href="archive.html?season=${encodeURIComponent(season.id)}">${esc(season.title)} <span aria-hidden="true">←</span></a></dd></div>` : '',
+    tags.length ? `<div><dt>נושאים</dt><dd class="ep-tags">${tags.map((t) => `<a class="chip" href="archive.html?q=${encodeURIComponent(t)}">${esc(t)}</a>`).join('')}</dd></div>` : '',
+  ].filter(Boolean);
   const guests = (Array.isArray(e.guests) ? e.guests : []).map(String).filter(Boolean);
   const facts = [
     fmtDate(e.date) ? `<time datetime="${esc(e.date)}">${esc(fmtWeekday(e.date))}, ${esc(fmtDate(e.date))}</time>` : '',
@@ -100,25 +108,26 @@ function staticArticle(e, season) {
   ].filter(Boolean);
   const paras = paragraphs(e.description);
   return `
-        <header class="ep-hero ep-album"${num != null ? ` data-n="${esc(num)}"` : ''}>
+        <header class="ep-hero ep-album">
           <div class="ep-art" aria-hidden="true">
             <div class="ep-disc"><div class="vinyl" data-num="" style="--label:${hue(e)}"><i></i></div></div>
             <div class="ep-sleeve">${isHttps(e.cover) ? `<img src="${esc(e.cover)}" alt="">` : `<b>${num != null ? esc(num) : '♫'}</b><small>${esc(NAME)}</small>`}</div>
           </div>
           <div class="ep-head">
-            <p class="kicker">${esc(kicker)}</p>
+            <p class="kicker">${kicker}</p>
             <h1>${esc(e.title)}</h1>
             ${facts.length ? `<p class="ep-facts">${facts.join('<i aria-hidden="true">·</i>')}</p>` : ''}
           </div>
           <div class="ep-actionbar"></div>
         </header>
         <div class="ep-body">
-          <div class="ep-main">
-            <section class="card card-body ep-section ep-about">
+          <section class="card card-body ep-section ep-about">
+            <div class="ep-about-main">
               <div class="grid-head"><div><p class="kicker">מה בתוכנית</p><h2>על התוכנית</h2></div></div>
               ${paras.length ? `<div class="ep-desc"><div class="ep-desc-text">${paras.map((p) => `<p>${linkify(esc(p))}</p>`).join('')}</div></div>` : ''}
-            </section>
-          </div>
+            </div>
+            ${details.length ? `<dl class="ep-details" aria-label="פרטי התוכנית">${details.join('')}</dl>` : ''}
+          </section>
         </div>
       `;
 }
