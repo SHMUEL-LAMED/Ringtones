@@ -1,7 +1,7 @@
 /* אזור הניהול של ראש בראש — ארבעה חלקים: תוכניות, האתר, מאזינים, פרסום.
-   כל שינוי נשמר מיד במכשיר הזה (טיוטה) וגם בטיוטה המשותפת בשרת, כך שאפשר
-   להתחיל במחשב ולהמשיך בטלפון. "פרסום לאתר" מעביר את הטיוטה לכולם.
-   בלי קודים, בלי מזהים, בלי JSON. */
+   כל שינוי נשמר מיד בטיוטה המשותפת בשרת (לפי חשבון Google, לא במכשיר), כך
+   שאפשר להתחיל במחשב ולהמשיך בטלפון. שום טיוטה לא נשמרת בדפדפן.
+   "פרסום לאתר" מעביר את הטיוטה לכולם. בלי קודים, בלי מזהים, בלי JSON. */
 (async function () {
   'use strict';
   const U = window.RoshUI, S = window.RoshStore;
@@ -43,8 +43,20 @@
     filter: 'all',
     bulk: false,           // מצב בחירה מרובה
     picked: new Set(),
-    saveTimer: null, syncTimer: null, previewTimer: null,
-    syncState: '',         // '', 'saving', 'saved', 'error'
+    syncTimer: null, previewTimer: null,
+    syncState: '',         // '', 'saving', 'saved'
+    unsynced: false,       // יש שינויים בזיכרון שהשרת עוד לא קיבל (במצב בלי שרת: שעוד לא ירדו לקובץ)
+    offline: false,        // השמירה האחרונה בשרת נכשלה — מזהירים ומנסים שוב
+    syncing: null,         // שמירה שבדרך (Promise)
+    syncGen: 0,            // עולה בפרסום, ביטול והתנתקות — תשובה של שמירה ישנה לא נוגעת במצב
+    retryDelay: 0,
+    draftAt: null,         // מתי נשמרה הטיוטה המשותפת שאנחנו מכירים (נשלח כ־ifUpdatedAt)
+    draftBy: '',           // מי שמר אותה
+    conflict: null,        // טיוטה חדשה יותר של מישהו אחר — לא דורסים עד שבוחרים
+    overwrite: false,      // בחרו "להמשיך עם שלי ולדרוס"
+    echoRetry: false,
+    lastSent: '',          // הטיוטה האחרונה ששלחנו (לזהות 409 על שמירה שלנו שהתשובה שלה אבדה)
+    publishing: false,
     checks: { audio: null, media: null },  // תוצאות הבדיקות
     versions: null,        // רשימת הגרסאות מהשרת
     versionCache: new Map(),
@@ -55,31 +67,140 @@
     pushCount: null, epStats: new Map(), statsEp: '',
     ai: new Map(),         // מצב התמלול והסיכום לכל תוכנית
   };
-  const BASE_KEY = 'rosh:override-base';
-  const readBase = () => { try { return JSON.parse(localStorage.getItem(BASE_KEY) || 'null'); } catch { return null; } };
-  const writeBase = (v) => { try { v == null ? localStorage.removeItem(BASE_KEY) : localStorage.setItem(BASE_KEY, JSON.stringify(v)); } catch { /* */ } };
+  /* שום טיוטה לא נשמרת במכשיר — רק בשרת, לפי החשבון. מה שנשאר בדפדפן מגרסאות קודמות נמחק. */
+  const DEVICE_DRAFT_KEYS = ['rosh:override', 'rosh:override-at', 'rosh:override-base'];
+  const dropDeviceDraft = () => { try { DEVICE_DRAFT_KEYS.forEach((k) => localStorage.removeItem(k)); } catch { /* */ } };
+  dropDeviceDraft();
   if (!A.data.settings) A.data.settings = S.admin.normSettings({});
+  const sameData = (a, b) => JSON.stringify(S.admin.normalize(a)) === JSON.stringify(S.admin.normalize(b));
+  const liveEp = (id) => A.data.episodes.find((x) => x.id === id) || null;
+  const jobsBusy = () => Object.values(A.jobs || {}).some((j) => j.running);
 
-  /* ---------- שמירה אוטומטית: במכשיר ובטיוטה המשותפת ---------- */
+  /* ---------- שמירה אוטומטית בטיוטה המשותפת בשרת ---------- */
 
+  const canSync = () => CLOUD && !!S.sb.user?.isAdmin;
   function touch() {
-    clearTimeout(A.saveTimer);
-    A.saveTimer = setTimeout(persist, 400);
+    A.unsynced = true;
+    scheduleSync();
     paintStatus();
   }
-  function persist() {
-    clearTimeout(A.saveTimer); A.saveTimer = null;
-    S.admin.saveOverride(A.data); writeBase(A.base);
-    if (CLOUD && S.sb.user?.isAdmin) { clearTimeout(A.syncTimer); A.syncTimer = setTimeout(sync, 1500); }
-    paintStatus();
+  function scheduleSync(ms = 1500) {
+    clearTimeout(A.syncTimer); A.syncTimer = null;
+    if (canSync()) A.syncTimer = setTimeout(sync, ms);
   }
-  async function sync() {
+  /** שומר עכשיו (אם יש מה). מחזיר true כשהשרת מחזיק את מה שיש כאן. */
+  function sync() {
+    if (!canSync()) return Promise.resolve(false);
+    clearTimeout(A.syncTimer); A.syncTimer = null;
+    if (A.publishing) { scheduleSync(); return Promise.resolve(false); }
+    if (A.conflict) { showDraftConflict(); return Promise.resolve(false); }
+    if (A.syncing) return A.syncing.then(() => (A.unsynced ? sync() : !A.offline && !A.conflict));
+    if (!A.unsynced) return Promise.resolve(!A.offline);
+    const p = A.syncing = saveDraft().finally(() => { if (A.syncing === p) A.syncing = null; });
+    return p;
+  }
+  async function saveDraft() {
+    const gen = A.syncGen;
     A.syncState = 'saving'; paintStatus();
-    try { const r = await S.sb.draft.put({ ...A.data, baseVersion: A.base }); S.admin.saveOverride(A.data, r.updatedAt); A.syncState = 'saved'; }
-    catch { A.syncState = 'error'; }
-    paintStatus();
+    let sent = '';
+    try {
+      if (A.draftAt == null && !A.overwrite) {
+        // לא ידוע על טיוטה בשרת: בודקים שאף אחד לא התחיל אחת בינתיים, כדי לא לדרוס אותה בשקט
+        const { draft } = await S.sb.draft.get();
+        if (gen !== A.syncGen) return false;
+        if (draft?.data && !ownEcho(draft)) { onDraftConflict(draft); return false; }
+        if (draft?.updatedAt) A.draftAt = draft.updatedAt;
+      }
+      const body = { ...A.data, baseVersion: A.base ?? null };
+      sent = JSON.stringify(body);
+      A.unsynced = false;   // עריכה בזמן השמירה תסמן שוב
+      A.lastSent = sent;
+      const r = await S.sb.draft.put(body, A.overwrite ? undefined : A.draftAt ?? undefined);
+      if (gen !== A.syncGen) return false;
+      A.draftAt = r.updatedAt ?? null; A.draftBy = r.by || S.sb.user?.email || '';
+      A.overwrite = false; A.syncState = 'saved'; A.retryDelay = 0; A.echoRetry = false;
+      if (A.offline) { A.offline = false; U.notify('החיבור חזר — השינויים נשמרו בשרת.', 'success'); }
+      if (A.unsynced) scheduleSync();
+      return true;
+    } catch (err) {
+      if (gen !== A.syncGen) return false;
+      if (sent) A.unsynced = true;
+      A.syncState = '';
+      if (err.conflict) {
+        let draft = err.draft;
+        if (!draft?.data) { try { draft = (await S.sb.draft.get()).draft; } catch { draft = null; } if (gen !== A.syncGen) return false; }
+        if (draft?.data && !ownEcho(draft)) { onDraftConflict(draft); return false; }
+        // הטיוטה נמחקה בינתיים (פורסמה או בוטלה), או שזו השמירה שלנו עצמנו — שומרים שוב, פעם אחת
+        A.draftAt = draft?.data ? draft.updatedAt ?? null : null;
+        if (!A.echoRetry) { A.echoRetry = true; scheduleSync(0); return false; }
+        A.echoRetry = false;
+      }
+      if (!A.offline) U.notify('השינויים לא נשמרים לשרת — אל תסגרו את הדף. ננסה שוב לבד כשהחיבור יחזור.', 'error', { ttl: 0 });
+      A.offline = true;
+      A.retryDelay = Math.min(60000, (A.retryDelay || 2500) * 2);
+      scheduleSync(A.retryDelay);
+      return false;
+    } finally { paintStatus(); }
   }
-  window.addEventListener('beforeunload', () => { if (A.saveTimer) persist(); });
+  /** טיוטה בשרת שהיא בעצם השמירה האחרונה שלנו (התשובה אבדה בדרך, או נשלחה בסגירת הדף) */
+  function ownEcho(draft) {
+    if (!A.lastSent || (draft.by && draft.by !== S.sb.user?.email)) return false;
+    try { return sameData(draft.data, JSON.parse(A.lastSent)); } catch { return false; }
+  }
+  function onDraftConflict(draft) {
+    A.conflict = draft; A.unsynced = true; A.overwrite = false;
+    clearTimeout(A.syncTimer); A.syncTimer = null;
+    paintStatus(); showDraftConflict();
+  }
+  /** מנהל אחר (או אתם, ממכשיר אחר) שמר טיוטה חדשה יותר: לא דורסים — שואלים */
+  function showDraftConflict() {
+    const dr = A.conflict; if (!dr) return;
+    let d = $('#dlg-draft');
+    if (!d) {
+      d = document.createElement('dialog'); d.id = 'dlg-draft'; d.className = 'sheet'; d.setAttribute('aria-labelledby', 'dlg-draft-title');
+      document.body.appendChild(d);
+      d.addEventListener('click', async (ev) => {
+        if (ev.target === d || ev.target.closest('[data-close]')) { d.close(); return; }
+        const b = ev.target.closest('[data-draft]'); if (!b || !A.conflict) return;
+        const pick = A.conflict; d.close();
+        if (b.dataset.draft === 'mine') {
+          A.conflict = null; A.draftAt = pick.updatedAt ?? null; A.overwrite = !pick.updatedAt; A.unsynced = true;
+          sync();
+          return;
+        }
+        A.conflict = null; A.syncGen++;
+        A.data = S.admin.normalize(pick.data);
+        if (!A.data.settings) A.data.settings = S.admin.normSettings({});
+        A.base = pick.data.baseVersion !== undefined ? pick.data.baseVersion : A.base;
+        A.draftAt = pick.updatedAt ?? null; A.draftBy = pick.by || '';
+        A.unsynced = false; A.syncState = 'saved';
+        if (!liveEp(A.selected)) A.selected = null;
+        A.picked.clear();
+        paintStatus(); render();
+        U.notify('נטענה הטיוטה החדשה מהשרת.', 'info');
+      });
+    }
+    const mine = !!dr.by && dr.by === S.sb.user?.email;
+    const at = dr.updatedAt ? ` ב־${when(dr.updatedAt)}` : '';
+    const head = mine ? `שמרתם טיוטה חדשה יותר ממכשיר אחר${at}` : `מנהל אחר (${dr.by || 'לא ידוע'}) שמר טיוטה חדשה יותר${at}`;
+    d.innerHTML = `<div class="section-title"><div><p class="kicker">הטיוטה המשותפת</p><h2 id="dlg-draft-title">${esc(head)}</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+<div class="card-body"><p class="help">כדי לא לדרוס אותה, השינויים שעשיתם כאן מאז לא נשמרו בשרת. אפשר לטעון את הטיוטה החדשה (השינויים שעשיתם כאן יאבדו), או להמשיך עם שלכם — ואז היא תוחלף בטיוטה שלכם.</p></div>
+<div class="card-foot"><button type="button" class="btn" data-draft="theirs">${mine ? 'לטעון את הטיוטה ההיא' : 'לטעון את הטיוטה שלו'}</button><button type="button" class="btn danger" data-draft="mine">${mine ? 'להמשיך עם זו ולדרוס' : 'להמשיך עם שלי ולדרוס'}</button></div>`;
+    if (!d.open) d.showModal();
+  }
+  /* סגירת הדף עם שינויים שעוד לא נשמרו: שולחים אותם בבקשה שממשיכה גם אחרי הסגירה
+     (כשהטיוטה קטנה מספיק); אחרת הדפדפן שואל אם לעזוב. במכשיר עצמו לא נשמר כלום. */
+  window.addEventListener('beforeunload', (ev) => {
+    if (!A.unsynced && !A.syncing) return;
+    if (canSync() && !A.conflict && !A.publishing && !A.offline) {
+      const body = { ...A.data, baseVersion: A.base ?? null };
+      if (S.sb.draft.putKeepalive(body, A.overwrite ? undefined : A.draftAt ?? undefined)) { A.lastSent = JSON.stringify(body); return; }
+    }
+    ev.preventDefault(); ev.returnValue = '';
+  });
+  // הדף עובר לרקע (בטלפון: מעבר לאפליקציה אחרת) — שומרים מיד; החיבור חזר — מנסים שוב
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && A.unsynced) sync(); });
+  window.addEventListener('online', () => { if (A.unsynced) sync(); });
 
   /** מה השתנה לעומת מה שמפורסם */
   function changes() {
@@ -96,9 +217,16 @@
     const settings = key(S.admin.normSettings(A.origin.settings)) !== key(S.admin.normSettings(A.data.settings));
     return { added, changed, removed, seasons, settings, any: !!(added || changed || removed.length || seasons || settings) };
   }
+  /** תוכניות שהמאזינים יראו לראשונה אחרי הפרסום הזה (חדשות, או שהיו מוסתרות/מתוזמנות) */
+  function newlyPublic() {
+    if (!A.origin) return [];
+    const isPublic = (e) => e.visible && !S.scheduled(e);
+    const om = new Map(A.origin.episodes.map((e) => [e.id, e]));
+    return A.data.episodes.filter((e) => isPublic(e) && !(om.has(e.id) && isPublic(om.get(e.id))));
+  }
 
   /** מה בדיוק ישתנה באתר: לכל תוכנית — אילו שדות, ומה היה לעומת מה יהיה */
-  const FIELD_NAMES = { title: 'השם', date: 'התאריך', number: 'המספר', season: 'העונה', description: 'התיאור', cover: 'התמונה', audio: 'ההקלטה', duration: 'האורך', visible: 'מוצגת באתר', featured: 'מומלצת בדף הבית', publishAt: 'מועד הפרסום', guests: 'האורחים', tags: 'מילות החיפוש', links: 'הקישורים', surveyId: 'המצעד המקושר' };
+  const FIELD_NAMES = { title: 'השם', date: 'התאריך', number: 'המספר', season: 'העונה', description: 'התיאור', cover: 'התמונה', thumb: 'התמונה הקטנה', audio: 'ההקלטה', duration: 'האורך', visible: 'מוצגת באתר', featured: 'מומלצת בדף הבית', publishAt: 'מועד הפרסום', guests: 'האורחים', tags: 'מילות החיפוש', links: 'הקישורים', surveyId: 'המצעד המקושר' };
   function detailedChanges() {
     if (!A.origin) return [];
     const out = [];
@@ -106,7 +234,7 @@
       if (f === 'visible' || f === 'featured') return v ? 'כן' : 'לא';
       if (f === 'date') return v ? fmtDate(v, true) : 'בלי';
       if (f === 'duration') return v ? fmtDuration(v) : 'בלי';
-      if (f === 'cover' || f === 'audio') return v ? 'יש' : 'אין';
+      if (f === 'cover' || f === 'thumb' || f === 'audio') return v ? 'יש' : 'אין';
       if (f === 'season') return A.data.seasons.find((x) => x.id === v)?.title || v || 'בלי';
       if (Array.isArray(v)) return v.map((x) => (typeof x === 'object' ? x.label || x.url : x)).join(', ') || 'בלי';
       const t = String(v ?? '').trim(); return t ? (t.length > 60 ? `${t.slice(0, 60)}…` : t) : 'ריק';
@@ -119,7 +247,7 @@
       for (const f of Object.keys(FIELD_NAMES)) {
         const a = JSON.stringify(o[f] ?? ''), b = JSON.stringify(e[f] ?? '');
         if (a === b) continue;
-        if ((f === 'cover' || f === 'audio') && o[f] && e[f]) rows.push(`${FIELD_NAMES[f]} הוחלפה`);
+        if ((f === 'cover' || f === 'thumb' || f === 'audio') && o[f] && e[f]) rows.push(`${FIELD_NAMES[f]} הוחלפה`);
         else if (f === 'description' && o[f] && e[f]) rows.push('התיאור עודכן');
         else rows.push(`${FIELD_NAMES[f]}: ${short(o[f], f)} ← ${short(e[f], f)}`);
       }
@@ -175,37 +303,49 @@
   function paintStatus() {
     const dot = $('#status-dot'), txt = $('#status-text');
     const ch = changes();
-    const syncNote = A.syncState === 'saving' ? ' · שומרים בטיוטה המשותפת…' : A.syncState === 'error' ? ' · הטיוטה המשותפת לא נשמרה' : '';
-    if (!A.origin && A.originError) { dot.className = 'dot err'; txt.textContent = 'האתר לא זמין כרגע · השינויים נשמרים במכשיר הזה'; }
+    const syncNote = !CLOUD ? ' · הם רק בדף הזה עד שמורידים את הקובץ' : A.unsynced || A.syncState === 'saving' ? ' · שומרים בטיוטה המשותפת…' : ' · נשמרו';
+    if (A.conflict) { dot.className = 'dot err'; txt.textContent = 'בשרת נשמרה טיוטה חדשה יותר · השינויים שלכם עוד לא נשמרו'; }
+    else if (A.offline) { dot.className = 'dot err'; txt.textContent = 'השינויים לא נשמרים לשרת — אל תסגרו את הדף'; }
+    else if (!A.origin && A.originError) { dot.className = 'dot err'; txt.textContent = `האתר לא זמין כרגע${CLOUD ? ' · השינויים נשמרים בטיוטה המשותפת' : ''}`; }
     else if (!A.origin) { dot.className = 'dot'; txt.textContent = 'בודקים מה מפורסם באתר…'; }
-    else if (ch.any) { dot.className = 'dot draft'; txt.textContent = `יש שינויים שעדיין לא פורסמו${syncNote || ' · נשמרו'}`; }
+    else if (ch.any) { dot.className = 'dot draft'; txt.textContent = `יש שינויים שעדיין לא פורסמו${syncNote}`; }
     else { dot.className = 'dot on'; txt.textContent = 'הכול מפורסם'; }
     $('#btn-publish-top').classList.toggle('pulse', !!ch?.any);
   }
 
+  /** טוענים מה מפורסם באתר ואת הטיוטה המשותפת מהשרת. שינויים שיש כאן בזיכרון ועוד
+      לא נשמרו בשרת לא נמחקים בלי לשאול. */
   async function loadOrigin() {
-    try {
-      const o = await S.admin.pullOrigin();
-      A.origin = o; A.originError = false;
-      const emptyRemote = CLOUD && o.episodes.length === 0 && A.data.episodes.length > 0;
-      if (S.state.loadedFrom !== 'override' && !emptyRemote) { A.data = clone(o); A.base = o.versionId; }
-      else A.base = readBase() ?? o.versionId;
-    } catch { A.originError = true; }
-    // הטיוטה המשותפת: אם במכשיר אחר עבדו אחרי השמירה האחרונה כאן — לוקחים אותה
-    if (CLOUD && S.sb.user?.isAdmin) {
-      try {
-        const { draft } = await S.sb.draft.get();
-        if (draft?.data && (!S.admin.hasOverride || String(draft.updatedAt) > String(S.admin.overrideAt || ''))) {
-          A.data = S.admin.normalize(draft.data);
-          A.base = draft.data.baseVersion !== undefined ? draft.data.baseVersion : A.base;
-          S.admin.saveOverride(A.data, draft.updatedAt); writeBase(A.base);
-          if (draft.by && draft.by !== S.sb.user.email) U.notify(`נטענה הטיוטה המשותפת (נשמרה על ידי ${draft.by}).`, 'info');
-          else if (S.state.loadedFrom !== 'override') U.notify('נטענה הטיוטה שלכם ממכשיר אחר.', 'info');
-        }
-      } catch { /* אין טיוטה משותפת או השרת הישן */ }
+    await A.syncing;
+    let o = null;
+    try { o = await S.admin.pullOrigin(); A.origin = o; A.originError = false; } catch { A.originError = true; }
+    let draft = null, draftRead = false;
+    if (canSync()) {
+      try { draft = (await S.sb.draft.get()).draft; draftRead = true; } catch { /* השרת לא זמין — השמירה הבאה תבדוק שוב */ }
+      if (!draft?.data) draft = null;
+      if (draftRead) { A.draftAt = draft ? draft.updatedAt ?? null : null; A.draftBy = draft?.by || ''; }
     }
+    // מה מציגים: הטיוטה המשותפת, ואם אין — מה שמפורסם. (חיבור חדש ל־D1 מחזיר קטלוג ריק:
+    // נשארים עם הקטלוג המלא מהקובץ, כדי שאפשר יהיה לפרסם אותו.)
+    const emptyRemote = CLOUD && !!o && o.episodes.length === 0 && A.data.episodes.length > 0;
+    const next = draft ? S.admin.normalize(draft.data) : o && !emptyRemote ? clone(o) : null;
+    if (next) {
+      const same = sameData(next, A.data);
+      const other = draft?.by && draft.by !== S.sb.user?.email ? draft.by : '';
+      const what = draft ? `הטיוטה המשותפת מהשרת${other ? ` (שנשמרה על ידי ${other})` : ''}` : 'מה שמפורסם באתר';
+      if (same || !A.unsynced || confirm(`יש כאן שינויים שעוד לא ${CLOUD ? 'נשמרו בשרת' : 'ירדו לקובץ'}. לטעון במקומם את ${what}?\n\nביטול = להמשיך עם השינויים שכאן${CLOUD ? ' (הם יישמרו בשרת)' : ''}.`)) {
+        A.data = next; A.unsynced = false; A.conflict = null;
+        A.syncState = draft ? 'saved' : '';
+        A.base = draft ? (draft.data.baseVersion !== undefined ? draft.data.baseVersion : o?.versionId ?? A.base) : o.versionId;
+        if (!liveEp(A.selected)) A.selected = null;
+        A.picked.clear();
+        if (!same && other) U.notify(`נטענה הטיוטה המשותפת (נשמרה על ידי ${other}).`, 'info');
+      }
+    }
+    if (A.base == null && o) A.base = o.versionId ?? null;
     if (!A.data.settings) A.data.settings = S.admin.normSettings({});
-    if (CLOUD && S.sb.user?.isAdmin && !A.surveys) { try { A.surveys = (await S.sb.surveys()).surveys; } catch { A.surveys = []; } }
+    if (canSync() && !A.surveys) { try { A.surveys = (await S.sb.surveys()).surveys; } catch { A.surveys = []; } }
+    if (A.unsynced) scheduleSync();
     paintStatus(); render();
   }
 
@@ -229,6 +369,25 @@
     const ok = await checkAccess();
     U.notify(ok ? 'ברוכים הבאים לניהול.' : 'התחברתם, אבל החשבון הזה אינו מוגדר כמנהל.', ok ? 'success' : 'info');
     if (ok) { await loadOrigin(); maybeGuide(); loadListeners(); }
+  }
+  /** התנתקות: שום דבר מהטיוטה לא נשאר — לא בזיכרון ולא במכשיר */
+  async function logout() {
+    if (A.unsynced && canSync()) await sync();
+    if (A.unsynced && !confirm('יש שינויים שעוד לא נשמרו בשרת, והם יימחקו בהתנתקות. להתנתק בכל זאת?')) return;
+    clearTimeout(A.syncTimer); A.syncTimer = null; A.syncGen++;
+    Object.values(A.jobs).forEach((j) => { j.stop = true; });
+    $('#dlg-draft')?.close();
+    Object.assign(A, {
+      data: clone(S.data), origin: null, originError: false, base: null, selected: null, bulk: false,
+      unsynced: false, offline: false, syncState: '', retryDelay: 0, draftAt: null, draftBy: '', conflict: null, overwrite: false, echoRetry: false, lastSent: '',
+      checks: { audio: null, media: null }, versions: null, stats: null, messages: null, admins: null, subs: null, surveys: null, comments: null, pushCount: null, statsEp: '', proof: null,
+    });
+    if (!A.data.settings) A.data.settings = S.admin.normSettings({});
+    A.picked.clear(); A.versionCache.clear(); A.epStats.clear(); A.ai.clear();
+    dropDeviceDraft();
+    S.signOut(); gateMounted = false;
+    await checkAccess(); render(); paintStatus();
+    U.notify('התנתקתם.', 'success');
   }
   let gateMounted = false;
   async function mountGate() {
@@ -574,20 +733,37 @@ ${aiCard(e)}
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     return new Promise((res) => c.toBlob(res, 'image/jpeg', .82));
   }
-  /** מעלה תמונה (ואת הגרסה הקטנה שלה) ושומר את שתיהן בתוכנית */
+  /** סוג התמונה נשמר כמו שהוא (PNG נשאר PNG); תמונה שנוצרה כאן היא JPEG */
+  const IMAGE_TYPES = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+  function imageFile(blob, base) {
+    const fromName = String(blob.name || '').split('.').pop().toLowerCase();
+    const ext = Object.keys(IMAGE_TYPES).find((k) => IMAGE_TYPES[k] === blob.type) || (IMAGE_TYPES[fromName] ? fromName : 'jpg');
+    return new File([blob], `${base}.${ext}`, { type: IMAGE_TYPES[ext] });
+  }
+  /** מעלה תמונה (ואת הגרסה הקטנה שלה) ושומר את שתיהן בתוכנית — בטיוטה שבזיכרון עכשיו,
+      גם אם היא הוחלפה בזמן ההעלאה */
   async function setCover(e, blob, progress = () => {}) {
     const name = `cover-${e.slug || e.id}`;
-    e.cover = await window.RoshUpload(new File([blob], `${name}.jpg`, { type: blob.type || 'image/jpeg' }), e.id, 'cover', progress);
-    try { e.thumb = await window.RoshUpload(new File([await makeThumb(blob)], `${name}-small.jpg`, { type: 'image/jpeg' }), e.id, 'cover', () => {}); }
-    catch { e.thumb = ''; }   // בלי גרסה קטנה — הכרטיס יציג את התמונה המלאה
+    const cover = await window.RoshUpload(imageFile(blob, name), e.id, 'cover', progress);
+    let thumb = '';   // בלי גרסה קטנה — הכרטיס יציג את התמונה המלאה
+    try { thumb = await window.RoshUpload(new File([await makeThumb(blob)], `${name}-small.jpg`, { type: 'image/jpeg' }), e.id, 'cover', () => {}); } catch { /* */ }
+    const live = liveEp(e.id);
+    if (!live) throw new Error('התוכנית נמחקה בזמן ההעלאה.');
+    live.cover = cover; live.thumb = thumb;
   }
-  async function autoCover(e, status) {
-    status.textContent = 'מציירים…';
+  /** שורת המצב של העלאה בטופס — רק כשהתוכנית הזו פתוחה, ונמצאת מחדש בכל כתיבה (הטופס מצטייר מחדש) */
+  function uploadStatus(e, kind, text) {
+    if (A.selected !== e.id) return;
+    const el = P.querySelector(`[data-upload-status="${kind}"]`);
+    if (el) el.textContent = text;
+  }
+  async function autoCover(e) {
+    uploadStatus(e, 'auto', 'מציירים…');
     const blob = await drawCover(e);
     const file = new File([blob], `cover-${e.slug || e.id}.jpg`, { type: 'image/jpeg' });
     if (CLOUD) {
-      status.textContent = 'מעלים…';
-      await setCover(e, file, (pct) => { status.textContent = `מעלים — ${pct}%`; });
+      uploadStatus(e, 'auto', 'מעלים…');
+      await setCover(e, file, (pct) => uploadStatus(e, 'auto', `מעלים — ${pct}%`));
     } else {
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = file.name; a.click();
       U.notify('התמונה ירדה למחשב. העלו אותה לאתר והדביקו את הקישור.', 'info');
@@ -606,23 +782,35 @@ ${aiCard(e)}
      רצות ברקע (אפשר להמשיך לעבוד), מתקדמות אחת־אחת, ואפשר לעצור באמצע.
      כל תוצאה נכנסת לטיוטה — ולאתר רק בלחיצה על "פרסום". */
   A.jobs = {};
-  async function runJob(name, items, work, { concurrency = 1, label: what = 'תוכניות' } = {}) {
+  async function runJob(name, items, work, { concurrency = 1, label: what = 'תוכניות', one = 'תוכנית אחת עודכנה' } = {}) {
     if (A.jobs[name]?.running) return;
     const job = A.jobs[name] = { running: true, stop: false, done: 0, failed: 0, total: items.length, text: `0/${items.length}` };
-    const paint = () => { job.text = `${job.done}/${job.total}${job.failed ? ` · ${job.failed} נכשלו` : ''}`; if (A.tab === 'publish') renderPublish(); };
-    paint();
+    // בזמן העבודה מתעדכנת רק שורת ההתקדמות; החלק כולו מצטייר מחדש בהתחלה ובסוף
+    const paint = (full) => {
+      job.text = `${job.done}/${job.total}${job.failed ? ` · ${job.failed} נכשלו` : ''}`;
+      if (A.tab !== 'publish') return;
+      if (full) { renderPublish(); return; }
+      const el = P.querySelector(`.job-progress[data-job="${name}"] .job-text`);
+      if (el) el.textContent = job.text;
+    };
+    paint(true);
     let i = 0;
     const worker = async () => {
       while (i < items.length && !job.stop) {
         const it = items[i++];
-        try { await work(it); } catch { job.failed++; }
+        // הטיוטה עלולה להתחלף בזמן העבודה (טעינה מהשרת, שחזור) — עובדים על התוכנית שבה עכשיו
+        const live = liveEp(it.id);
+        if (!live) { job.failed++; job.done++; paint(); continue; }
+        try { await work(live); } catch { job.failed++; }
         job.done++; paint(); touch();
       }
     };
     await Promise.all(Array.from({ length: Math.min(concurrency, items.length) || 1 }, worker));
-    job.running = false; paint();
+    job.running = false; paint(true);
     renderList(); if (A.tab === 'programs') renderEditor();
-    U.notify(job.stop ? `נעצר: ${job.done - job.failed} ${what} עודכנו.` : `הסתיים: ${job.done - job.failed} ${what} עודכנו${job.failed ? `, ${job.failed} נכשלו` : ''}. לחצו "פרסום" כדי שזה יופיע באתר.`, job.failed ? 'info' : 'success');
+    const ok = job.done - job.failed;
+    const updated = ok === 1 ? one : `${ok} ${what} עודכנו`;
+    U.notify(job.stop ? `נעצר: ${updated}.` : `הסתיים: ${updated}${job.failed ? `, ${job.failed} נכשלו` : ''}. לחצו "פרסום" כדי שזה יופיע באתר.`, job.failed ? 'info' : 'success');
   }
   /** האורך של הקלטה, מתוך הקובץ עצמו (נקרא רק ראש הקובץ) */
   function measureDuration(url) {
@@ -634,13 +822,25 @@ ${aiCard(e)}
       a.src = url;
     });
   }
-  const fillDurations = () => runJob('fill-durations', A.data.episodes.filter((e) => U.streamUrl(e) && !e.duration), async (e) => { e.duration = await measureDuration(U.streamUrl(e)); }, { concurrency: 3, label: 'אורכים' });
+  /** התוכנית כפי שהיא בטיוטה עכשיו, אחרי המתנה; נכשל אם נמחקה או שהשדה השתנה בינתיים */
+  const liveAfter = (e, field, was) => {
+    const live = liveEp(e.id);
+    if (!live || (field && live[field] !== was)) throw new Error('התוכנית השתנתה בינתיים.');
+    return live;
+  };
+  const fillDurations = () => runJob('fill-durations', A.data.episodes.filter((e) => U.streamUrl(e) && !e.duration), async (e) => {
+    const url = U.streamUrl(e), d = await measureDuration(url);
+    const live = liveAfter(e); if (U.streamUrl(live) !== url) throw new Error('ההקלטה הוחלפה בינתיים.');
+    live.duration = d;
+  }, { concurrency: 3, label: 'אורכים', one: 'אורך אחד עודכן' });
   const coversAll = () => runJob('covers-all', A.data.episodes.filter((e) => !e.cover), async (e) => {
     await setCover(e, await drawCover(e));
-  }, { concurrency: 2, label: 'תמונות' });
+  }, { concurrency: 2, label: 'תמונות', one: 'תמונה אחת עודכנה' });
   const thumbsAll = () => runJob('thumbs-all', A.data.episodes.filter((e) => e.cover && !e.thumb), async (e) => {
-    e.thumb = await window.RoshUpload(new File([await makeThumb(e.cover)], `cover-${e.slug || e.id}-small.jpg`, { type: 'image/jpeg' }), e.id, 'cover', () => {});
-  }, { concurrency: 2, label: 'תמונות קטנות' });
+    const cover = e.cover;
+    const thumb = await window.RoshUpload(new File([await makeThumb(cover)], `cover-${e.slug || e.id}-small.jpg`, { type: 'image/jpeg' }), e.id, 'cover', () => {});
+    liveAfter(e, 'cover', cover).thumb = thumb;
+  }, { concurrency: 2, label: 'תמונות קטנות', one: 'תמונה קטנה אחת עודכנה' });
 
   /* ---------- בדיקת איות ב־AI ----------
      עובר על השמות והתיאורים (של מה שהשתנה, או של הכול) ומציע תיקוני כתיב
@@ -723,9 +923,10 @@ ${aiCard(e)}
   function datesScreen() {
     let d = $('#dlg-dates');
     if (!d) {
-      d = document.createElement('dialog'); d.id = 'dlg-dates'; d.className = 'sheet wide';
+      d = document.createElement('dialog'); d.id = 'dlg-dates'; d.className = 'sheet wide'; d.setAttribute('aria-labelledby', 'dlg-dates-title');
       document.body.appendChild(d);
-      d.addEventListener('click', (ev) => { if (ev.target === d || ev.target.closest('[data-close]')) { d.close(); render(); } });
+      d.addEventListener('click', (ev) => { if (ev.target === d || ev.target.closest('[data-close]')) d.close(); });
+      d.addEventListener('close', render);   // גם בסגירה עם Escape
       d.addEventListener('change', (ev) => {
         const inp = ev.target.closest('input[data-date-for]'); if (!inp) return;
         const e = A.data.episodes.find((x) => x.id === inp.dataset.dateFor); if (!e) return;
@@ -746,7 +947,7 @@ ${aiCard(e)}
     };
     const list = A.data.episodes.filter((e) => !e.date).sort((a, b) => (a.season || '').localeCompare(b.season || '') || (a.number ?? 1e9) - (b.number ?? 1e9));
     const seasonName = (id) => A.data.seasons.find((x) => x.id === id)?.title || 'בלי עונה';
-    d.innerHTML = `<div class="section-title"><div><p class="kicker">השלמת תאריכים</p><h2><span data-left>${list.length}</span> תוכניות בלי תאריך</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+    d.innerHTML = `<div class="section-title"><div><p class="kicker">השלמת תאריכים</p><h2 id="dlg-dates-title"><span data-left>${list.length}</span> תוכניות בלי תאריך</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
 <div class="card-body dates-screen">
   <p class="help">בוחרים תאריך שידור, והשדה הבא נפתח לבד. הכול נשמר בטיוטה — וכשמסיימים, "פרסום". ליד כל תוכנית: התאריכים של התוכניות הסמוכות, כרמז.</p>
   ${list.length ? `<ol class="dates-list">${list.map((e, i) => `${i === 0 || list[i - 1].season !== e.season ? `<li class="dates-season">${esc(seasonName(e.season))}</li>` : ''}<li><span class="num">${e.number ?? '♫'}</span><span class="txt"><b>${esc(label(e))}</b><small>${esc(around(e))}</small></span><input type="date" data-date-for="${esc(e.id)}" aria-label="תאריך השידור של ${esc(label(e))}"></li>`).join('')}</ol>` : '<p class="help">✓ לכל התוכניות יש תאריך.</p>'}
@@ -757,8 +958,10 @@ ${aiCard(e)}
   }
 
   /* ---------- AI: תמלול (רק למנהלים) ותיאור + סיכום שנוצרים ממנו ---------- */
-  async function transcribe(e, onStep) {
+  /** מתמלל חלק אחרי חלק; ממשיך מהחלק שבו תמלול קודם נעצר */
+  async function transcribe(e, onStep, have = null) {
     let part = 0, total = 1;
+    if (have?.partsTotal && (have.partsDone || 0) < have.partsTotal) { part = have.partsDone || 0; total = Number(have.partsTotal) || 1; }
     while (part < total) {
       const r = await S.sb.call('/api/program/ai/transcribe', { method: 'POST', body: { episodeId: e.id, part } });
       total = Number(r.partsTotal) || 1; part++;
@@ -777,16 +980,17 @@ ${aiCard(e)}
   }
   async function aiRun(e, { apply = false } = {}) {
     const st = A.ai.get(e.id) || {}; A.ai.set(e.id, st);
+    if (st.running) return;
     const paint = () => { if (A.selected === e.id) paintAi(); };
     st.running = true; st.error = ''; st.text = 'מתמללים את ההקלטה…'; paint();
     try {
       let have = null;
       try { have = await S.sb.call(`/api/program/ai/transcript/${encodeURIComponent(e.id)}`); } catch { /* עוד אין */ }
-      if (!have || !have.partsTotal || have.partsDone < have.partsTotal) await transcribe(e, (p, t) => { st.text = `מתמללים… ${Math.round(p / t * 100)}%`; paint(); });
+      if (!have || !have.partsTotal || have.partsDone < have.partsTotal) await transcribe(e, (p, t) => { st.text = `מתמללים… ${Math.round(p / t * 100)}%`; paint(); }, have);
       st.text = 'כותבים תיאור וסיכום…'; paint();
       st.summary = await summarize(e);
       st.text = '';
-      if (apply) applySummary(e, st.summary);
+      if (apply) applySummary(liveAfter(e), st.summary);
     } catch (err) { st.error = err.message; st.text = ''; throw err; }
     finally { st.running = false; paint(); }
   }
@@ -810,7 +1014,7 @@ ${aiCard(e)}
     box.innerHTML = `
 <div class="actions" style="margin:0">
   <button type="button" class="btn gold" data-op="ai-run" ${st.running ? 'disabled' : ''}>${sum ? 'יצירה מחדש' : 'תמלול ויצירת תיאור'}</button>
-  <button type="button" class="btn small" data-op="ai-transcript">הצגת התמלול</button>
+  <button type="button" class="btn small" data-op="ai-transcript" aria-expanded="${st.transcript != null}">${st.transcript != null ? 'הסתרת התמלול' : 'הצגת התמלול'}</button>
   <button type="button" class="btn small" data-op="ai-titles" ${st.titlesBusy ? 'disabled' : ''}>${st.titlesBusy ? 'חושבים על שמות…' : 'הצעות לשם התוכנית'}</button>
 </div>
 ${st.titles ? `<div class="ai-result"><p class="kicker">הצעות לשם — לחיצה מחליפה את השם</p><div class="title-ideas">${st.titles.map((t, i) => `<button type="button" class="chip" data-op="ai-title-use" data-i="${i}">${esc(t)}</button>`).join('')}</div>${st.whatsapp ? `<p class="kicker" style="margin-top:12px">טקסט לוואטסאפ</p><div class="whatsapp-text">${esc(st.whatsapp)}</div><div class="actions"><button type="button" class="btn small" data-op="copy" data-text="${esc(st.whatsapp)}">העתקה</button></div>` : ''}</div>` : ''}
@@ -1011,21 +1215,12 @@ ${st.transcript != null ? `<details class="ai-transcript" open><summary>התמל
   }
   /* ---------- תגובות המאזינים: אישור, תשובה של המגישים, תגובה נבחרת ---------- */
   A.commentFilter = 'pending';
-  function commentsCard() {
-    const cs = A.comments;
-    if (!cs) return '<div class="card"><div class="card-body"><p class="help">טוענים את התגובות…</p></div></div>';
+  const COMMENT_TABS = [['pending', 'ממתינות'], ['approved', 'מוצגות'], ['hidden', 'מוסתרות'], ['all', 'הכול']];
+  const commentCount = (st) => (A.comments?.comments || []).filter((c) => c.status === st).length;
+  const commentTabText = (k, t) => `${t}${k !== 'all' ? ` (${commentCount(k)})` : ''}`;
+  function commentItem(c) {
     const epName = (id) => { const e = A.data.episodes.find((x) => x.id === id); return e ? label(e) : 'תוכנית שנמחקה'; };
-    const list = (cs.comments || []).filter((c) => A.commentFilter === 'all' || c.status === A.commentFilter);
-    const count = (st) => (cs.comments || []).filter((c) => c.status === st).length;
-    const tabs = [['pending', 'ממתינות'], ['approved', 'מוצגות'], ['hidden', 'מוסתרות'], ['all', 'הכול']];
     return `
-<div class="card" id="comments-card">
-  <div class="section-title"><div><p class="kicker">תגובות באתר</p><h2>מה המאזינים כותבים בדפי התוכניות</h2></div>${cs.pending ? `<strong>${cs.pending}</strong>` : ''}</div>
-  <div class="card-body">
-    <p class="help">תגובה מופיעה באתר רק אחרי שאישרתם אותה. אפשר לענות בשם המגישים, ולסמן "תגובה נבחרת" שתופיע ראשונה. תגובה על רגע בתוכנית מופיעה גם כסימן על פס ההתקדמות.</p>
-    ${cs.error ? `<p class="problems">${esc(cs.error)}</p>` : ''}
-    <div class="segmented" role="group" aria-label="סינון תגובות">${tabs.map(([k, t]) => `<button type="button" data-op="comments-filter" data-f2="${k}" aria-pressed="${A.commentFilter === k}">${t}${k !== 'all' ? ` (${count(k)})` : ''}</button>`).join('')}</div>
-    ${list.length ? `<ul class="mod-list">${list.map((c) => `
       <li class="mod ${c.status}" data-id="${esc(c.id)}">
         <div class="mod-head"><b>${esc(c.name || 'מאזין')}</b>${c.email ? `<small class="ltr">${esc(c.email)}</small>` : ''}<small>על "${esc(epName(c.episodeId))}"${c.at != null ? ` · ברגע ${U.fmtTime(c.at)}` : ''} · ${esc(when(c.createdAt))}</small>${c.pinned ? '<span class="pill gold">★ נבחרת</span>' : ''}</div>
         <p>${esc(c.text)}</p>
@@ -1037,18 +1232,46 @@ ${st.transcript != null ? `<details class="ai-transcript" open><summary>התמל
           <button type="button" class="btn small" data-op="comment-reply" data-id="${esc(c.id)}">שמירת התשובה</button>
           <button type="button" class="btn small danger" data-op="comment-del" data-id="${esc(c.id)}">מחיקה</button>
         </div>
-      </li>`).join('')}</ul>` : `<p class="help">${A.commentFilter === 'pending' ? '✓ אין תגובות שממתינות לאישור.' : 'אין תגובות כאן.'}</p>`}
+      </li>`;
+  }
+  function commentsCard() {
+    const cs = A.comments;
+    if (!cs) return '<div class="card"><div class="card-body"><p class="help">טוענים את התגובות…</p></div></div>';
+    const list = (cs.comments || []).filter((c) => A.commentFilter === 'all' || c.status === A.commentFilter);
+    return `
+<div class="card" id="comments-card">
+  <div class="section-title"><div><p class="kicker">תגובות באתר</p><h2>מה המאזינים כותבים בדפי התוכניות</h2></div><strong data-comments-pending ${cs.pending ? '' : 'hidden'}>${cs.pending || ''}</strong></div>
+  <div class="card-body">
+    <p class="help">תגובה מופיעה באתר רק אחרי שאישרתם אותה. אפשר לענות בשם המגישים, ולסמן "תגובה נבחרת" שתופיע ראשונה. תגובה על רגע בתוכנית מופיעה גם כסימן על פס ההתקדמות.</p>
+    ${cs.error ? `<p class="problems">${esc(cs.error)}</p>` : ''}
+    <div class="segmented" role="group" aria-label="סינון תגובות">${COMMENT_TABS.map(([k, t]) => `<button type="button" data-op="comments-filter" data-f2="${k}" aria-pressed="${A.commentFilter === k}">${commentTabText(k, t)}</button>`).join('')}</div>
+    ${list.length ? `<ul class="mod-list">${list.map(commentItem).join('')}</ul>` : `<p class="help">${A.commentFilter === 'pending' ? '✓ אין תגובות שממתינות לאישור.' : 'אין תגובות כאן.'}</p>`}
   </div>
 </div>`;
   }
+  /** פעולה על תגובה. מחזיר true כשהשרת קיבל. מתעדכנת רק השורה של התגובה (ולא כל החלק),
+      כדי שתשובות שמוקלדות בתגובות אחרות לא יימחקו. */
   async function moderate(id, body) {
     try {
       const r = await S.sb.call('/api/program/comments/moderate', { method: 'POST', body: { id, ...body } });
       const list = A.comments?.comments || []; const i = list.findIndex((c) => c.id === id);
       if (i >= 0 && r.comment) list[i] = r.comment;
       A.comments.pending = list.filter((c) => c.status === 'pending').length;
-      renderListeners(); loadListenersBadge();
-    } catch (err) { U.notify(err.message, 'error'); }
+      const li = P.querySelector(`.mod[data-id="${CSS.escape(id)}"]`);
+      if (li && i >= 0) {
+        const typed = li.querySelector('textarea[data-reply-for]')?.value;
+        li.outerHTML = commentItem(list[i]);
+        const ta = P.querySelector(`[data-reply-for="${CSS.escape(id)}"]`);
+        if (ta && !('reply' in body) && typed != null) ta.value = typed;   // תשובה שהוקלדה ועוד לא נשמרה נשארת
+      }
+      const card = $('#comments-card');
+      if (card) {
+        const pend = card.querySelector('[data-comments-pending]'); if (pend) { pend.hidden = !A.comments.pending; pend.textContent = A.comments.pending || ''; }
+        COMMENT_TABS.forEach(([k, t]) => { const b = card.querySelector(`[data-op="comments-filter"][data-f2="${k}"]`); if (b) b.textContent = commentTabText(k, t); });
+      }
+      loadListenersBadge();
+      return true;
+    } catch (err) { U.notify(err.message, 'error'); return false; }
   }
   function loadListenersBadge() { const badge = $('#tab-unread'); const n = (A.messages?.unread || 0) + (A.comments?.pending || 0); badge.hidden = !n; badge.textContent = n; }
   function pushCard() {
@@ -1127,17 +1350,19 @@ ${pushCard()}
       if (ch.changed) list.push(ch.changed === 1 ? 'תוכנית אחת עודכנה' : `${ch.changed} תוכניות עודכנו`);
       if (ch.removed.length) list.push(ch.removed.length === 1 ? `תוכנית אחת תימחק מהאתר (${esc(label(ch.removed[0]))})` : `${ch.removed.length} תוכניות יימחקו מהאתר`);
       if (ch.seasons) list.push('העונות השתנו');
-      if (ch.settings) list.push('ההודעה או העדכונים השתנו');
+      if (ch.settings) list.push('ההודעה, העדכונים או פרטי הקשר השתנו');
     }
     let title, text;
     if (!A.origin && A.originError) { title = 'האתר לא זמין כרגע'; text = 'לא הצלחנו לקרוא מה מפורסם באתר. השינויים שלכם שמורים — נסו שוב בעוד רגע.'; }
     else if (!A.origin) { title = 'רגע…'; text = 'בודקים מה מפורסם באתר.'; }
     else if (!ch.any) { title = 'הכול מפורסם'; text = 'האתר מציג בדיוק את מה שיש כאן. אין מה לפרסם.'; }
     else { title = 'יש שינויים שמחכים לפרסום'; text = 'עד הפרסום, השינויים נראים רק לכם (ולמי שקיבל קישור תצוגה מקדימה).'; }
-    const canPublish = !!ch?.any && !hc.must.length && (CLOUD ? !!u : true);
+    const busy = jobsBusy();
+    const canPublish = !!ch?.any && !hc.must.length && (CLOUD ? !!u : true) && !busy;
+    const fresh = newlyPublic();
     const checkRow = (kind, titleText, hint) => {
       const r = A.checks[kind];
-      return `<div class="tool"><div><b>${titleText}</b><small>${r ? (r.running ? `בודקים… ${r.done}/${r.total}` : r.problems.length ? `${r.problems.length} בעיות נמצאו:` : `✓ הכול תקין (${r.total} נבדקו)`) : hint}</small>${r && !r.running && r.problems.length ? `<ul class="check-list">${r.problems.map((p) => `<li><button type="button" class="link-btn" data-op="open" data-id="${esc(p.id)}">${esc(p.text)}</button></li>`).join('')}</ul>` : ''}</div><button type="button" class="btn small" data-op="check-${kind}" ${r?.running ? 'disabled' : ''}>${r ? 'בדיקה חוזרת' : 'בדיקה'}</button></div>`;
+      return `<div class="tool" data-check="${kind}"><div><b>${titleText}</b><small>${r ? (r.running ? `בודקים… ${r.done}/${r.total}` : r.problems.length ? `${r.problems.length} בעיות נמצאו:` : `✓ הכול תקין (${r.total} נבדקו)`) : hint}</small>${r && !r.running && r.problems.length ? `<ul class="check-list">${r.problems.map((p) => `<li><button type="button" class="link-btn" data-op="open" data-id="${esc(p.id)}">${esc(p.text)}</button></li>`).join('')}</ul>` : ''}</div><button type="button" class="btn small" data-op="check-${kind}" ${r?.running ? 'disabled' : ''}>${r ? 'בדיקה חוזרת' : 'בדיקה'}</button></div>`;
     };
     $('#panel').innerHTML = `
 <div class="card pub-card${ch?.any ? ' pending' : ''}">
@@ -1151,7 +1376,8 @@ ${pushCard()}
     ${CLOUD && !u ? '<p class="problems">כדי לפרסם צריך להיות מחוברים. רעננו את הדף והיכנסו שוב.</p>' : ''}
     <div class="actions">
       <button type="button" class="btn xl primary" data-op="publish" ${canPublish ? '' : 'disabled'}>${CLOUD ? 'פרסום לאתר' : 'הורדת הקובץ לפרסום'} <span>←</span></button>
-      ${CLOUD && ch?.added ? `<label class="check notify-check"><input type="checkbox" id="pub-notify" ${A.notify ? 'checked' : ''}> לשלוח התראה לטלפון של המאזינים על התוכניות החדשות</label>` : ''}
+      ${busy && ch?.any ? '<span class="cue-hint"><span class="notice-spinner" aria-hidden="true"></span> ממתינים לסיום העבודה</span>' : ''}
+      ${CLOUD && fresh.length ? `<label class="check notify-check"><input type="checkbox" id="pub-notify" ${A.notify ? 'checked' : ''}> לשלוח התראה לטלפון של המאזינים על ${fresh.length === 1 ? 'התוכנית שעולה עכשיו לאתר' : `${fresh.length} התוכניות שעולות עכשיו לאתר`}</label>` : ''}
       ${ch?.any ? '<button type="button" class="btn" data-op="discard">ביטול כל השינויים</button>' : ''}
       ${!A.origin ? '<button type="button" class="btn" data-op="reload">בדיקה חוזרת</button>' : ''}
     </div>
@@ -1168,7 +1394,7 @@ ${pushCard()}
       const items = hc.should.filter((p) => p.kind === kind);
       if (!items.length) return '';
       const job = A.jobs?.[g.fix];
-      return `<div class="health-group"><div class="hg-head"><b>${items.length}</b><span>${g.title}</span>${g.fix && (!g.cloud || CLOUD) ? (job?.running ? `<span class="cue-hint"><span class="notice-spinner" aria-hidden="true"></span> ${esc(job.text)}</span><button type="button" class="btn small" data-op="job-stop" data-job="${g.fix}">עצירה</button>` : `<button type="button" class="btn small gold" data-op="${g.fix}">${g.fixLabel}</button>`) : ''}</div>
+      return `<div class="health-group"><div class="hg-head"><b>${items.length}</b><span>${g.title}</span>${g.fix && (!g.cloud || CLOUD) ? (job?.running ? `<span class="cue-hint job-progress" data-job="${g.fix}"><span class="notice-spinner" aria-hidden="true"></span> <span class="job-text">${esc(job.text)}</span></span><button type="button" class="btn small" data-op="job-stop" data-job="${g.fix}">עצירה</button>` : `<button type="button" class="btn small gold" data-op="${g.fix}">${g.fixLabel}</button>`) : ''}</div>
         <details><summary>הצגת הרשימה</summary><ul class="check-list">${items.slice(0, 120).map((p) => `<li><button type="button" class="link-btn" data-op="open" data-id="${esc(p.id)}">${esc(label(A.data.episodes.find((x) => x.id === p.id) || { title: p.text }))}</button></li>`).join('')}${items.length > 120 ? `<li>ועוד ${items.length - 120}…</li>` : ''}</ul></details></div>`;
     }).join('')}</div>
     <p class="cue-hint">אלה לא חוסמים פרסום — רק הצעות. תוכניות בלי הקלטה ובלי תמונה עדיין מופיעות באתר.</p>` : '<p class="help">✓ לכל התוכניות יש שם, תאריך, תיאור, הקלטה, אורך ותמונה, ואין כפילויות.</p>'}
@@ -1226,7 +1452,9 @@ ${proofCard()}
       } catch { return false; }
     };
     let i = 0;
-    const worker = async () => { while (i < items.length) { const it = items[i++]; const ok = await probe(it); if (!ok) r.problems.push({ id: it.e.id, text: `${it.what} של "${label(it.e)}" לא ${it.masc ? 'נטען' : 'נטענת'}` }); r.done++; if (A.tab === 'publish' && r.done % 5 === 0) renderPublish(); } };
+    // בזמן הבדיקה מתעדכן רק המונה בשורה שלה; התוצאות מוצגות בסוף
+    const tick = () => { const el = A.tab === 'publish' && P.querySelector(`[data-check="${kind}"] small`); if (el) el.textContent = `בודקים… ${r.done}/${r.total}`; };
+    const worker = async () => { while (i < items.length) { const it = items[i++]; const ok = await probe(it); if (!ok) r.problems.push({ id: it.e.id, text: `${it.what} של "${label(it.e)}" לא ${it.masc ? 'נטען' : 'נטענת'}` }); r.done++; tick(); } };
     await Promise.all([worker(), worker(), worker()]);
     r.running = false; if (A.tab === 'publish') renderPublish();
     U.notify(r.problems.length ? `הבדיקה הסתיימה: ${r.problems.length} בעיות.` : 'הבדיקה הסתיימה: הכול תקין.', r.problems.length ? 'info' : 'success');
@@ -1240,6 +1468,7 @@ ${proofCard()}
     a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
     a.download = CLOUD ? `rosh-berosh-backup-${new Date().toISOString().slice(0, 10)}.json` : 'episodes.json';
     a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    if (!CLOUD) { A.unsynced = false; paintStatus(); }   // בלי שרת, הקובץ שירד הוא השמירה
   }
   $('#file-restore').addEventListener('change', async (ev) => {
     const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
@@ -1257,24 +1486,37 @@ ${proofCard()}
   }
 
   async function publish(btn) {
+    if (jobsBusy()) { U.notify('ממתינים לסיום העבודה — אחר כך אפשר לפרסם.', 'info'); return; }
+    if (A.publishing) return;
     const hc = health();
     if (hc.must.length) { U.notify(hc.must[0].text, 'error'); setTab('publish'); return; }
     const errs = S.admin.validate(A.data);
     if (errs.length) { U.notify(errs[0], 'error'); return; }
-    persist();
     if (!CLOUD) { backupFile(); U.notify('הקובץ ירד. מסרו אותו למי שמתחזק את האתר.', 'success'); return; }
     if (btn) btn.disabled = true;
     const stop = U.notify('מפרסמים…', 'progress');
-    const removedIds = A.origin ? A.origin.episodes.filter((o) => !A.data.episodes.some((e) => e.id === o.id)).map((o) => o.id) : [];
     const go = async (force) => {
-      const r = await S.sb.push(A.data, { removedIds, baseVersion: A.base ?? null, force, notify: A.notify });
-      clearTimeout(A.syncTimer); A.syncState = '';
-      S.admin.clearOverride(); writeBase(null);
-      A.origin = S.admin.normalize(clone(A.data)); A.origin.versionId = r.versionId ?? null; A.base = A.origin.versionId;
-      A.originError = false; A.versions = null; A.versionCache.clear();
-      stop(); U.notify('פורסם! האתר מציג עכשיו את הגרסה החדשה.', 'success');
-      paintStatus(); if (A.tab === 'publish') render();
-      if (A.notify && r.notified) drainPush().then((n) => n && U.notify(n === 1 ? 'נשלחה התראה למכשיר אחד.' : `נשלחה התראה ל־${n} מכשירים.`, 'success'));
+      if (jobsBusy()) throw new Error('ממתינים לסיום העבודה.');
+      A.publishing = true;
+      try {
+        // שמירה אוטומטית שמחכה או שכבר בדרך לא תתחרה בפרסום
+        clearTimeout(A.syncTimer); A.syncTimer = null;
+        await A.syncing;
+        if (A.conflict) { showDraftConflict(); throw new Error('קודם בחרו מה לעשות עם הטיוטה החדשה שבשרת.'); }
+        // מפרסמים תמונת מצב: מה שמשתנה בזמן הפרסום נשאר בטיוטה לפרסום הבא
+        const snap = clone(A.data);
+        const removedIds = A.origin ? A.origin.episodes.filter((o) => !snap.episodes.some((e) => e.id === o.id)).map((o) => o.id) : [];
+        const r = await S.sb.push(snap, { removedIds, baseVersion: A.base ?? null, force, notify: A.notify });
+        A.syncGen++; clearTimeout(A.syncTimer); A.syncTimer = null; A.syncState = '';
+        A.origin = S.admin.normalize(snap); A.origin.versionId = r.versionId ?? null; A.base = A.origin.versionId;
+        A.originError = false; A.versions = null; A.versionCache.clear();
+        // הטיוטה המשותפת פורסמה — מוחקים אותה בשרת
+        try { await S.sb.draft.clear(); A.draftAt = null; A.draftBy = ''; } catch { /* תוחלף בשמירה הבאה */ }
+        A.unsynced = !sameData(A.data, snap);
+        stop(); U.notify('פורסם! האתר מציג עכשיו את הגרסה החדשה.', 'success');
+        paintStatus(); if (A.tab === 'publish') render();
+        if (A.notify && r.notified) drainPush().then((n) => n && U.notify(n === 1 ? 'נשלחה התראה למכשיר אחד.' : `נשלחה התראה ל־${n} מכשירים.`, 'success'));
+      } finally { A.publishing = false; if (A.unsynced) scheduleSync(); }
     };
     try { await go(false); }
     catch (err) {
@@ -1300,11 +1542,11 @@ ${proofCard()}
   function showConflict(who, force) {
     let d = $('#dlg-conflict');
     if (!d) {
-      d = document.createElement('dialog'); d.id = 'dlg-conflict'; d.className = 'sheet';
+      d = document.createElement('dialog'); d.id = 'dlg-conflict'; d.className = 'sheet'; d.setAttribute('aria-labelledby', 'dlg-conflict-title');
       document.body.appendChild(d);
       d.addEventListener('click', (e) => { if (e.target === d || e.target.closest('[data-close]')) d.close(); });
     }
-    d.innerHTML = `<div class="section-title"><div><p class="kicker">רגע לפני הפרסום</p><h2>מנהל אחר פרסם בינתיים</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+    d.innerHTML = `<div class="section-title"><div><p class="kicker">רגע לפני הפרסום</p><h2 id="dlg-conflict-title">מנהל אחר פרסם בינתיים</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
 <div class="card-body"><p class="help">מאז שהתחלתם לערוך, מישהו אחר פרסם גרסה חדשה לאתר${esc(who)}. אם תפרסמו עכשיו, השינויים שלו יימחקו ויוחלפו בטיוטה שלכם.</p>
 <p class="help">מומלץ: לפתוח את "גרסאות קודמות" בחלק "פרסום", לראות מה השתנה, ולהעתיק לטיוטה רק את מה שצריך.</p></div>
 <div class="card-foot"><button type="button" class="btn" data-close>ביטול — לא לפרסם</button><button type="button" class="btn danger" data-force>לפרסם בכל זאת ולדרוס</button></div>`;
@@ -1312,9 +1554,18 @@ ${proofCard()}
     d.showModal();
   }
   async function discard() {
-    if (!confirm('לבטל את כל השינויים שלא פורסמו ולחזור למה שמפורסם באתר?')) return;
-    S.admin.clearOverride();
-    if (CLOUD) { try { await S.sb.draft.clear(); } catch { /* */ } }
+    const other = A.draftBy && A.draftBy !== S.sb.user?.email ? A.draftBy : '';
+    const msg = CLOUD
+      ? `לבטל את כל השינויים שלא פורסמו ולחזור למה שמפורסם באתר?\n\nגם הטיוטה המשותפת בשרת תימחק — לכל המנהלים${other ? `, כולל השינויים ש־${other} שמר בה` : ''}.`
+      : 'לבטל את כל השינויים שלא פורסמו ולחזור למה שמפורסם באתר?';
+    if (!confirm(msg)) return;
+    clearTimeout(A.syncTimer); A.syncTimer = null; A.syncGen++;
+    await A.syncing;
+    if (CLOUD) {
+      try { await S.sb.draft.clear(); }
+      catch (err) { U.notify(`הטיוטה בשרת לא נמחקה: ${err.message}`, 'error'); A.unsynced = true; scheduleSync(); return; }
+    }
+    A.unsynced = false; A.draftAt = null; A.draftBy = '';
     location.reload();
   }
   async function restoreVersion(id) {
@@ -1327,7 +1578,7 @@ ${proofCard()}
   async function previewLink() {
     const box = $('#preview-link'); box.innerHTML = '<span class="cue-hint">מכינים…</span>';
     try {
-      persist(); await sync();
+      if (!await sync()) throw new Error('הטיוטה עוד לא נשמרה בשרת, ולכן הקישור היה מציג גרסה ישנה. נסו שוב בעוד רגע.');
       const { preview } = await S.sb.preview.create();
       const url = new URL(`index.html?preview=${preview.token}`, site.url || location.href).href;
       box.innerHTML = `<div class="preview-url"><input readonly value="${esc(url)}" class="ltr" aria-label="קישור"><button type="button" class="btn small gold" data-op="copy" data-text="${esc(url)}">העתקה</button><button type="button" class="btn small" data-op="preview-revoke">ביטול הקישור</button></div>`;
@@ -1426,7 +1677,7 @@ ${proofCard()}
     if (t.dataset.op === 'bulk-season') {
       const v = t.value; if (!v) return;
       A.picked.forEach((id) => { const e = A.data.episodes.find((x) => x.id === id); if (e) e.season = v === '__none' ? '' : v; });
-      touch(); renderList(); renderEditor(); U.notify(`${A.picked.size} תוכניות שויכו${v === '__none' ? ' ל"בלי עונה"' : ` לעונה "${A.data.seasons.find((s) => s.id === v)?.title || ''}"`}.`, 'success');
+      touch(); renderList(); renderEditor(); U.notify(`${A.picked.size === 1 ? 'תוכנית אחת שויכה' : `${A.picked.size} תוכניות שויכו`}${v === '__none' ? ' ל"בלי עונה"' : ` לעונה "${A.data.seasons.find((s) => s.id === v)?.title || ''}"`}.`, 'success');
       return;
     }
     const e = cur(); if (!e) return;
@@ -1441,27 +1692,36 @@ ${proofCard()}
 
   /** העלאת קובץ לתוכנית — מכפתור הבחירה או מגרירה */
   async function uploadFile(e, kind, file) {
-    const status = P.querySelector(`[data-upload-status="${kind}"]`) || { textContent: '' };
     try {
-      status.textContent = 'מתחילים להעלות…';
-      const progress = (pct) => { status.textContent = `מעלים את ${file.name} — ${pct}%`; };
+      uploadStatus(e, kind, 'מתחילים להעלות…');
+      const progress = (pct) => uploadStatus(e, kind, `מעלים את ${file.name} — ${pct}%`);
       if (kind === 'cover') await setCover(e, file, progress);
-      else { e[kind] = await window.RoshUpload(file, e.id, kind, progress); e.duration = 0; }
+      else {
+        const url = await window.RoshUpload(file, e.id, kind, progress);
+        const live = liveEp(e.id); if (!live) throw new Error('התוכנית נמחקה בזמן ההעלאה.');
+        live[kind] = url; live.duration = 0;
+      }
       touch();
       if (A.selected === e.id) renderEditor();
       U.notify('הקובץ הועלה. כשתלחצו פרסום, הוא יופיע באתר.', 'success');
       return true;
-    } catch (err) { status.textContent = err.message; U.notify(err.message, 'error'); return false; }
+    } catch (err) { uploadStatus(e, kind, err.message); U.notify(err.message, 'error'); return false; }
   }
-  /* גרירת קובץ לטופס התוכנית: הקלטה או תמונה — לפי סוג הקובץ. (כפתורי הבחירה נשארים.) */
+  /* גרירת קובץ לטופס התוכנית: הקלטה או תמונה — לפי סוג הקובץ. (כפתורי הבחירה נשארים.)
+     קובץ שנגרר לדף אף פעם לא נפתח בדפדפן במקום הניהול (זה היה מוחק את מה שבזיכרון). */
   const fileKind = (f) => (/^audio\//.test(f.type) || /\.(mp3|m4a|wav|ogg|flac|aac)$/i.test(f.name) ? 'audio' : /^image\//.test(f.type) || /\.(jpe?g|png|webp)$/i.test(f.name) ? 'cover' : '');
+  const hasFiles = (ev) => !!ev.dataTransfer?.types?.includes('Files');
+  const canDrop = () => A.tab === 'programs' && !!cur();
   let dragDepth = 0;
-  P.addEventListener('dragenter', (ev) => { if (!cur() || !ev.dataTransfer?.types?.includes('Files')) return; dragDepth++; $('#editor')?.classList.add('drop-ready'); });
-  P.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('#editor')?.classList.remove('drop-ready'); } });
-  P.addEventListener('dragover', (ev) => { if (cur() && ev.dataTransfer?.types?.includes('Files')) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy'; } });
+  ['dragover', 'drop'].forEach((type) => window.addEventListener(type, (ev) => { if (hasFiles(ev)) ev.preventDefault(); }));
+  P.addEventListener('dragenter', (ev) => { if (!hasFiles(ev)) return; ev.preventDefault(); if (!canDrop()) return; dragDepth++; $('#editor')?.classList.add('drop-ready'); });
+  P.addEventListener('dragleave', (ev) => { if (!hasFiles(ev)) return; if (--dragDepth <= 0) { dragDepth = 0; $('#editor')?.classList.remove('drop-ready'); } });
+  P.addEventListener('dragover', (ev) => { if (!hasFiles(ev)) return; ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy'; });   // גם בלי תוכנית פתוחה — כדי להסביר מה לעשות
   P.addEventListener('drop', async (ev) => {
-    const e = cur(); if (!e || !ev.dataTransfer?.files?.length) return;
+    if (!hasFiles(ev)) return;
     ev.preventDefault(); dragDepth = 0; $('#editor')?.classList.remove('drop-ready');
+    const e = canDrop() ? cur() : null;
+    if (!e) { U.notify('בחרו תוכנית לפני גרירת קובץ', 'info'); return; }
     for (const file of ev.dataTransfer.files) {
       const kind = fileKind(file);
       if (!kind) { U.notify(`"${file.name}" אינו קובץ שמע או תמונה.`, 'error'); continue; }
@@ -1511,8 +1771,8 @@ ${proofCard()}
       // רשימה ובחירה מרובה
       case 'bulk': A.bulk = !A.bulk; A.picked.clear(); renderPrograms(); break;
       case 'pick-all': { const l = listFiltered(); if (A.picked.size === l.length && l.length) A.picked.clear(); else l.forEach((x) => A.picked.add(x.id)); renderList(); break; }
-      case 'bulk-show': case 'bulk-hide': { const on = op === 'bulk-show'; A.picked.forEach((id) => { const x = A.data.episodes.find((y) => y.id === id); if (x) x.visible = on; }); touch(); renderList(); renderEditor(); U.notify(`${A.picked.size} תוכניות ${on ? 'יוצגו באתר' : 'הוסתרו'}.`, 'success'); break; }
-      case 'bulk-del': if (confirm(`למחוק ${A.picked.size} תוכניות?`)) removeMany([...A.picked]); break;
+      case 'bulk-show': case 'bulk-hide': { const on = op === 'bulk-show'; A.picked.forEach((id) => { const x = A.data.episodes.find((y) => y.id === id); if (x) x.visible = on; }); touch(); renderList(); renderEditor(); const n = A.picked.size; U.notify(n === 1 ? `תוכנית אחת ${on ? 'תוצג באתר' : 'הוסתרה'}.` : `${n} תוכניות ${on ? 'יוצגו באתר' : 'הוסתרו'}.`, 'success'); break; }
+      case 'bulk-del': if (confirm(A.picked.size === 1 ? 'למחוק תוכנית אחת?' : `למחוק ${A.picked.size} תוכניות?`)) removeMany([...A.picked]); break;
       // תוכנית
       case 'visible': if (e) { e.visible = !e.visible; touch(); renderEditor(); renderList(); } break;
       case 'featured': if (e) { const on = !e.featured; A.data.episodes.forEach((x) => { x.featured = on && x.id === e.id; }); touch(); renderEditor(); renderList(); U.notify(on ? 'התוכנית הזו תופיע בראש דף הבית.' : 'דף הבית יציג את התוכנית האחרונה.', 'info'); } break;
@@ -1527,16 +1787,23 @@ ${proofCard()}
       case 'back-to-list': $('#ep-list')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); break;
       case 'proof-changed': runProofread('changed'); break;
       case 'comments-filter': A.commentFilter = b.dataset.f2; renderListeners(); break;
-      case 'comment-status': moderate(b.dataset.id, { status: b.dataset.st }); break;
+      case 'comment-status': {
+        // אישור או הסתרה שומרים גם תשובה שהוקלדה ועוד לא נשמרה
+        const c = A.comments?.comments?.find((x) => x.id === b.dataset.id);
+        const ta = P.querySelector(`[data-reply-for="${CSS.escape(b.dataset.id)}"]`);
+        const reply = ta ? ta.value.trim() : null;
+        moderate(b.dataset.id, { status: b.dataset.st, ...(reply != null && reply !== (c?.reply || '') ? { reply } : {}) });
+        break;
+      }
       case 'comment-pin': { const c = A.comments?.comments?.find((x) => x.id === b.dataset.id); if (c) moderate(c.id, { pinned: !c.pinned, ...(c.pinned || c.status === 'approved' ? {} : { status: 'approved' }) }); break; }
-      case 'comment-reply': { const ta = P.querySelector(`[data-reply-for="${CSS.escape(b.dataset.id)}"]`); await moderate(b.dataset.id, { reply: ta?.value.trim() || '' }); U.notify('התשובה נשמרה.', 'success'); break; }
+      case 'comment-reply': { const ta = P.querySelector(`[data-reply-for="${CSS.escape(b.dataset.id)}"]`); if (await moderate(b.dataset.id, { reply: ta?.value.trim() || '' })) U.notify('התשובה נשמרה.', 'success'); break; }
       case 'comment-del': if (confirm('למחוק את התגובה לתמיד?')) { try { await S.sb.call('/api/program/comments', { method: 'DELETE', body: { id: b.dataset.id } }); A.comments.comments = A.comments.comments.filter((c) => c.id !== b.dataset.id); A.comments.pending = A.comments.comments.filter((c) => c.status === 'pending').length; renderListeners(); loadListenersBadge(); } catch (err) { U.notify(err.message, 'error'); } } break;
       case 'proof-all': if (confirm('לבדוק את האיות של כל השמות והתיאורים באתר? זה לוקח כדקה.')) runProofread('all'); break;
       case 'proof-apply': { const r = A.proof?.results[i]; if (r && applyProof(r)) { touch(); U.notify('תוקן בטיוטה.', 'success'); } renderPublish(); break; }
       case 'proof-ignore': { const r = A.proof?.results[i]; if (r) r.ignored = true; renderPublish(); break; }
       case 'proof-apply-all': { let n = 0; for (const r of A.proof?.results || []) if (!r.applied && !r.ignored && applyProof(r)) n++; touch(); renderPublish(); U.notify(`${n} טקסטים תוקנו בטיוטה. בדקו ולחצו "פרסום".`, 'success'); break; }
       case 'proof-open': { const r = A.proof?.results[i]; const id = r?.key.split('|')[0]; if (id && A.data.episodes.some((x) => x.id === id)) { A.bulk = false; select(id, { tab: 'programs' }); } else setTab('site'); break; }
-      case 'cover-auto': if (e) { const st = P.querySelector('[data-upload-status="auto"]'); b.disabled = true; try { await autoCover(e, st); U.notify('התמונה נוצרה. לא אהבתם? לחצו שוב לגרסה אחרת.', 'success'); } catch (err) { st.textContent = err.message; b.disabled = false; } } break;
+      case 'cover-auto': if (e) { b.disabled = true; try { await autoCover(e); U.notify('התמונה נוצרה. לא אהבתם? לחצו שוב לגרסה אחרת.', 'success'); } catch (err) { uploadStatus(e, 'auto', err.message); b.disabled = false; } } break;
       case 'link-add': if (e) { e.links.push({ label: '', url: '' }); touch(); $('#link-rows').innerHTML = renderLinks(e); $$('#link-rows input[data-lf="label"]').pop()?.focus(); } break;
       case 'link-del': if (e) { e.links.splice(i, 1); touch(); $('#link-rows').innerHTML = renderLinks(e); renderPreview(); } break;
       // עבודות על כל התוכניות
@@ -1581,7 +1848,7 @@ ${proofCard()}
       case 'migrate': openMigrate(); break;
       case 'admins': b.disabled = true; try { A.admins = (await S.sb.admins.list()).admins; } catch (err) { A.admins = { error: err.status === 404 ? 'השרת עדיין לא עודכן לגרסה שמנהלת מנהלים מכאן. בינתיים — בלשונית "הרשאות" באתר הסקר.' : err.message }; } renderPublish(); $('details.more-details').open = true; break;
       case 'admin-del': if (confirm(`להסיר את ${b.dataset.email} מרשימת המנהלים?`)) { try { A.admins = (await S.sb.admins.remove(b.dataset.email)).admins; $('#admins-box').innerHTML = renderAdmins(); } catch (err) { U.notify(err.message, 'error'); } } break;
-      case 'logout': S.signOut(); gateMounted = false; checkAccess(); U.notify('התנתקתם.', 'success'); break;
+      case 'logout': logout(); break;
     }
   });
 
@@ -1592,7 +1859,7 @@ ${proofCard()}
   }, true);
 
   document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); persist(); U.notify('הכול נשמר אוטומטית. כשמסיימים — "פרסום לאתר".', 'info'); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); sync(); U.notify(CLOUD ? 'הכול נשמר אוטומטית בטיוטה המשותפת. כשמסיימים — "פרסום לאתר".' : 'השינויים נשמרים רק בדף הזה. כשמסיימים — "הורדת הקובץ לפרסום".', 'info'); }
   });
   $$('dialog.sheet').forEach((d) => { d.querySelectorAll('[data-close]').forEach((x) => x.addEventListener('click', () => d.close())); d.addEventListener('click', (e) => { if (e.target === d) d.close(); }); });
 

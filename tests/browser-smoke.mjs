@@ -95,6 +95,32 @@ await page.click('[data-view="list"]');
 await page.waitForSelector('#results .row');
 check((await page.locator('#results .row [data-play]').count()) === 86, 'לכל תוכנית כפתור ניגון ברשימה');
 
+/* ---------- קיצורי מקלדת, קישורי "#" ועיצוב אורך ---------- */
+// רווח על כפתור ממוקד מפעיל את הכפתור — לא גם את הנגן (שיש בו תוכנית, מושהית)
+await page.evaluate(() => { window.RoshPlayer.pause(); const b = document.createElement('button'); b.type = 'button'; b.id = 't-btn'; b.textContent = 'בדיקה'; document.getElementById('main').appendChild(b); b.focus(); });
+await page.keyboard.press('Space');
+check(await page.evaluate(() => window.RoshPlayer.paused), 'רווח על כפתור ממוקד לא מפעיל גם את הנגן');
+await page.evaluate(() => { document.getElementById('t-btn').remove(); document.activeElement?.blur?.(); });
+await page.keyboard.press('Space');
+check(!(await page.evaluate(() => window.RoshPlayer.paused)), 'רווח מחוץ לכפתורים מפעיל את הנגן');
+await page.evaluate(() => window.RoshPlayer.pause());
+await page.evaluate(() => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'ל', code: 'KeyK', bubbles: true })));
+check(!(await page.evaluate(() => window.RoshPlayer.paused)), 'הקיצור K עובד גם במקלדת בעברית (לפי המקש הפיזי)');
+await page.evaluate(() => window.RoshPlayer.pause());
+// קישור "#" שהדף מטפל בו (כמו "כניסה דרך אתר הסקר" באזור האישי) אינו ניווט: הדף לא נטען מחדש
+const urlBeforeHash = page.url();
+await page.evaluate(() => {
+  document.querySelector('.shell').dataset.probe = '1';
+  const a = document.createElement('a'); a.href = '#'; a.id = 't-hash'; a.textContent = 'בדיקה';
+  document.getElementById('main').appendChild(a);
+  document.addEventListener('click', (e) => { if (e.target.closest('#t-hash')) e.preventDefault(); });   // נרשם אחרי router.js, כמו בדפים
+});
+await page.click('#t-hash');
+await page.waitForTimeout(400);
+check(await page.evaluate(() => document.querySelector('.shell')?.dataset.probe === '1') && page.url() === urlBeforeHash, 'קישור "#" לא טוען את הדף מחדש');
+await page.evaluate(() => document.getElementById('t-hash')?.remove());
+check(await page.evaluate(() => { const f = window.RoshUI.fmtDuration; return f(3599) === 'שעה' && f(7195) === 'שעתיים' && f(3725) === 'שעה ו־2 דקות' && f(2700) === '45 דקות' && f(60) === 'דקה אחת'; }), 'אורך בשעות ודקות מעוגל נכון (3599 שניות = שעה, לא "60 דקות")');
+
 /* ---------- דף תוכנית ---------- */
 const featured = await page.evaluate(() => ({ slug: window.RoshStore.featured().slug, title: window.RoshStore.featured().title }));
 await page.goto(`${BASE}/episode.html?ep=${encodeURIComponent(featured.slug)}`);

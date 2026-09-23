@@ -3,7 +3,7 @@
 
    כל דף הוא עותק של episode.html עם:
    - <base href="../"> ראשון ב־<head>, כך שכל הכתובות היחסיות (עיצוב, סקריפטים, קישורים)
-     ממשיכות להצביע לשורש האתר;
+     ממשיכות להצביע לשורש האתר; קישורים בתוך הדף ("#main") הופכים ל־episodes/<slug>.html#main;
    - <title>, תיאור, canonical, Open Graph / Twitter ונתונים מובנים (RadioEpisode);
    - data-ep="<slug>" על <body> (episode.js קורא אותו כשאין ?ep=);
    - התוכן עצמו (כותרת, תאריך, תיאור, אורחים) בתוך <article id="episode">, במקום
@@ -91,6 +91,8 @@ function page(template, e, seasons) {
 
   let html = template;
   const must = (re, fn) => { if (!re.test(html)) throw new Error(`episode.html: ${re} not found`); html = html.replace(re, fn); };
+  // קישורים בתוך הדף ("#main" של קישור הדילוג): עם <base href="../"> הם היו נפתרים לשורש האתר — מפנים אותם לדף עצמו
+  html = html.replace(/href="#([^"]*)"/g, (_, frag) => `href="${OUT}/${encodeURIComponent(slug)}.html#${frag}"`);
   must(/<head>\n?/, () => '<head>\n  <base href="../">\n');
   must(/<title>[\s\S]*?<\/title>/, () => `<title>${esc(title)}</title>`);
   must(/<meta name="description"[^>]*>/, () => `<meta name="description" content="${esc(description)}">\n${head}`);

@@ -35,7 +35,9 @@
     if (!await cf.isAdmin()) throw new Error('יש להתחבר עם חשבון מנהל כדי להעלות קבצים.');
     kind = kind === 'cover' ? 'cover' : 'audio';
     const ext = file.name.split('.').pop().toLowerCase();
-    const contentType = types(kind)[ext] || (file.type && Object.values(types(kind)).includes(file.type) ? file.type : '');
+    // הסוג שהקובץ מצהיר עליו קודם (PNG נשאר PNG גם אם השם לא מתאים), ואם אינו מוכר — לפי הסיומת
+    const allowed = types(kind);
+    const contentType = (file.type && Object.values(allowed).includes(file.type) ? file.type : '') || allowed[ext] || '';
     if (!contentType) throw new Error('סוג הקובץ אינו נתמך.');
     if (!file.size) throw new Error('הקובץ ריק.');
     if (file.size > MAX[kind]) throw new Error(kind === 'audio' ? 'אפשר להעלות הקלטה של עד 1GB.' : 'אפשר להעלות תמונה של עד 15MB.');

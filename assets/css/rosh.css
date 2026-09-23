@@ -49,6 +49,8 @@
   --gold-rgb: 240 198 90;
   --violet-rgb: 139 92 246;
   --fg-rgb: 255 255 255;            /* שכבות־על שקופות: ריחוף, משטחים, קווים */
+  --hue-l: 78%;                     /* בהירות לטקסט בגוון של תוכנית/עונה: hsl(var(--h) 90% var(--hue-l)) */
+  --hue-bg-l: 40%;                  /* בהירות לרקע בגוון של תוכנית (עיגול המספר בשורות) */
   --text-strong: #fff;
   --text-2: #d5d2e0;
   --banner-ink: #f6efd9;
@@ -155,6 +157,8 @@
     --teal-bg: rgba(14, 159, 191, .1);
     --teal-border: rgba(14, 120, 150, .4);
     --fg-rgb: 40 30 14;
+    --hue-l: 38%;
+    --hue-bg-l: 86%;
     --border: rgba(60, 44, 18, .13);
     --border-soft: rgba(60, 44, 18, .09);
     --border-strong: rgba(60, 44, 18, .24);
@@ -248,6 +252,8 @@
   --teal-bg: rgba(14, 159, 191, .1);
   --teal-border: rgba(14, 120, 150, .4);
   --fg-rgb: 40 30 14;
+  --hue-l: 38%;
+  --hue-bg-l: 86%;
   --border: rgba(60, 44, 18, .13);
   --border-soft: rgba(60, 44, 18, .09);
   --border-strong: rgba(60, 44, 18, .24);
@@ -816,7 +822,8 @@ select.input { appearance: none; padding-inline-end: 34px; background-image: lin
 
 /* ---------- הודעות ---------- */
 
-.notice-host { position: fixed; inset-inline-start: 16px; bottom: calc(var(--dock-height) + 16px); z-index: 90; display: grid; gap: 8px; max-width: min(440px, calc(100% - 32px)); }
+/* מעל הנגן כשהוא פתוח (--dock-height כולל כבר את השוליים הבטוחים), ומעל פס הבית של הטלפון כשהוא סגור */
+.notice-host { position: fixed; inset-inline-start: 16px; bottom: calc(max(var(--dock-height), env(safe-area-inset-bottom, 0px)) + 16px); z-index: 90; display: grid; gap: 8px; max-width: min(440px, calc(100% - 32px)); }
 .notice {
   display: flex; align-items: center; gap: 12px; padding: 12px 14px 12px 16px;
   border: 1px solid var(--border-strong); border-radius: 18px;
@@ -847,7 +854,7 @@ select.input { appearance: none; padding-inline-end: 34px; background-image: lin
 /* ---------- נגן קבוע ---------- */
 
 .dock {
-  position: fixed; inset-inline: 0; bottom: 0; z-index: 60; padding: 0 12px 12px;
+  position: fixed; inset-inline: 0; bottom: 0; z-index: 60; padding: 0 12px calc(12px + env(safe-area-inset-bottom, 0px));   /* מעל פס הבית באייפון */
   transform: translateY(120%); transition: transform .55s var(--ease); pointer-events: none;
 }
 .dock.open { transform: none; pointer-events: auto; }
@@ -974,13 +981,13 @@ dialog.sheet .card-body { padding: 18px 22px 22px; }
   .stats { gap: 10px; margin: 36px 0; }
   .stat { padding: 18px 12px 16px; }
   .hide-sm { display: none; }
-  .dock { padding: 0 6px 6px; }
+  .dock { padding: 0 6px calc(6px + env(safe-area-inset-bottom, 0px)); }
   .dock-inner { padding: 10px 10px; border-radius: 22px; }
   .dock-top { flex-wrap: wrap; }
   .dock-controls { width: 100%; justify-content: center; order: 3; }
   .dock-controls .main { width: 54px; height: 54px; }
   .dock-extra select { font-size: 11px; }
-  body.has-dock { --dock-height: 230px; }
+  body.has-dock { --dock-height: 280px; }   /* רק בלי ResizeObserver; אחרת player.js מודד את הגובה בפועל */
   .footer-mark { margin: 0 0 -14px; }
 }
 /* פחות תנועה: לפי המערכת (אלא אם המשתמש בחר "תנועה מלאה"), או לפי בחירה באתר (data-motion="reduced").

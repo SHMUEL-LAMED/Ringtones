@@ -5,8 +5,11 @@
   const U = window.RoshUI, S = window.RoshStore, Pl = window.RoshPlayer;
   const { esc, fmtTime, fmtDate, fmtDuration, fmtWeekday } = U;
 
+  // האות נלקח לפני ההמתנה: אם עברו לדף אחר בזמן שהקטלוג נטען, הסקריפט הזה לא מצייר על הדף החדש
+  const signal = window.RoshApp?.signal;
   await S.ready;
-  const on = { signal: window.RoshApp?.signal };   // המאזינים מוסרים במעבר לדף אחר
+  if (signal?.aborted) return;
+  const on = { signal };   // המאזינים מוסרים במעבר לדף אחר
   const site = S.site || {};
   document.getElementById('site-header').innerHTML = U.header('episode', site);
   document.getElementById('site-footer').innerHTML = U.footer(site);
@@ -99,7 +102,7 @@ ${nb.newer ? `<a href="episode.html?ep=${encodeURIComponent(nb.newer.slug)}"><sm
     if (s < 3600) return 'לפני כמה דקות';
     if (s < 86400) { const h = Math.round(s / 3600); return h === 1 ? 'לפני שעה' : h === 2 ? 'לפני שעתיים' : `לפני ${h} שעות`; }
     const d = Math.round(s / 86400); if (d < 30) return d === 1 ? 'אתמול' : `לפני ${d} ימים`;
-    return fmtDate(new Date(unix * 1000).toISOString().slice(0, 10), true);
+    return fmtDate(S.todayIL(new Date(unix * 1000)), true);   // התאריך בשעון ישראל (לא UTC)
   };
   const momentBtn = (at) => (at != null ? `<button type="button" class="moment-chip" data-seek="${Number(at)}" aria-label="האזנה מהרגע ${fmtTime(at)}">▶ ${fmtTime(at)}</button>` : '');
   function commentHtml(c, pending = false) {

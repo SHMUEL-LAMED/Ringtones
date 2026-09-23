@@ -7,8 +7,11 @@
   const U = window.RoshUI, S = window.RoshStore, Pl = window.RoshPlayer;
   const { esc, fmtTime, fmtDate, fmtDuration } = U;
 
+  // האות נלקח לפני ההמתנה: אם עברו לדף אחר בזמן שהקטלוג נטען, הסקריפט הזה לא מצייר על הדף החדש
+  const signal = window.RoshApp?.signal;
   await S.ready;
-  const on = { signal: window.RoshApp?.signal };   // המאזינים מוסרים במעבר לדף אחר
+  if (signal?.aborted) return;
+  const on = { signal };   // המאזינים מוסרים במעבר לדף אחר
   const site = S.site || {};
   const paintHeader = () => { document.getElementById('site-header').innerHTML = U.header('me', site); };
   paintHeader();
@@ -65,7 +68,7 @@
   const row = (e, { cue, at, sub, action }) => `
   <div class="row" data-ep="${esc(e.id)}" style="${U.coverVars(e)}">
     ${cue ? `<button type="button" class="row-main" data-cue="${esc(e.id)}" data-at="${at || 0}">` : `<a class="row-main" href="episode.html?ep=${encodeURIComponent(e.slug)}">`}
-      <i aria-hidden="true" style="background:hsl(var(--h) 70% 40% / .5);border-color:hsl(var(--h) 80% 60% / .6)">${cue ? '▶' : (e.number ?? '♫')}</i>
+      <i aria-hidden="true" style="background:hsl(var(--h) 70% var(--hue-bg-l) / .5);border-color:hsl(var(--h) 80% 60% / .6)">${cue ? '▶' : (e.number ?? '♫')}</i>
       <span class="txt"><b>${esc(e.title)}</b><small>${sub}</small></span>
     ${cue ? '</button>' : '</a>'}
     ${action || ''}
@@ -156,7 +159,7 @@ ${heard.length > 30 ? `<p class="cue-hint">ועוד ${heard.length - 30} תוכ�
   renderProfile(!!S.sb.user);
   renderLists();
   renderSubscription();
-  if (S.sb.user) { await S.state.verified; renderProfile(false); }
+  if (S.sb.user) { await S.state.verified; if (on.signal?.aborted) return; renderProfile(false); }
   // כניסה, יציאה, או נתונים שהגיעו מהחשבון — הכול מצויר מחדש
   const offSession = S.onSession(renderAll);
   S.likes.load().then(() => { if (!on.signal?.aborted) renderLists(); });

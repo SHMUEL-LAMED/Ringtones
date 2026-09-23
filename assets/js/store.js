@@ -2,15 +2,13 @@
    מקורות אפשריים (site.json → storage.provider):
      "json"     — קובץ data/episodes.json במאגר (ברירת מחדל, בלי שרת).
      "cloudflare" — אותו D1 של אתר הסקר; קריאה ציבורית וכתיבת מנהל.
-   בכל מצב, אזור הניהול יכול לשמור "טיוטה מקומית" בדפדפן שמופיעה באתר
-   רק במכשיר הזה — כדי לבדוק לפני שמפרסמים. */
+   טיוטת הניהול נשמרת רק בשרת (/api/program/draft, לפי חשבון המנהל) — אף פעם
+   לא בדפדפן. הדפים הציבוריים תמיד מציגים את מה שפורסם. */
 (function () {
   'use strict';
 
   const LS = {
-    override: 'rosh:override',      // טיוטת הניהול (גיבוי מקומי של הטיוטה המשותפת)
     sb: 'rosh:cf:session',          // סשן ההתחברות
-    overrideAt: 'rosh:override-at', // מתי הטיוטה המקומית נשמרה (להשוואה עם הטיוטה המשותפת)
     preview: 'rosh:preview',        // קישור תצוגה מקדימה (sessionStorage)
     sso: 'rosh:sso-checked',        // מתי נבדק לאחרונה אם מחוברים באתר הסקר
   };
@@ -191,12 +189,13 @@
         return true;
       } catch { return false; }
     },
-    /** התנתקות מכל המקומות: גם הסשן של אתר הסקר לאותו חשבון נמחק בשרת. */
-    signOut() {
+    /** התנתקות מכל המקומות: גם הסשן של אתר הסקר לאותו חשבון נמחק בשרת.
+        after: הבטחה שההתנתקות בשרת מחכה לה (השמירה האחרונה של הנתונים האישיים). */
+    signOut(after) {
       const token = this.session?.token;
       this.session = null;
       write(LS.sso, Date.now());
-      if (token && this.configured) fetch(this.base('/api/program/logout'), { method:'POST', headers:{ Authorization:`Bearer ${token}` } }).catch(() => {});
+      if (token && this.configured) Promise.resolve(after).catch(() => {}).then(() => fetch(this.base('/api/program/logout'), { method:'POST', headers:{ Authorization:`Bearer ${token}` } })).catch(() => {});
     },
     /* כניסה אחת לשני האתרים: קוד חד־פעמי שעובר בין אתר התוכניות לאתר הסקר */
     handoff: {
@@ -256,9 +255,32 @@
       if (beacon && navigator.sendBeacon) { try { if (navigator.sendBeacon(this.base('/api/program/events'), new Blob([body], { type: 'text/plain' }))) return; } catch { /* */ } }
       try { fetch(this.base('/api/program/events'), { method: 'POST', keepalive: true, headers: { 'Content-Type': 'text/plain' }, body }).catch(() => {}); } catch { /* */ }
     },
+    /* הטיוטה המשותפת של המנהלים — רק בשרת. ifUpdatedAt = מתי נשמרה הטיוטה שהדף מכיר;
+       אם מישהו שמר אחריה, השרת מחזיר 409 ולא דורס (err.conflict, err.draft = הטיוטה החדשה). */
     draft: {
       get: () => sb.call('/api/program/draft'),
-      put: (data) => sb.call('/api/program/draft', { method: 'PUT', body: { data } }),
+      async put(data, ifUpdatedAt) {
+        const body = ifUpdatedAt == null ? { data } : { data, ifUpdatedAt };
+        const r = await fetch(sb.base('/api/program/draft'), { method: 'PUT', headers: sb.headers(), body: JSON.stringify(body), cache: 'no-store' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const conflict = r.status === 409 || j.error === 'draft-conflict';
+          const err = new Error(conflict ? 'מנהל אחר שמר טיוטה חדשה יותר.' : j.error || `שמירת הטיוטה נכשלה (${r.status}).`);
+          err.status = r.status; err.conflict = conflict; err.draft = j.draft || null;
+          throw err;
+        }
+        return j;
+      },
+      /** בסגירת הדף: בקשה שממשיכה גם אחרי שהדף נסגר. keepalive מוגבל ל־64KB, ולכן
+          מחזיר false כשהטיוטה גדולה מדי (או כשהדפדפן לא מאפשר) — ואז הדף מבקש לא לסגור. */
+      putKeepalive(data, ifUpdatedAt) {
+        try {
+          const body = JSON.stringify(ifUpdatedAt == null ? { data } : { data, ifUpdatedAt });
+          if (new Blob([body]).size > 60000) return false;
+          fetch(sb.base('/api/program/draft'), { method: 'PUT', headers: sb.headers(), body, keepalive: true }).catch(() => {});
+          return true;
+        } catch { return false; }
+      },
       clear: () => sb.call('/api/program/draft', { method: 'DELETE' }),
     },
     preview: {
@@ -356,7 +378,7 @@
     try { const c = new AbortController(); const t = setTimeout(() => c.abort(), 2000); const r = await fetch(sb.base('/api/program/banner'), { signal: c.signal, cache: 'no-store' }); clearTimeout(t); return r.ok; } catch { return false; }
   }
 
-  async function load({ ignoreOverride = false } = {}) {
+  async function load() {
     state.error = null;
     try { state.site = await fetchJSON('data/site.json'); }
     catch (e) { state.site = { name: 'ראש בראש', tagline: 'מוזיקה ואקטואליה', storage: { provider: 'json' } }; }
@@ -406,17 +428,10 @@
       state.preview = sessionStorage.getItem(LS.preview) || null;
     } catch { state.preview = null; }
 
-    // טיוטה ששמורה בדפדפן שייכת רק לאזור הניהול. הדפים הציבוריים תמיד מציגים
-    // את מה שפורסם (הטיוטות נשמרות היום בשרת, ותצוגה מקדימה עוברת בקישור),
-    // כדי שטיוטה ישנה במכשיר של מנהל לא תסתיר שינויים חדשים, כמו תמונה חדשה.
-    const onAdminPage = document.body?.dataset.page === 'admin';
-    const override = ignoreOverride || !onAdminPage ? null : read(LS.override, null);
+    // תמיד מה שפורסם (או תצוגה מקדימה בקישור). טיוטת הניהול נטענת מהשרת בדף הניהול עצמו.
     if (state.preview && state.source === 'cloudflare') {
       try { state.data = normalize((await sb.preview.open(state.preview)).data); state.loadedFrom = 'preview'; }
       catch (e) { state.error = e; state.preview = null; try { sessionStorage.removeItem(LS.preview); } catch { /* */ } state.data = normalize(await sb.pull().catch(() => ({}))); state.loadedFrom = state.source; }
-    } else if (override) {
-      state.data = normalize(override);
-      state.loadedFrom = 'override';
     } else {
       try {
         const raw = state.source === 'cloudflare' ? await sb.pull() : await fetchJSON('data/episodes.json');
@@ -451,8 +466,16 @@
   function sessionChanged() { sessionListeners.forEach((fn) => { try { fn(sb.user); } catch { /* */ } }); }
   /** אחרי כניסה: טוענים את הנתונים של החשבון ומודיעים לכל הדף */
   async function signedIn() { await me.load(); likes.load(true); sessionChanged(); }
-  /** התנתקות מכל המקומות */
-  function signOut() { me.save(true); sb.signOut(); me.reset(); likes.mine = new Set(); sessionChanged(); }
+  /** התנתקות מכל המקומות. השמירה האחרונה יוצאת עכשיו (עם הטוקן), וההתנתקות בשרת נשלחת רק
+      אחרי שהיא הסתיימה — אחרת השרת עלול למחוק את הסשן לפני שהנתונים נשמרו. הדף מתעדכן מיד
+      (הניהול וטופס התפוצה בודקים את המצב מיד אחרי הקריאה), וההבטחה מסתיימת אחרי השמירה. */
+  async function signOut() {
+    let saved;
+    try { saved = me.save(true); } catch { /* */ }
+    sb.signOut(saved);
+    me.reset(); likes.mine = new Set(); sessionChanged();
+    try { await saved; } catch { /* */ }
+  }
 
   /* ---------- שאילתות ---------- */
 
@@ -651,7 +674,8 @@
   const positions = {
     get(id) { return me.data.positions[id] || null; },
     set(id, t, dur) {
-      me.data.positions[id] = { t: Math.floor(t), dur: Math.floor(dur || 0), at: Date.now() };
+      // אורך 0 = עוד לא ידוע (לפני שההקלטה נטענה) — נשאר האורך שנמדד קודם
+      me.data.positions[id] = { t: Math.floor(t), dur: Math.floor(dur || 0) || me.data.positions[id]?.dur || 0, at: Date.now() };
       const ids = Object.keys(me.data.positions);
       if (ids.length > 400) ids.sort((a, b) => me.data.positions[a].at - me.data.positions[b].at).slice(0, ids.length - 400).forEach((x) => delete me.data.positions[x]);
       me.change();
@@ -740,8 +764,9 @@
     load(force = false) {
       if (!sb.configured) return Promise.resolve(this);
       if (this._p && !force) return this._p;
-      this._p = sb.call('/api/program/likes').then((r) => { this.counts = r.counts || {}; this.mine = new Set(r.mine || []); this.loaded = true; return this; }).catch(() => this);
-      return this._p;
+      // כישלון לא נשמר: הקריאה הבאה מנסה שוב
+      const p = this._p = sb.call('/api/program/likes').then((r) => { this.counts = r.counts || {}; this.mine = new Set(r.mine || []); this.loaded = true; return this; }).catch(() => { if (this._p === p) this._p = null; return this; });
+      return p;
     },
     count(id) { return Number(this.counts[id] || 0); },
     has(id) { return this.mine.has(id); },
@@ -757,11 +782,7 @@
   /* ---------- ניהול ---------- */
 
   const admin = {
-    get hasOverride() { return !!read(LS.override, null); },
-    get overrideAt() { return read(LS.overrideAt, ''); },
-    saveOverride(data, at = new Date().toISOString()) { write(LS.override, data); write(LS.overrideAt, at); },
-    clearOverride() { write(LS.override, null); write(LS.overrideAt, null); },
-    /** הנתונים כפי שהם במקור (בלי הטיוטה המקומית) */
+    /** מה שמפורסם באתר עכשיו (בלי הטיוטה) */
     async pullOrigin() {
       const raw = state.source === 'cloudflare' ? await sb.pull(true) : await fetchJSON('data/episodes.json');
       const data = normalize(raw);
