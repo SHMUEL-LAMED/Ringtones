@@ -110,6 +110,8 @@
   /* כפתור הפרסום תמיד בהישג יד, בתחתית המסך */
   #btn-publish-top { position: fixed; inset-inline: 12px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 60; justify-content: center; min-height: 52px; box-shadow: var(--shadow-button); }
   body.has-dock #btn-publish-top { bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
+  /* ההודעות הצפות מעל כפתור הפרסום, לא עליו */
+  body[data-page="admin"] .notice-host { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
   .admin-panel { padding-bottom: 80px; }
   .inline-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; width: 100%; }
   .inline-toggles .btn { justify-content: center; }

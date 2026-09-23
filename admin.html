@@ -58,15 +58,15 @@
         <a href="#publish" data-tab="publish"><i>4</i><span><b>פרסום</b><small>בדיקה והעברה לאתר</small></span></a>
       </nav>
 
-      <div id="panel" class="admin-panel" aria-live="polite"></div>
+      <div id="panel" class="admin-panel"></div>
     </main>
 
     <div id="site-footer"></div>
   </div>
 
   <!-- המדריך הקצר -->
-  <dialog class="sheet" id="dlg-guide">
-    <div class="section-title"><div><p class="kicker">איך זה עובד?</p><h2>ארבעה צעדים</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+  <dialog class="sheet" id="dlg-guide" aria-labelledby="dlg-guide-title">
+    <div class="section-title"><div><p class="kicker">איך זה עובד?</p><h2 id="dlg-guide-title">ארבעה צעדים</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
     <div class="card-body guide">
       <ol>
         <li><b>תוכניות</b> — לוחצים "+ תוכנית חדשה", ממלאים שם, תאריך והקלטה. אפשר גם ליצור תמונה בלחיצה, להסתיר תוכנית, לשכפל, או לתזמן פרסום לתאריך עתידי.</li>
@@ -74,14 +74,14 @@
         <li><b>מאזינים</b> — כמה מאזינים, מה הכי נשמע, וההודעות שהמאזינים שלחו לכם.</li>
         <li><b>פרסום</b> — בדיקה שהכול תקין, ואז כפתור אחד שמעביר את השינויים לאתר. עד אז, רק אתם רואים אותם.</li>
       </ol>
-      <p class="help">כל שינוי נשמר מיד, גם אם סוגרים את הדף. הטיוטה משותפת בין המחשב לטלפון. תמיד אפשר לחזור לגרסה קודמת מחלק "פרסום".</p>
+      <p class="help">כל שינוי נשמר מיד בטיוטה המשותפת בשרת — לא במכשיר — כך שאפשר לסגור את הדף ולהמשיך מכל מחשב או טלפון אחרי כניסה עם Google. תמיד אפשר לחזור לגרסה קודמת מחלק "פרסום".</p>
     </div>
     <div class="card-foot"><button type="button" class="btn primary" data-close>הבנתי, מתחילים <span>←</span></button></div>
   </dialog>
 
   <!-- העברת ההקלטות מהדרייב לאחסון של האתר -->
-  <dialog class="sheet" id="dlg-migrate">
-    <div class="section-title"><div><p class="kicker">כלים מתקדמים</p><h2>העברת ההקלטות לאתר</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+  <dialog class="sheet" id="dlg-migrate" aria-labelledby="dlg-migrate-title">
+    <div class="section-title"><div><p class="kicker">כלים מתקדמים</p><h2 id="dlg-migrate-title">העברת ההקלטות לאתר</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
     <div class="card-body">
       <p class="help">ההקלטות מועתקות אחת־אחת מהדרייב לאחסון של האתר. אפשר לעצור באמצע ולהמשיך מאוחר יותר — הקלטות שכבר הועברו לא יועברו שוב.</p>
       <div class="sb-box" id="migrate-status"><b>מוכן להתחלה</b><span id="migrate-summary"></span></div>
@@ -92,7 +92,7 @@
   </dialog>
 
   <!-- גרסה קודמת של תוכנית -->
-  <dialog class="sheet wide" id="dlg-history">
+  <dialog class="sheet wide" id="dlg-history" aria-labelledby="history-title">
     <div class="section-title"><div><p class="kicker">גרסאות קודמות</p><h2 id="history-title">היסטוריית התוכנית</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
     <div class="card-body" id="history-body"></div>
   </dialog>
