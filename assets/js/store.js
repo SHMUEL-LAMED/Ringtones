@@ -752,10 +752,6 @@
       this.counts[id] = Number(r.count) || 0;
       return r.liked;
     },
-    top(n = 8) {
-      return Object.entries(this.counts).filter(([id, c]) => c > 0 && byId(id)).sort((a, b) => b[1] - a[1]).slice(0, n)
-        .map(([id]) => byId(id)).filter((e) => e && e.visible && !scheduled(e));
-    },
   };
 
   /* ---------- ניהול ---------- */

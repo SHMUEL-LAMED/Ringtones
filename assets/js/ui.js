@@ -477,10 +477,8 @@
      אחת לכל האתר, וכל הכפתורים של אותה תוכנית בדף מתעדכנים יחד. */
   function laterLabel(on) { return on ? '✓ שמור לאחר כך' : '+ לאחר כך'; }
   function queueLabel(on) { return on ? '✓ בתור' : '+ לתור'; }
-  function likeLabel(id) {
-    const L = window.RoshStore?.likes; const n = L?.count(id) || 0;
-    return `${L?.has(id) ? '♥' : '♡'} אהבתי${n ? ` <span class="like-count">${n}</span>` : ''}`;
-  }
+  /** כמה אהבו כל תוכנית — נתון שרק המנהלים רואים; למאזין מוצג רק הסימון שלו */
+  function likeLabel(id) { return `${window.RoshStore?.likes?.has(id) ? '♥' : '♡'} אהבתי`; }
   function actionButtons(e, { like = true, queue = true } = {}) {
     const S = window.RoshStore;
     return `<button type="button" class="btn" data-later="${esc(e.id)}" aria-pressed="${S.later.has(e.id)}">${laterLabel(S.later.has(e.id))}</button>`

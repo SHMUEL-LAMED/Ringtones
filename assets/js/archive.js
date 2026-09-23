@@ -60,7 +60,6 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
   <option value="old" ${state.sort === 'old' ? 'selected' : ''}>מהישנה לחדשה</option>
   <option value="num" ${state.sort === 'num' ? 'selected' : ''}>לפי מספר תוכנית</option>
   <option value="long" ${state.sort === 'long' ? 'selected' : ''}>הארוכות קודם</option>
-  ${S.sb.configured ? `<option value="liked" ${state.sort === 'liked' ? 'selected' : ''}>הכי אהובות</option>` : ''}
 </select>
 <div class="segmented" role="group" aria-label="תצוגה">
   <button type="button" data-view="grid" aria-pressed="${state.view === 'grid'}">רשת</button>
@@ -80,7 +79,6 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
       old: (a, b) => (a.date || '').localeCompare(b.date || '') || (a.number || 0) - (b.number || 0),
       num: (a, b) => (b.number || 0) - (a.number || 0),
       long: (a, b) => (b.duration || 0) - (a.duration || 0),
-      liked: (a, b) => S.likes.count(b.id) - S.likes.count(a.id),
     }[state.sort] || (() => 0);
     return list.slice().sort(by);
   }
@@ -165,8 +163,7 @@ ${seasons.filter((s) => s.count).map((s) => `<button type="button" class="chip" 
     const play = e.target.closest('[data-play]');
     if (play) { const ep = S.byId(play.dataset.play); if (ep) Pl.isCurrent(ep.id) ? Pl.toggle() : Pl.load(ep); }
   }, on);
-  document.addEventListener('change', (e) => { if (e.target.id === 'sort') { state.sort = e.target.value; if (state.sort === 'liked') S.likes.load().then(render); else render(); } }, on);
-  if (state.sort === 'liked') S.likes.load().then(() => { if (!on.signal?.aborted) render(); });
+  document.addEventListener('change', (e) => { if (e.target.id === 'sort') { state.sort = e.target.value; render(); } }, on);
 
   window.addEventListener('rosh:player', (ev) => {
     const id = ev.detail.episode?.id;

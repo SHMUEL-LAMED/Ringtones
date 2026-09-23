@@ -100,15 +100,8 @@
 <div class="grid-head"><div><p class="kicker">ארכיון</p><h2>תוכניות אחרונות</h2></div><a href="archive.html">לכל ${list.length} התוכניות ←</a></div>
 <div class="ep-grid">${recent.map((e) => U.epCard(e)).join('')}</div>` : '';
 
-  /* ---------- הכי אהובות ---------- */
-  const Lv = document.getElementById('loved');
-  const paintLoved = () => {
-    if (!Lv) return;
-    const top = S.likes.top(8);
-    Lv.innerHTML = top.length >= 3 ? `<div class="grid-head"><div><p class="kicker">המאזינים בחרו</p><h2>הכי אהובות</h2></div><a href="archive.html?sort=liked">לכל התוכניות ←</a></div><div class="ep-grid">${top.map((e) => U.epCard(e, { badge: `♥ ${S.likes.count(e.id)}` })).join('')}</div>` : '';
-    if (Lv.innerHTML) { Lv.setAttribute('data-reveal', ''); U.reveal(Lv.parentNode); }
-  };
-  S.likes.load().then(() => { if (!on.signal?.aborted) { paintLoved(); if (feat) U.paintActions(feat.id); } });
+  // הסימון "אהבתי" של המאזין (כמה אהבו בסך הכול — רק המנהלים רואים)
+  S.likes.load().then(() => { if (!on.signal?.aborted && feat) U.paintActions(feat.id); });
 
   /* ---------- סטים ---------- */
   const sets = list.filter((e) => e.season === 'sets');
