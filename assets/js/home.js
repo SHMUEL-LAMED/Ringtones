@@ -56,7 +56,7 @@
     <div class="cover">${feat.cover ? `<img src="${esc(feat.cover)}" alt="">` : `<div class="vinyl live" data-num="${feat.number ?? '♫'}" style="--label:${U.hue(feat)}" data-vinyl="${esc(feat.id)}"><i></i></div>`}</div>
     <div>
       <div class="meta">
-        ${feat.date ? `<span class="pill">${esc(U.fmtWeekday(feat.date))}, ${esc(fmtDate(feat.date))}</span>` : ''}
+        ${feat.date ? `<span class="pill">${esc(U.fmtWeekday(feat.date))}, ${esc(fmtDate(feat.date))}</span><span class="pill">${esc(U.fmtHebDate(feat.date))}</span>` : ''}
         ${feat.duration ? `<span class="pill teal">${esc(fmtDuration(feat.duration))}</span>` : ''}
         ${feat.guests.length ? `<span class="pill navy">עם ${esc(feat.guests.join(', '))}</span>` : ''}
         ${feat.tags.map((t) => `<a class="chip" href="archive.html?q=${encodeURIComponent(t)}">${esc(t)}</a>`).join('')}
@@ -130,6 +130,14 @@
   <div class="stat"><b data-count="${nAudio}">0</b><small>הקלטות להאזנה</small></div>
 </div>` : '';
 
+  /* ---------- הקהילה: פרטי הקשר נערכים בניהול ---------- */
+  function communityHtml() {
+    const c = S.settings.contacts || {};
+    const tel = (n) => String(n || '').replace(/[^\d+]/g, '');
+    const mail = (subject) => (c.email ? `mailto:${esc(c.email)}?subject=${encodeURIComponent(subject)}` : '');
+    return `<div class="community-grid"><article class="card card-body"><p class="kicker">קו התוכן</p><h2>גם בטלפון</h2>${c.phoneNote ? `<p>${esc(c.phoneNote)}</p>` : ''}${c.phone ? `<a class="btn" href="tel:${tel(c.phone)}" dir="ltr">${esc(c.phone)}</a>` : ''}${c.phone2 ? `<p style="margin-top:10px">מספר נוסף: <a href="tel:${tel(c.phone2)}" dir="ltr">${esc(c.phone2)}</a></p>` : ''}</article><article class="card card-body"><p class="kicker">מדברים איתנו</p><h2>הקול שלכם</h2>${c.hostsNote ? `<p>${esc(c.hostsNote)}</p>` : ''}${c.email ? `<a class="btn" href="${mail("צרף לצ'אט")}">בקשת הצטרפות לצ׳אט</a>` : ''}${c.chatNote ? `<p style="margin-top:10px">${esc(c.chatNote)}</p>` : ''}${U.messageForm({ title: 'או כתבו כאן', hint: 'ההודעה מגיעה ישירות למגישים.' })}</article></div>`;
+  }
+
   /* ---------- הקהילה ---------- */
   const links = U.publicLinks({ links: site.links || [] });
   const Fo = document.getElementById('follow');
@@ -137,10 +145,10 @@
   Fo.innerHTML = `
 <section class="subscribe-card">
   <div class="subscribe-copy"><b>נשארים בראש</b><small>התוכנית החדשה ישירות למייל, בכל שבועיים.${S.sb.configured ? '' : ' שלחו בקשת הצטרפות לתפוצה.'}</small></div>
-  ${S.sb.configured ? '<div data-subscribe-host></div>' : `<a class="continue btn xl primary" href="mailto:rbr17011701@gmail.com?subject=${encodeURIComponent('צרף')}">הצטרפות לתפוצה</a>`}
+  ${S.sb.configured ? '<div data-subscribe-host></div>' : `<a class="continue btn xl primary" href="mailto:${esc(S.settings.contacts?.email || '')}?subject=${encodeURIComponent('צרף')}">הצטרפות לתפוצה</a>`}
   ${links.length ? `<p class="subscribe-note">${links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join(' · ')}</p>` : ''}
 </section>
-<div class="community-grid"><article class="card card-body"><p class="kicker">קו התוכן</p><h2>גם בטלפון</h2><p>האזנה לתוכניות בשלוחה 1, שירים מומלצים בשלוחה 3 והרשמה לצינתוק בשלוחה 4.</p><a class="btn" href="tel:0772262271" dir="ltr">077-226-2271</a><p style="margin-top:10px">מספר נוסף: <a href="tel:0737079536" dir="ltr">073-707-9536</a></p></article><article class="card card-body"><p class="kicker">מדברים איתנו</p><h2>הקול שלכם</h2><p>לשאלות ולתגובות למגישים: שלוחה 9 בקו התוכן. פורום המאזינים נמצא בשלוחה 5.</p><a class="btn" href="mailto:rbr17011701@gmail.com?subject=${encodeURIComponent("צרף לצ'אט")}">בקשת הצטרפות לצ׳אט</a><p style="margin-top:10px">בבקשה ציינו לאיזו קבוצה להצטרף — גברים או נשים.</p>${U.messageForm({ title: 'או כתבו כאן', hint: 'ההודעה מגיעה ישירות למגישים.' })}</article></div>`;
+${communityHtml()}`;
   U.mountSubscribe(Fo.querySelector('[data-subscribe-host]'));
 
   U.reveal();

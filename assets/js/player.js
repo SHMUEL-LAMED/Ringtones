@@ -53,6 +53,7 @@
     <time data-cur>0:00</time>
     <div class="scrub" data-scrub role="slider" tabindex="0" aria-label="מיקום בתוכנית" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
       <div class="segs" data-segs></div>
+      <div class="markers" data-markers aria-hidden="true"></div>
       <div class="knob" data-knob style="left:0"></div>
       <div class="tip" data-tip></div>
     </div>
@@ -79,7 +80,7 @@
     P.els = {
       art: q('[data-art]'), link: q('[data-link]'), title: q('[data-title]'), now: q('[data-now]'),
       toggle: q('[data-toggle]'), cur: q('[data-cur]'), dur: q('[data-dur]'),
-      scrub: q('[data-scrub]'), segs: q('[data-segs]'), knob: q('[data-knob]'), tip: q('[data-tip]'),
+      scrub: q('[data-scrub]'), segs: q('[data-segs]'), markers: q('[data-markers]'), knob: q('[data-knob]'), tip: q('[data-tip]'),
       speed: q('[data-speed]'), sleep: q('[data-sleep]'), sleepLeft: q('[data-sleep-left]'), mute: q('[data-mute]'), download: q('[data-download]'),
     };
 
@@ -233,11 +234,20 @@
     P.els.now.textContent = P.episode?.date ? window.RoshUI.fmtDate(P.episode.date) : '';
     mediaSession();
   }
+  /* סימנים על פס ההתקדמות: רגעים שמאזינים הגיבו עליהם (מדף התוכנית) */
+  const markers = new Map();   // episodeId → [{ at, label }]
+  function setMarkers(id, list) { markers.set(id, list || []); paintMarkers(); }
+  function paintMarkers() {
+    if (!P.els.markers) return;
+    const D = dur(), list = (P.episode && markers.get(P.episode.id)) || [];
+    P.els.markers.innerHTML = D ? list.filter((m) => m.at < D).map((m) => `<i style="left:${(m.at / D) * 100}%" title="${esc(`${fmtTime(m.at)} · ${m.label}`)}"></i>`).join('') : '';
+  }
   function renderSegments() {
     const D = dur();
     P.segs = [{ from: 0, to: D || 1 }];
     P.els.segs.innerHTML = '<span class="seg" style="flex-grow:1"><i></i></span>';
     P.els.scrub.setAttribute('aria-valuemax', String(Math.floor(D)));
+    paintMarkers();
   }
   function paint(ratioOverride) {
     const D = dur();
@@ -274,9 +284,9 @@
   // נשלח גם בעצירה, במעבר לתוכנית אחרת ובסגירת הדף — כדי ששום דקה לא תלך לאיבוד.
   // עם כל אירוע נשלח גם עד איפה הגיעו (באחוזים) — לגרף "עד איפה מאזינים".
   const pctNow = () => { const D = dur(); return D ? Math.min(100, Math.round((audio.currentTime / D) * 100)) : 0; };
-  function flushListen() {
+  function flushListen(closing = false) {
     if (!P.episode || !P.listened) return;
-    S.sb.event('listen', P.episode.id, P.listened, { pct: pctNow() });
+    S.sb.event('listen', P.episode.id, P.listened, { pct: pctNow() }, { beacon: closing });
     P.listened = 0;
   }
   setInterval(() => {
@@ -304,7 +314,10 @@
         title: P.episode.title,
         artist: S.site?.name || 'ראש בראש',
         album: P.episode.title,
-        artwork: P.episode.cover ? [{ src: P.episode.cover, sizes: '512x512' }] : [],
+        // תמונת התוכנית במסך הנעילה ובשעון; כשאין תמונה — הלוגו של התוכנית
+        artwork: P.episode.cover
+          ? [{ src: P.episode.cover, sizes: '1400x1400', type: 'image/jpeg' }]
+          : [{ src: new URL('assets/img/icon-512.png', document.baseURI).href, sizes: '512x512', type: 'image/png' }],
       });
       const h = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession);
       h('play', play); h('pause', pause);
@@ -372,8 +385,9 @@
     if (dl) P.els.download.href = dl;
   });
   audio.addEventListener('volumechange', () => S.prefs.set('volume', audio.volume));
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { save(true); flushListen(); } });
-  window.addEventListener('pagehide', () => { save(true); flushListen(); });
+  // כשהדף נסגר או עובר לרקע (בטלפון זה לפעמים הרגע האחרון) — שליחה ב־sendBeacon, שלא נחתכת
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { save(true); flushListen(true); } });
+  window.addEventListener('pagehide', () => { save(true); flushListen(true); });
 
   /* ---------- קיצורי מקלדת ---------- */
 
@@ -409,7 +423,7 @@
   S.onSession(() => S.ready.then(restore));
 
   window.RoshPlayer = {
-    load, play, pause, toggle, seek, nextEpisode, prevEpisode, random, close, setRate, shareMoment, RATES,
+    load, play, pause, toggle, seek, nextEpisode, prevEpisode, random, close, setRate, shareMoment, setMarkers, RATES,
     get episode() { return P.episode; },
     get time() { return audio.currentTime; },
     get duration() { return dur(); },

@@ -43,6 +43,7 @@
       date: e.date ? String(e.date).slice(0, 10) : '',
       description: String(e.description || ''),
       cover: String(e.cover || ''),
+      thumb: String(e.thumb || ''),   // גרסה קטנה של התמונה לכרטיסים
       audio: String(e.audio || ''),
       duration: Number(e.duration) || 0,
       sourceFileBytes: Number(e.sourceFileBytes) || 0,
@@ -92,8 +93,18 @@
     const updates = (Array.isArray(raw?.updates) ? raw.updates : []).map((u, i) => ({
       id: String(u?.id || `u${i}`), date: String(u?.date || '').slice(0, 10), title: String(u?.title || ''), text: String(u?.text || ''), link: String(u?.link || ''), pinned: !!u?.pinned,
     })).filter((u) => u.title || u.text);
-    return { banner, updates, survey };
+    // פרטי הקשר בדף הבית — נערכים בניהול; כשלא נשמרו, הערכים שהיו באתר מאז ומעולם
+    const c = raw?.contacts && typeof raw.contacts === 'object' ? raw.contacts : {};
+    const contacts = { ...CONTACT_DEFAULTS };
+    for (const k of Object.keys(CONTACT_DEFAULTS)) if (typeof c[k] === 'string') contacts[k] = c[k].trim();
+    return { banner, updates, survey, contacts };
   }
+  const CONTACT_DEFAULTS = {
+    phone: '077-226-2271', phone2: '073-707-9536', email: 'rbr17011701@gmail.com',
+    phoneNote: 'האזנה לתוכניות בשלוחה 1, שירים מומלצים בשלוחה 3 והרשמה לצינתוק בשלוחה 4.',
+    hostsNote: 'לשאלות ולתגובות למגישים: שלוחה 9 בקו התוכן. פורום המאזינים נמצא בשלוחה 5.',
+    chatNote: 'בבקשה ציינו לאיזו קבוצה להצטרף — גברים או נשים.',
+  };
   /* ---------- שעון ישראל ----------
      התאריכים באתר (תאריך שידור, "הודעה עד", פרסום מתוזמן) הם לפי שעון ישראל,
      גם כשהגולש בחו"ל וגם בין חצות לשלוש, כשהשעון העולמי עוד ב"אתמול". */
@@ -237,10 +248,13 @@
       return j;
     },
     /** אירוע האזנה לסטטיסטיקה (ציבורי; בלי preflight, בלי המתנה) */
-    event(kind, episodeId, seconds = 0, extra = {}) {
+    event(kind, episodeId, seconds = 0, extra = {}, { beacon = false } = {}) {
       if (!this.configured || state.preview) return;
       const device = matchMedia('(pointer: coarse)').matches ? 'phone' : 'desktop';
-      try { fetch(this.base('/api/program/events'), { method: 'POST', keepalive: true, headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ kind, episodeId, seconds, device, ref: visitSource(), ...extra }) }).catch(() => {}); } catch { /* */ }
+      const body = JSON.stringify({ kind, episodeId, seconds, device, ref: visitSource(), ...extra });
+      // בסגירת הדף sendBeacon אמין יותר (הדפדפן שולח גם אחרי שהדף נסגר)
+      if (beacon && navigator.sendBeacon) { try { if (navigator.sendBeacon(this.base('/api/program/events'), new Blob([body], { type: 'text/plain' }))) return; } catch { /* */ } }
+      try { fetch(this.base('/api/program/events'), { method: 'POST', keepalive: true, headers: { 'Content-Type': 'text/plain' }, body }).catch(() => {}); } catch { /* */ }
     },
     draft: {
       get: () => sb.call('/api/program/draft'),

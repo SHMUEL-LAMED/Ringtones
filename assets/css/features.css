@@ -44,3 +44,85 @@
   .hbar { grid-template-columns: minmax(80px, 38%) 1fr auto; }
   .bars.hours .bar:nth-child(even) small { visibility: visible; }
 }
+
+/* ---------- תגובות המאזינים בדף התוכנית ---------- */
+.comments { border-top: 1px solid var(--divider); }
+.comments .count { font-size: .6em; color: var(--muted); font-variant-numeric: tabular-nums; }
+.comment-form { display: grid; gap: 10px; margin: 6px 0 18px; }
+.comment-form textarea { min-height: 84px; }
+.comment-form-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.comment-login { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px; border: 1px dashed var(--border-strong); border-radius: var(--radius-13); margin: 6px 0 18px; }
+.comment-login p { margin: 0; flex: 1; min-width: 200px; }
+.comment-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.comment-list.mine { margin-bottom: 14px; }
+.comment { padding: 14px 16px; border-radius: var(--radius-13); border: 1px solid var(--border); background: rgb(var(--fg-rgb, 255 255 255) / .03); }
+.comment.pinned { border-color: var(--gold); background: var(--gold-selected); }
+.comment.pending { opacity: .75; border-style: dashed; }
+.comment-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.comment-head small { color: var(--muted); font-size: 12px; margin-inline-start: auto; }
+.comment p { margin: 8px 0 0; line-height: 1.7; white-space: pre-line; }
+.comment-reply { margin-top: 10px; padding: 10px 12px; border-inline-start: 3px solid var(--gold); border-radius: 0 10px 10px 0; background: rgb(var(--fg-rgb, 255 255 255) / .04); }
+.comment-reply span { font-size: 12px; font-weight: 800; color: var(--gold-ink); }
+.comment-reply p { margin-top: 4px; }
+.moment-chip { font: inherit; font-size: 12px; font-weight: 800; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border-strong); background: none; color: var(--text); cursor: pointer; direction: ltr; }
+.moment-chip:hover { border-color: var(--gold); }
+.private-msg summary { cursor: pointer; font-weight: 800; color: var(--muted); padding: 10px 0; }
+/* רגעים שמאזינים הגיבו עליהם — על פס ההתקדמות בנגן */
+.scrub .markers { position: absolute; inset: 0; pointer-events: none; }
+.scrub .markers i { position: absolute; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 0 2px var(--panel-solid); }
+
+/* ---------- ניהול: גרירת קבצים, השלמת תאריכים, מה ישתנה, בדיקת איות, תגובות ---------- */
+#editor.drop-ready { outline: 3px dashed var(--gold); outline-offset: 6px; border-radius: var(--radius-17); }
+#editor.drop-ready::before { content: "שחררו כאן — הקלטה או תמונה"; position: sticky; top: 90px; z-index: 5; display: block; margin: 0 auto 10px; width: fit-content; padding: 8px 16px; border-radius: 99px; background: var(--gold); color: #1a1405; font-weight: 800; }
+.dates-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.dates-list li { display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--border); }
+.dates-list li.done { border-color: var(--success-border); background: var(--success-bg); }
+.dates-list li.dates-season { display: block; border: 0; padding: 12px 2px 2px; font-weight: 800; color: var(--gold-ink); }
+.dates-list .num { font-weight: 900; text-align: center; color: var(--muted); }
+.dates-list .txt { display: grid; min-width: 0; }
+.dates-list .txt b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dates-list .txt small { color: var(--muted); font-size: 12px; }
+.dates-list input[type="date"] { min-height: 40px; padding: 4px 10px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--field-bg, transparent); color: var(--text); }
+.diff { margin-top: 12px; }
+.diff summary { cursor: pointer; font-weight: 800; }
+.diff-list { margin: 8px 0 0; padding-inline-start: 18px; display: grid; gap: 6px; font-size: 13.5px; }
+.diff-list ul { margin: 2px 0 0; padding-inline-start: 16px; color: var(--muted); }
+.proof-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 10px; }
+.proof-list li { padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; display: grid; gap: 6px; }
+.proof-changes { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13.5px; }
+.proof-changes del { color: var(--error); text-decoration: line-through; }
+.proof-changes ins { color: var(--success); text-decoration: none; font-weight: 800; }
+.proof-ops, .mod-ops { display: flex; gap: 6px; flex-wrap: wrap; }
+.mod-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 12px; }
+.mod { padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; display: grid; gap: 8px; }
+.mod.pending { border-color: var(--gold); }
+.mod.hidden { opacity: .6; }
+.mod-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mod-head small { color: var(--muted); font-size: 12px; }
+.mod p { margin: 0; white-space: pre-line; }
+.mod textarea { min-height: 54px; }
+.editor-back { display: none; }
+
+/* ---------- ניהול מהטלפון ---------- */
+@media (max-width: 640px) {
+  .admin-top { flex-wrap: wrap; }
+  .admin-top .admin-title h1 { font-size: 30px; }
+  /* כפתור הפרסום תמיד בהישג יד, בתחתית המסך */
+  #btn-publish-top { position: fixed; inset-inline: 12px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 60; justify-content: center; min-height: 52px; box-shadow: var(--shadow-button); }
+  body.has-dock #btn-publish-top { bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
+  .admin-panel { padding-bottom: 80px; }
+  .inline-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; width: 100%; }
+  .inline-toggles .btn { justify-content: center; }
+  .section-title { flex-wrap: wrap; }
+  .switches { flex-direction: column; align-items: stretch; }
+  .switches .toggle { justify-content: center; }
+  .field input, .field select, .field textarea { font-size: 16px; }   /* בלי הגדלה אוטומטית באייפון */
+  .ep-list { max-height: 45vh; }
+  .editor-back { display: inline-flex; }
+  .bulk-bar, .bulk-actions { flex-wrap: wrap; }
+  dialog.sheet, dialog.sheet.wide { width: 100%; max-width: none; max-height: 100dvh; height: 100dvh; margin: 0; border-radius: 0; }
+  .dates-list li { grid-template-columns: 34px 1fr; }
+  .dates-list input[type="date"] { grid-column: 1 / -1; width: 100%; }
+  .hg-head .btn, .mod-ops .btn, .proof-ops .btn { flex: 1 1 auto; justify-content: center; }
+  .comment-form-foot .btn { width: 100%; justify-content: center; }
+}
