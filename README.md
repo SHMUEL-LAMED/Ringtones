@@ -161,7 +161,10 @@
 
 - כתובת ה־API מוגדרת ב־`data/site.json` תחת `storage.cloudflare.apiBase`.
 - הטבלאות `program_episodes` ו־`program_settings` נוצרות אוטומטית ב־D1 של אתר הסקר.
-- אם Cloudflare אינו זמין, האתר נופל חזרה ל־`data/episodes.json` לקריאה בלבד.
+- אם Cloudflare אינו זמין, האתר נופל חזרה ל־`data/episodes.json` לקריאה בלבד. הפריסה מרעננת את
+  העותק הזה מהקטלוג החי (ראו "פריסה"), כך שהוא תמיד כמו האתר ביום הפריסה האחרונה. שרת שרק
+  מתעכב (יותר מ־8 שניות, למשל מופע חדש של ה־Worker שמתעורר) אינו תקלה: העותק מוצג בלי הודעה.
+  ההודעה "החיבור למקור הנתונים נכשל" מופיעה רק כשהשרת עונה בשגיאה או לא נגיש.
 
 **`"json"`** — בלי שרת בכלל. האתר קורא את `data/episodes.json` מהמאגר, ו"פרסום" באזור הניהול
 מוריד קובץ מעודכן שמעלים למאגר.
@@ -213,6 +216,7 @@ assets/js/theme.js       מצב בהיר/כהה, הפסקת אנימציות, מ
 assets/js/app-update.js  רישום ה־Service Worker, ופס "האתר עודכן — לחצו לרענון" כשגרסה חדשה נכנסת (מחכה להשהיית הנגן)
 assets/js/offline.js     "ניסיון חוזר" בדף offline.html
 scripts/catalog.mjs      טעינת הקטלוג (חי, או data/episodes.json) לסקריפטי הבנייה
+scripts/build-saved-catalog.mjs  מרענן את העותק השמור (data/episodes.json) מהקטלוג החי (רץ בפריסה)
 scripts/build-sitemap.mjs  מפת האתר מהקטלוג החי (רץ בכל פריסה ופעם ביום)
 scripts/build-episode-pages.mjs  דף סטטי לכל תוכנית: episodes/<slug>.html (רץ בפריסה; התיקייה לא במאגר)
 sw.js, manifest.webmanifest   התקנה כאפליקציה ועבודה בלי רשת (המעטפת בלבד; ההקלטות לא נשמרות)
@@ -244,8 +248,8 @@ node tests/admin-smoke.mjs     # אזור הניהול, הפרסום והאתר 
 
 ## פריסה
 
-כל דחיפה ל־`main` מריצה את הבדיקות, ורק אם עברו — בונה את מפת האתר ואת דפי התוכניות הסטטיים מהקטלוג
-החי ומפרסמת ל־GitHub Pages (`.github/workflows/pages.yml`). הפריסה רצה גם פעם ביום, כדי שתוכניות חדשות
+כל דחיפה ל־`main` מריצה את הבדיקות, ורק אם עברו — מרעננת את העותק השמור (`data/episodes.json`), בונה את
+מפת האתר ואת דפי התוכניות הסטטיים מהקטלוג החי ומפרסמת ל־GitHub Pages (`.github/workflows/pages.yml`). הפריסה רצה גם פעם ביום, כדי שתוכניות חדשות
 (ותוכניות מתוזמנות שהגיע זמנן, לפי שעון ישראל) ייכנסו למפת האתר ויקבלו דף.
 
 `scripts/build-episode-pages.mjs` מעתיק את `episode.html` לכל תוכנית מוצגת אל `episodes/<slug>.html`, עם

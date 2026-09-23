@@ -7,6 +7,8 @@ export const site = JSON.parse(readFileSync('data/site.json', 'utf8'));
 export const base = site.url.replace(/\/?$/, '/');
 
 let cached = null;
+/** האם הקטלוג שנטען הגיע מהשרת החי (ולא מהעותק שבמאגר) */
+export let fromLive = false;
 export async function loadCatalog() {
   if (cached) return cached;
   const api = site.storage?.cloudflare?.apiBase;
@@ -17,7 +19,8 @@ export async function loadCatalog() {
       if (r.ok) catalog = await r.json();
     } catch (err) { console.warn(`catalog fetch failed: ${err.message}`); }
   }
-  if (!catalog?.episodes?.length) {
+  fromLive = !!catalog?.episodes?.length;
+  if (!fromLive) {
     console.warn('using data/episodes.json');
     catalog = JSON.parse(readFileSync('data/episodes.json', 'utf8'));
   }
