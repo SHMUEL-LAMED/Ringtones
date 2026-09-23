@@ -233,7 +233,7 @@
     async call(path, { method = 'GET', body, auth = true } = {}) {
       const r = await fetch(this.base(path), { method, headers: this.headers(auth), body: body === undefined ? undefined : JSON.stringify(body), cache: 'no-store' });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) { const err = new Error(j.error || `השרת החזיר שגיאה (${r.status})`); err.status = r.status; throw err; }
+      if (!r.ok) { const err = new Error(j.error || `השרת החזיר שגיאה (${r.status}).`); err.status = r.status; throw err; }
       return j;
     },
     /** אירוע האזנה לסטטיסטיקה (ציבורי; בלי preflight, בלי המתנה) */
@@ -292,25 +292,25 @@
     /** פרסום. baseVersion = הגרסה שהייתה באתר כשהתחלנו לערוך; אם מנהל אחר פרסם
         בינתיים, השרת מחזיר 409 (err.conflict) ולא דורס — אלא אם force. */
     async push(data, { removedIds = [], baseVersion, force = false, notify = false } = {}) {
-      if (!await this.isAdmin()) throw new Error('צריך להתחבר עם חשבון מנהל כדי לפרסם');
+      if (!await this.isAdmin()) throw new Error('צריך להתחבר עם חשבון מנהל כדי לפרסם.');
       const payload = { seasons:data.seasons, episodes:data.episodes, removedIds, settings:data.settings || {}, notify, force };
       if (baseVersion !== undefined) payload.baseVersion = baseVersion;
       const r = await fetch(this.base('/api/program/catalog'), { method:'POST', headers:this.headers(), body:JSON.stringify(payload) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) { const err = new Error(j.error || `שמירת התוכניות נכשלה (${r.status})`); err.status = r.status; err.conflict = !!j.conflict; err.latest = j.latest || null; throw err; }
+      if (!r.ok) { const err = new Error(j.error || `שמירת התוכניות נכשלה (${r.status}).`); err.status = r.status; err.conflict = !!j.conflict; err.latest = j.latest || null; throw err; }
       return j;
     },
     async importDrive(episode) {
-      if (!await this.isAdmin()) throw new Error('צריך להתחבר עם חשבון מנהל כדי להעביר הקלטות');
+      if (!await this.isAdmin()) throw new Error('צריך להתחבר עם חשבון מנהל כדי להעביר הקלטות.');
       const driveId = window.RoshUI?.driveId(episode);
-      if (!driveId) throw new Error('לא נמצא מזהה קובץ בדרייב');
+      if (!driveId) throw new Error('לא נמצא מזהה קובץ בדרייב.');
       const r = await fetch(this.base('/api/program/import-drive'), {
         method:'POST', headers:this.headers(), body:JSON.stringify({
           episodeId:episode.id, driveId, expectedSize:Number(episode.sourceFileBytes) || 0,
         }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || `העברת ההקלטה נכשלה (${r.status})`);
+      if (!r.ok) throw new Error(j.error || `העברת ההקלטה נכשלה (${r.status}).`);
       return j;
     },
   };

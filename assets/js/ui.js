@@ -32,9 +32,9 @@
     sec = Number(sec) || 0;
     if (!sec) return '';
     const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
-    if (!h) return `${m} דקות`;
+    if (!h) return m === 1 ? 'דקה אחת' : `${m} דקות`;
     const hw = h === 1 ? 'שעה' : h === 2 ? 'שעתיים' : `${h} שעות`;
-    return m ? `${hw} ו־${m} דקות` : hw;
+    return m ? `${hw} ו${m === 1 ? 'דקה אחת' : `־${m} דקות`}` : hw;
   }
 
   const heDate = new Intl.DateTimeFormat('he-IL', { day: 'numeric', month: 'long', year: 'numeric' });

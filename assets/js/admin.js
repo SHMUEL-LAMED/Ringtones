@@ -325,7 +325,7 @@
     if (!A.bulk) return;
     const n = A.picked.size;
     bar.innerHTML = `
-<span class="cue-hint">${n ? `נבחרו ${n} תוכניות` : 'לחצו על תוכניות כדי לבחור'}</span>
+<span class="cue-hint">${n ? (n === 1 ? 'נבחרה תוכנית אחת' : `נבחרו ${n} תוכניות`) : 'לחצו על תוכניות כדי לבחור'}</span>
 <button type="button" class="btn small" data-op="pick-all">${n === listFiltered().length && n ? 'ניקוי הבחירה' : 'בחירת כל המוצגות'}</button>
 <div class="bulk-actions" ${n ? '' : 'hidden'}>
   <button type="button" class="btn small" data-op="bulk-show">הצגה באתר</button>
@@ -954,7 +954,7 @@ ${pushCard()}
   async function runCheck(kind) {
     const items = kind === 'audio'
       ? A.data.episodes.filter((e) => U.streamUrl(e)).map((e) => ({ e, url: U.streamUrl(e), what: 'ההקלטה' }))
-      : A.data.episodes.flatMap((e) => [...(e.cover ? [{ e, url: e.cover, what: 'התמונה', img: true }] : []), ...U.publicLinks(e).map((l) => ({ e, url: l.url, what: `הקישור "${l.label}"` }))]);
+      : A.data.episodes.flatMap((e) => [...(e.cover ? [{ e, url: e.cover, what: 'התמונה', img: true }] : []), ...U.publicLinks(e).map((l) => ({ e, url: l.url, what: `הקישור "${l.label}"`, masc: true }))]);
     const r = A.checks[kind] = { running: true, total: items.length, done: 0, problems: [] };
     renderPublish();
     const probe = async (it) => {
@@ -968,7 +968,7 @@ ${pushCard()}
       } catch { return false; }
     };
     let i = 0;
-    const worker = async () => { while (i < items.length) { const it = items[i++]; const ok = await probe(it); if (!ok) r.problems.push({ id: it.e.id, text: `${it.what} של "${label(it.e)}" לא נטענת` }); r.done++; if (A.tab === 'publish' && r.done % 5 === 0) renderPublish(); } };
+    const worker = async () => { while (i < items.length) { const it = items[i++]; const ok = await probe(it); if (!ok) r.problems.push({ id: it.e.id, text: `${it.what} של "${label(it.e)}" לא ${it.masc ? 'נטען' : 'נטענת'}` }); r.done++; if (A.tab === 'publish' && r.done % 5 === 0) renderPublish(); } };
     await Promise.all([worker(), worker(), worker()]);
     r.running = false; if (A.tab === 'publish') renderPublish();
     U.notify(r.problems.length ? `הבדיקה הסתיימה: ${r.problems.length} בעיות.` : 'הבדיקה הסתיימה: הכול תקין.', r.problems.length ? 'info' : 'success');
@@ -1016,7 +1016,7 @@ ${pushCard()}
       A.originError = false; A.versions = null; A.versionCache.clear();
       stop(); U.notify('פורסם! האתר מציג עכשיו את הגרסה החדשה.', 'success');
       paintStatus(); if (A.tab === 'publish') render();
-      if (A.notify && r.notified) drainPush().then((n) => n && U.notify(`נשלחה התראה ל־${n} מכשירים.`, 'success'));
+      if (A.notify && r.notified) drainPush().then((n) => n && U.notify(n === 1 ? 'נשלחה התראה למכשיר אחד.' : `נשלחה התראה ל־${n} מכשירים.`, 'success'));
     };
     try { await go(false); }
     catch (err) {
@@ -1197,7 +1197,7 @@ ${pushCard()}
         const stopN = U.notify('שולחים…', 'progress');
         const r = await S.sb.call('/api/program/push/send', { method: 'POST', body: { title, body: pf.elements.body.value.trim(), url } });
         const sent = Number(r.remaining) ? await drainPush(Number(r.sent) || 0) : Number(r.sent) || 0;
-        stopN(); U.notify(`נשלח ל־${sent} מכשירים.`, 'success'); pf.reset();
+        stopN(); U.notify(sent === 1 ? 'נשלח למכשיר אחד.' : `נשלח ל־${sent} מכשירים.`, 'success'); pf.reset();
         if (r.removed) A.pushCount = Math.max(0, (A.pushCount || 0) - r.removed);
       } catch (err) { U.notify(`השליחה לא הצליחה: ${err.message}`, 'error'); }
       btn.disabled = false;
