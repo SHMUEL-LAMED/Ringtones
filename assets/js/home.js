@@ -18,7 +18,7 @@
     const el = document.querySelector(sel); if (el && site[key]) { el.textContent = site[key]; if (el.dataset.text != null) el.dataset.text = site[key]; }
   }
 
-  else if (S.state.loadedFrom === 'json-fallback') U.notify('החיבור למקור הנתונים נכשל — מוצג העותק השמור באתר.', 'info', { ttl: 6000 });
+  if (S.state.loadedFrom === 'json-fallback') U.notify('החיבור למקור הנתונים נכשל — מוצג העותק השמור באתר.', 'info', { ttl: 6000 });
   else if (S.state.error) U.notify('טעינת רשימת התוכניות נכשלה. בדקו את החיבור ונסו שוב.', 'error', { action: 'ניסיון חוזר', onAction: () => location.reload(), ttl: 0 });
 
   const list = S.episodes();
