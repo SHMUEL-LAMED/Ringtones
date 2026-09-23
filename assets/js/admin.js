@@ -811,7 +811,9 @@ ${aiCard(e)}
 <div class="actions" style="margin:0">
   <button type="button" class="btn gold" data-op="ai-run" ${st.running ? 'disabled' : ''}>${sum ? 'יצירה מחדש' : 'תמלול ויצירת תיאור'}</button>
   <button type="button" class="btn small" data-op="ai-transcript">הצגת התמלול</button>
+  <button type="button" class="btn small" data-op="ai-titles" ${st.titlesBusy ? 'disabled' : ''}>${st.titlesBusy ? 'חושבים על שמות…' : 'הצעות לשם התוכנית'}</button>
 </div>
+${st.titles ? `<div class="ai-result"><p class="kicker">הצעות לשם — לחיצה מחליפה את השם</p><div class="title-ideas">${st.titles.map((t, i) => `<button type="button" class="chip" data-op="ai-title-use" data-i="${i}">${esc(t)}</button>`).join('')}</div>${st.whatsapp ? `<p class="kicker" style="margin-top:12px">טקסט לוואטסאפ</p><div class="whatsapp-text">${esc(st.whatsapp)}</div><div class="actions"><button type="button" class="btn small" data-op="copy" data-text="${esc(st.whatsapp)}">העתקה</button></div>` : ''}</div>` : ''}
 ${st.text ? `<p class="upload-status" role="status"><span class="notice-spinner" aria-hidden="true"></span> ${esc(st.text)}</p>` : ''}
 ${st.error ? `<p class="problems">${esc(st.error)}</p>` : ''}
 ${sum ? `<div class="ai-result">
@@ -977,17 +979,34 @@ ${st.transcript != null ? `<details class="ai-transcript" open><summary>התמל
   <div><p class="kicker">באיזו שעה מאזינים (30 יום)</p>${hours.some((h) => Number(h.plays)) ? `<div class="bars hours" role="img" aria-label="האזנות לפי שעה ביום">${hours.map((h) => `<div class="bar" title="${String(h.hour).padStart(2, '0')}:00 — ${n2(h.plays)} האזנות"><i style="height:${Math.round((Number(h.plays) || 0) / hmax * 100)}%"></i><small>${Number(h.hour) % 3 ? '' : String(h.hour).padStart(2, '0')}</small></div>`).join('')}</div>` : '<p class="help">עוד אין נתונים.</p>'}</div>
 </div>
 <div class="two-col" style="margin-top:22px">
-  <div><p class="kicker">הכי אהובות (♥)</p>${likes.length ? `<ol class="top-list">${likes.slice(0, 10).map((r) => `<li><span>${esc(epName(r.id))}</span><b>♥ ${n2(r.likes)}</b></li>`).join('')}</ol>` : '<p class="help">עוד אף אחד לא סימן "אהבתי".</p>'}</div>
+  <div><p class="kicker">הכי אהובות (♥)</p>${likes.length ? `<ol class="top-list">${likes.slice(0, 10).map((r) => `<li><span>${esc(epName(r.id))}</span><b>♥ ${n2(r.likes)}</b></li>`).join('')}</ol>` : '<p class="help">עוד אף אחד לא סימן "אהבתי".</p>'}${(st.moments || []).length ? `<p class="kicker" style="margin-top:14px">הכי הרבה רגעים מסומנים</p><ol class="top-list">${st.moments.slice(0, 5).map((r) => `<li><span>${esc(epName(r.id))}</span><b>♥ ${n2(r.count)}</b></li>`).join('')}</ol>` : ''}</div>
   <div><p class="kicker">עד איפה מאזינים</p>
     <label class="visually-hidden" for="stats-ep">תוכנית</label>
     <select id="stats-ep" class="input small-select" style="width:100%"><option value="">בחרו תוכנית…</option>${withAudio.map((e) => `<option value="${esc(e.id)}" ${A.statsEp === e.id ? 'selected' : ''}>${esc(label(e))}</option>`).join('')}</select>
     ${A.statsEp ? (!ret ? '<p class="help">טוענים…</p>' : ret.error ? `<p class="problems">${esc(ret.error)}</p>` : (ret.retention || []).some((r) => Number(r.listeners)) ? `<div class="bars retention" role="img" aria-label="כמה מאזינים הגיעו לכל נקודה בתוכנית">${ret.retention.map((r) => `<div class="bar" title="${r.pct}% מהתוכנית: ${n2(r.listeners)} מאזינים"><i style="height:${Math.round((Number(r.listeners) || 0) / rmax * 100)}%"></i><small>${r.pct % 25 ? '' : `${r.pct}%`}</small></div>`).join('')}</div><p class="cue-hint">${n2(ret.listeners)} מאזינים · ${n2(ret.plays)} האזנות. כל עמודה: כמה מאזינים הגיעו לנקודה הזו בתוכנית. ירידה חדה = שם עוזבים.</p>` : '<p class="help">עוד אין מספיק נתונים לתוכנית הזו.</p>') : '<p class="help">בחרו תוכנית כדי לראות באיזה רגע מאזינים מפסיקים לשמוע.</p>'}
+    ${ret?.moments ? hotMoments(ret.moments) : ''}
   </div>
 </div>`;
   }
+  /** הרגעים הכי חמים בתוכנית: איפה המאזינים סימנו ♥ (גלוי רק כאן, בניהול) */
+  function hotMoments(m) {
+    if (!m.buckets?.length) return '<p class="kicker" style="margin-top:16px">הרגעים הכי חמים</p><p class="help">עוד אף מאזין לא סימן ♥ על רגע בתוכנית הזו.</p>';
+    const e = A.data.episodes.find((x) => x.id === m.id);
+    const D = e?.duration || Math.max(...m.buckets.map((b) => b.at + 30));
+    const bins = 40, per = Math.max(30, Math.ceil(D / bins / 30) * 30);
+    const counts = Array.from({ length: Math.ceil(D / per) }, (_, i) => m.buckets.filter((b) => b.at >= i * per && b.at < (i + 1) * per).reduce((n, b) => n + b.count, 0));
+    const max = Math.max(1, ...counts);
+    return `<p class="kicker" style="margin-top:16px">הרגעים הכי חמים · ${n2(m.total)} מאזינים סימנו ♥</p>
+<div class="bars hours" role="img" aria-label="כמה מאזינים סימנו כל חלק בתוכנית">${counts.map((c, i) => `<div class="bar" title="${U.fmtTime(i * per)}–${U.fmtTime((i + 1) * per)}: ${n2(c)}"><i style="height:${Math.round(c / max * 100)}%;background:linear-gradient(180deg,var(--pink),color-mix(in srgb,var(--pink) 30%,transparent))"></i><small>${i % 8 ? '' : U.fmtTime(i * per)}</small></div>`).join('')}</div>
+<ul class="hot-list">${(m.top || []).map((t) => `<li><span class="pill">♥ ${U.fmtTime(t.at)} · ${n2(t.count)}</span></li>`).join('')}</ul>`;
+  }
   async function loadEpStats(id) {
     A.statsEp = id; if (!id) { renderListeners(); return; }
-    if (!A.epStats.has(id)) { renderListeners(); try { A.epStats.set(id, await S.sb.call(`/api/program/stats/episode/${encodeURIComponent(id)}`)); } catch (err) { A.epStats.set(id, { error: err.message }); } }
+    if (!A.epStats.has(id)) {
+      renderListeners();
+      const [st, mo] = await Promise.allSettled([S.sb.call(`/api/program/stats/episode/${encodeURIComponent(id)}`), S.sb.call(`/api/program/moments/${encodeURIComponent(id)}`)]);
+      A.epStats.set(id, { ...(st.status === 'fulfilled' ? st.value : { error: st.reason?.message }), moments: mo.status === 'fulfilled' ? mo.value : null });
+    }
     if (A.tab === 'listeners') renderListeners();
   }
   /* ---------- תגובות המאזינים: אישור, תשובה של המגישים, תגובה נבחרת ---------- */
@@ -1527,6 +1546,13 @@ ${proofCard()}
       case 'job-stop': if (A.jobs[b.dataset.job]) A.jobs[b.dataset.job].stop = true; break;
       // AI לתוכנית אחת
       case 'ai-run': if (e) aiRun(e).catch(() => {}); break;
+      case 'ai-titles': if (e) {
+        const st = A.ai.get(e.id) || {}; A.ai.set(e.id, st); st.titlesBusy = true; st.error = ''; paintAi();
+        try { const r = await S.sb.call('/api/program/ai/titles', { method: 'POST', body: { episodeId: e.id } }); st.titles = r.titles || []; st.whatsapp = r.whatsapp || ''; }
+        catch (err) { st.error = err.status === 409 ? 'קודם צריך לתמלל את ההקלטה (הכפתור "תמלול ויצירת תיאור").' : err.message; }
+        st.titlesBusy = false; paintAi();
+      } break;
+      case 'ai-title-use': if (e) { const t = A.ai.get(e.id)?.titles?.[i]; if (t) { e.title = t; touch(); renderEditor(); renderList(); U.notify('השם הוחלף. אפשר לערוך אותו בשדה "שם התוכנית".', 'success'); } } break;
       case 'ai-apply': if (e && A.ai.get(e.id)?.summary) { applySummary(e, A.ai.get(e.id).summary); touch(); renderEditor(); renderList(); U.notify('התיאור והסיכום נכנסו לתוכנית. בדקו, ואז "פרסום לאתר".', 'success'); } break;
       case 'ai-transcript': if (e) { const st = A.ai.get(e.id) || {}; A.ai.set(e.id, st); if (st.transcript != null) { st.transcript = null; paintAi(); break; } try { const r = await S.sb.call(`/api/program/ai/transcript/${encodeURIComponent(e.id)}`); st.transcript = r.text || ''; if (!st.summary && r.summary) st.summary = r.summary; } catch (err) { st.transcript = ''; st.error = err.status === 404 ? 'עדיין אין תמלול לתוכנית הזו.' : err.message; } paintAi(); } break;
       // האתר

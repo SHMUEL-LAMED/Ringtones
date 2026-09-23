@@ -41,6 +41,7 @@ await ctx.route(`${API}/**`, async (route) => {
   if (p === '/api/program/comments/moderate') { const b = req.postDataJSON(); const c = comments.find((x) => x.id === b.id); Object.assign(c, b.status ? { status: b.status } : {}, 'reply' in b ? { reply: b.reply } : {}, 'pinned' in b ? { pinned: b.pinned } : {}); return json({ ok: true, comment: c }); }
   if (p === '/api/program/ai/proofread') { const b = req.postDataJSON(); proofreadCalls++; return json({ results: b.items.filter((it) => it.text.includes('תוכנית בדיקה חדשה')).map((it) => ({ key: it.key, fixed: it.text.replace('בדיקה', 'הבדיקה'), changes: [{ from: 'בדיקה', to: 'הבדיקה' }] })) }); }
   if (p === '/api/program/push/drain') return json({ sent: 0, failed: 0, removed: 0, remaining: 0 });
+  if (p.startsWith('/api/program/moments/')) return json({ id: decodeURIComponent(p.split('/').pop()), total: 3, buckets: [{ at: 60, count: 2 }, { at: 600, count: 3 }], top: [{ at: 600, count: 3 }, { at: 60, count: 2 }] });
   if (p.startsWith('/api/program/stats/episode/')) return json({ id: p.split('/').pop(), plays: 10, listeners: 8, retention: Array.from({ length: 20 }, (_, i) => ({ pct: i * 5, listeners: 8 - Math.floor(i / 3) })) });
   if (p === '/api/program/draft' && m === 'GET') return json({ draft: null });
   if (p === '/api/program/draft' && m === 'PUT') { draftPuts++; return json({ ok: true, updatedAt: new Date().toISOString(), by: 'admin@example.com' }); }
@@ -158,6 +159,7 @@ check((await page.locator('.bars.hours .bar').count()) === 24, 'סטטיסטיק
 await page.selectOption('#stats-ep', { index: 1 });
 await page.waitForSelector('.bars.retention .bar');
 check((await page.locator('.bars.retention .bar').count()) === 20, 'סטטיסטיקה: עד איפה מאזינים בתוכנית');
+check((await page.locator('.hot-list li').count()) === 2, 'הרגעים הכי חמים בתוכנית — גלוי רק בניהול');
 check((await page.locator('[data-push-send]').count()) === 1, 'שליחת התראה לכל המאזינים');
 check((await page.locator('#comments-card .mod.pending').count()) === 1, 'תגובה שממתינה לאישור מופיעה בניהול');
 await page.fill('[data-reply-for="c1"]', 'תודה שרה!');

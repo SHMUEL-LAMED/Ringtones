@@ -67,6 +67,7 @@
       <option value="">טיימר כיבוי</option><option value="15">בעוד 15 דקות</option><option value="30">בעוד 30 דקות</option><option value="45">בעוד 45 דקות</option><option value="60">בעוד שעה</option>
     </select>
     <button type="button" class="chip hide-sm" data-mute aria-pressed="false">השתקה</button>
+    <button type="button" class="chip moment-btn" data-moment aria-pressed="false" title="סימון הרגע הזה ברשימת הרגעים שאהבתם">♡ הרגע הזה</button>
     <button type="button" class="chip" data-share>שיתוף הרגע הזה</button>
     <a class="chip hide-sm" data-download href="#" download rel="noopener">הורדה</a>
     <span class="spacer"></span>
@@ -91,6 +92,7 @@
     q('[data-next]').addEventListener('click', nextEpisode);
     q('[data-close]').addEventListener('click', close);
     q('[data-share]').addEventListener('click', shareMoment);
+    q('[data-moment]').addEventListener('click', toggleMoment);
     P.els.mute.addEventListener('click', () => { audio.muted = !audio.muted; P.els.mute.setAttribute('aria-pressed', String(audio.muted)); P.els.mute.textContent = audio.muted ? 'ביטול השתקה' : 'השתקה'; });
     P.els.speed.addEventListener('change', () => setRate(Number(P.els.speed.value)));
     P.els.sleep.addEventListener('change', () => setSleep(P.els.sleep.value));
@@ -327,6 +329,23 @@
     } catch { /* */ }
   }
 
+  /* ---------- ♥ על רגע: נשמר ב"הרגעים שסימנתם" באזור האישי ---------- */
+  async function toggleMoment() {
+    if (!P.episode) return;
+    try {
+      const r = await S.moments.toggle(P.episode.id, audio.currentTime);
+      paintMomentBtn();
+      window.RoshUI.notify(r.on ? `♥ נשמר: ${fmtTime(r.at)}. תמצאו את זה באזור האישי.` : 'הסימון הוסר.', 'success');
+    } catch (err) {
+      window.RoshUI.notify(err.message, 'info', err.login ? { action: 'להתחברות', onAction: () => (window.RoshApp ? window.RoshApp.navigate('me.html') : (location.href = 'me.html')) } : {});
+    }
+  }
+  function paintMomentBtn() {
+    const b = P.dock?.querySelector('[data-moment]'); if (!b || !P.episode) return;
+    const on = S.moments.near(P.episode.id, audio.currentTime) != null;
+    if (b.getAttribute('aria-pressed') !== String(on)) { b.setAttribute('aria-pressed', String(on)); b.textContent = on ? '♥ הרגע הזה' : '♡ הרגע הזה'; }
+  }
+
   /* ---------- שיתוף ---------- */
 
   async function shareMoment() {
@@ -340,7 +359,7 @@
 
   /* ---------- אירועי אודיו ---------- */
 
-  audio.addEventListener('timeupdate', () => { if (!P.dragging) { paint(); updateNow(); save(); } if (P.sleepAt && Date.now() >= P.sleepAt) { pause(); setSleep(''); P.els.sleep.value = ''; window.RoshUI.notify('הטיימר כיבה את הנגן. לילה טוב.', 'info'); } paintSleep(); emit('time'); });
+  audio.addEventListener('timeupdate', () => { if (!P.dragging) { paint(); updateNow(); save(); paintMomentBtn(); } if (P.sleepAt && Date.now() >= P.sleepAt) { pause(); setSleep(''); P.els.sleep.value = ''; window.RoshUI.notify('הטיימר כיבה את הנגן. לילה טוב.', 'info'); } paintSleep(); emit('time'); });
   audio.addEventListener('loadedmetadata', () => { paint(); renderSegments(); paint(); });
   audio.addEventListener('durationchange', () => { renderSegments(); paint(); });
   const paintPlaying = () => document.body.classList.toggle('is-playing', !audio.paused && !audio.ended);

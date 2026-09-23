@@ -532,7 +532,7 @@
      הנוכחי, ומצטרפים לחשבון כשהוא מתחבר. */
 
   const ME_KEYS = ['positions', 'later', 'history', 'prefs', 'queue', 'finished', 'last', 'listenSeconds'];
-  const blank = () => ({ positions: {}, later: [], history: [], prefs: {}, queue: [], finished: [], last: null, listenSeconds: 0 });
+  const blank = () => ({ positions: {}, later: [], history: [], prefs: {}, queue: [], finished: [], last: null, listenSeconds: 0, moments: {} });
   function cleanMe(raw) {
     const d = blank();
     if (!raw || typeof raw !== 'object') return d;
@@ -545,9 +545,12 @@
     d.prefs = raw.prefs && typeof raw.prefs === 'object' ? { ...raw.prefs } : {};
     d.last = raw.last && raw.last.id ? { id: String(raw.last.id), t: Math.floor(Number(raw.last.t) || 0) } : null;
     d.listenSeconds = Math.max(0, Math.floor(Number(raw.listenSeconds) || 0));
+    if (raw.moments && typeof raw.moments === 'object') {
+      for (const [id, list] of Object.entries(raw.moments)) if (Array.isArray(list)) d.moments[id] = [...new Set(list.map(Number).filter((n) => Number.isFinite(n) && n >= 0))].sort((a, b) => a - b).slice(0, 200);
+    }
     return d;
   }
-  const hasContent = (d) => !!(Object.keys(d.positions).length || d.later.length || d.history.length || d.queue.length || d.listenSeconds || d.last);
+  const hasContent = (d) => !!(Object.keys(d.moments || {}).length || Object.keys(d.positions).length || d.later.length || d.history.length || d.queue.length || d.listenSeconds || d.last);
   /** מיזוג: מה שנעשה בביקור הזה (לפני שהתחברו, או במכשיר הזה) נוסף לחשבון */
   function mergeMe(base, extra) {
     const out = cleanMe(base), x = cleanMe(extra);
@@ -560,6 +563,7 @@
     out.prefs = { ...out.prefs, ...x.prefs };
     if (x.last) out.last = x.last;
     out.listenSeconds += x.listenSeconds;
+    for (const [id, list] of Object.entries(x.moments)) out.moments[id] = [...new Set([...(out.moments[id] || []), ...list])].sort((a, b) => a - b);
     return out;
   }
 
@@ -709,6 +713,27 @@
     get finished() { return me.data.finished; },
   };
 
+  /* ---------- הרגעים שאהבתי: ♥ על רגע בתוכנית ----------
+     נשמר באזור האישי (בחשבון), ונשלח לשרת לספירה — שרק המנהלים רואים. */
+  const moments = {
+    step: 5,
+    of(id) { return me.data.moments[id] || []; },
+    all() { return Object.entries(me.data.moments).filter(([, l]) => l.length); },
+    near(id, t) { return this.of(id).find((m) => Math.abs(m - t) < 10) ?? null; },
+    async toggle(id, t) {
+      if (!sb.user) throw Object.assign(new Error('כדי לסמן רגעים צריך להתחבר.'), { login: true });
+      const hit = this.near(id, t);
+      const at = hit ?? Math.floor(t / this.step) * this.step;
+      const on = hit == null;
+      const list = this.of(id).filter((m) => m !== at);
+      me.data.moments[id] = on ? [...list, at].sort((a, b) => a - b) : list;
+      if (!me.data.moments[id].length) delete me.data.moments[id];
+      me.change();
+      sb.call('/api/program/moments', { method: 'POST', body: { episodeId: id, at, on } }).catch(() => {});
+      return { at, on };
+    },
+  };
+
   /* ---------- "אהבתי" ---------- */
   const likes = {
     counts: {}, mine: new Set(), loaded: false, _p: null,
@@ -773,7 +798,7 @@
   };
 
   window.RoshStore = {
-    state, ready, load, sb, prefs, positions, last, later, history, queue, listening, likes, me, admin,
+    state, ready, load, sb, prefs, positions, last, later, history, queue, listening, likes, moments, me, admin,
     episodes, seasons, bySlug, byId, latest, featured, neighbors, searchEpisodes, suggest,
     bannerActive, scheduled, nowIL, todayIL, onSession, signedIn, signOut,
     get site() { return state.site; },

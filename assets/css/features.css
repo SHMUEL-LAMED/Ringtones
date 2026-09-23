@@ -126,3 +126,16 @@
   .hg-head .btn, .mod-ops .btn, .proof-ops .btn { flex: 1 1 auto; justify-content: center; }
   .comment-form-foot .btn { width: 100%; justify-content: center; }
 }
+
+/* ---------- הרגעים שסימנתם ♥ ---------- */
+.moment-btn[aria-pressed="true"] { color: var(--pink); border-color: color-mix(in srgb, var(--pink) 55%, transparent); }
+.moments-list { display: grid; gap: 10px; }
+.moments-row { padding: 12px 14px; border-radius: var(--radius-13); border: 1px solid var(--border); border-inline-start: 4px solid hsl(var(--h) 80% 60%); display: grid; gap: 8px; }
+.moments-row a { color: inherit; text-decoration: none; }
+.moments-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.moment-pair { display: inline-flex; align-items: center; gap: 2px; }
+.moment-del { font: inherit; font-size: 11px; border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px 4px; }
+.moment-del:hover { color: var(--error); }
+.hot-list { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
+.title-ideas { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.whatsapp-text { white-space: pre-line; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); margin-top: 8px; }

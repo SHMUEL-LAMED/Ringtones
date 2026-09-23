@@ -44,6 +44,7 @@ check(!(await page.locator('#main').innerText()).includes('Drive'), 'שום אז
 await page.click('#featured [data-play]');
 await page.waitForSelector('.dock.open');
 check(await page.locator('.dock.open').count() === 1, 'הנגן הקבוע נפתח');
+check((await page.locator('.dock [data-moment]').count()) === 1, 'כפתור "♡ הרגע הזה" בנגן');
 const apiBase = await page.evaluate(() => window.RoshStore.site?.storage?.cloudflare?.apiBase || '');
 const src = await page.evaluate(() => window.RoshPlayer.src);
 check(apiBase ? src.startsWith(`${apiBase}/api/program/stream/`) : /^https:\/\/drive\.usercontent\.google\.com\//.test(src), 'הנגן מזרים דרך ה־Worker (בלי נגן חיצוני)');
