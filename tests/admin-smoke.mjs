@@ -254,7 +254,7 @@ check(!page.url().includes('sso='), 'הקוד נמחק מהכתובת');
 await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
 
 /* ---------- הגעה מניהול הסקר: קוד מעבר במקום כניסה, במצב מוטמע ---------- */
-await page.evaluate(() => { localStorage.removeItem('rosh:cf:session'); sessionStorage.clear(); });
+await page.evaluate(() => { localStorage.removeItem('rosh:cf:session'); sessionStorage.clear(); localStorage.setItem('rosh:admin:guided', '1'); });
 await page.goto(`${BASE}/admin.html?handoff=c0ffee&embed=1`);
 await page.waitForSelector('#panel .workspace', { timeout: 15000 });
 await page.evaluate(() => document.querySelector('#dlg-guide')?.close());
