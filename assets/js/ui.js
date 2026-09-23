@@ -338,7 +338,6 @@
   <kbd>Shift + →</kbd><span>לתוכנית הבאה</span>
   <kbd>Shift + ←</kbd><span>לתוכנית הקודמת</span>
   <kbd>0–9</kbd><span>קפיצה לאחוז מהתוכנית</span>
-  <kbd>M</kbd><span>השתקה</span>
   <kbd>+ / −</kbd><span>מהירות</span>
   <kbd>R</kbd><span>תוכנית אקראית</span>
   <kbd>/</kbd><span>חיפוש (בארכיון)</span>

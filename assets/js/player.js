@@ -1,5 +1,5 @@
 /* הנגן הקבוע של ראש בראש: נגן אחד לכל האתר, פס התקדמות,
-   המשך מאיפה שעצרתם, מהירות, טיימר כיבוי, קיצורי מקלדת ו־Media Session. */
+   המשך מאיפה שעצרתם, מהירות, קיצורי מקלדת ו־Media Session. */
 (function () {
   'use strict';
   const { esc, fmtTime } = window.RoshUI;
@@ -12,7 +12,6 @@
 
   const P = {
     episode: null,
-    sleepAt: null,      // timestamp ms
     dock: null,
     els: {},
     candidates: null,   // כתובות ההזרמה של התוכנית הנוכחית, לפי עדיפות
@@ -20,6 +19,19 @@
     wantPlay: false,
     lastSaved: 0,
     dragging: false,
+  };
+
+  /** אייקוני הנגן (SVG קטנים, בצבע הטקסט) */
+  const svg = (d, fill) => `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"${fill ? ' class="fill"' : ''}><path d="${d}"/></svg>`;
+  const ICONS = {
+    prev: svg('M6 5.5v13M18.5 5.5 9 12l9.5 6.5z', true),
+    next: svg('M18 5.5v13M5.5 5.5 15 12l-9.5 6.5z', true),
+    play: svg('M8 5.2v13.6c0 .8.9 1.3 1.6.8l10-6.8a1 1 0 0 0 0-1.6l-10-6.8C8.9 3.9 8 4.4 8 5.2z', true).replace('<svg', '<svg data-i="play"'),
+    pause: svg('M7 5h3.5v14H7zM13.5 5H17v14h-3.5z', true).replace('<svg', '<svg data-i="pause"'),
+    heart: svg('M12 20s-7.2-4.4-8.8-9C2 7.6 4.2 4.8 7.3 4.8c1.9 0 3.5 1 4.7 2.7 1.2-1.7 2.8-2.7 4.7-2.7 3.1 0 5.3 2.8 4.1 6.2C19.2 15.6 12 20 12 20z'),
+    share: svg('M12 3.5v11M7.8 7.7 12 3.5l4.2 4.2M5.5 12.5V18a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-5.5'),
+    download: svg('M12 3.5v11M7.8 10.3 12 14.5l4.2-4.2M5.5 19.5h13'),
+    close: svg('M6.5 6.5l11 11M17.5 6.5l-11 11'),
   };
 
   const emit = (type, detail = {}) => window.dispatchEvent(new CustomEvent('rosh:player', { detail: { type, episode: P.episode, time: audio.currentTime, ...detail } }));
@@ -35,44 +47,40 @@
     d.setAttribute('aria-label', 'נגן התוכנית');
     d.innerHTML = `
 <div class="dock-inner">
-  <div class="dock-top">
+  <div class="dock-now">
     <div class="dock-art" data-art aria-hidden="true"><i></i></div>
     <div class="dock-text">
       <a data-link href="#"><b data-title>—</b></a>
       <small class="now"><span class="dock-live" aria-hidden="true"><i style="--d:0s"></i><i style="--d:.2s"></i><i style="--d:.1s"></i><i style="--d:.3s"></i></span><span data-now aria-live="polite"></span></small>
     </div>
-    <div class="dock-controls" style="direction:ltr">
-      <button type="button" class="icon-btn" data-prev aria-label="לתוכנית הקודמת">◂◂</button>
-      <button type="button" class="icon-btn dock-skip" data-back aria-label="15 שניות אחורה">−15</button>
-      <button type="button" class="icon-btn solid main" data-toggle aria-label="ניגון">▶</button>
-      <button type="button" class="icon-btn dock-skip" data-fwd aria-label="15 שניות קדימה">+15</button>
-      <button type="button" class="icon-btn" data-next aria-label="לתוכנית הבאה">▸▸</button>
-    </div>
   </div>
-  <div class="dock-bar">
-    <time data-cur>0:00</time>
-    <div class="scrub" data-scrub role="slider" tabindex="0" aria-label="מיקום בתוכנית" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
-      <div class="segs" data-segs></div>
-      <div class="markers" data-markers aria-hidden="true"></div>
-      <div class="knob" data-knob style="left:0"></div>
-      <div class="tip" data-tip></div>
+  <div class="dock-center">
+    <div class="dock-controls">
+      <select class="dock-speed" data-speed aria-label="מהירות ניגון" title="מהירות ניגון">
+        ${RATES.map((r) => `<option value="${r}"${r === 1 ? ' selected' : ''}>${r}×</option>`).join('')}
+      </select>
+      <button type="button" class="dock-btn" data-prev aria-label="לתוכנית הקודמת" title="לתוכנית הקודמת">${ICONS.prev}</button>
+      <button type="button" class="dock-btn dock-skip" data-back aria-label="15 שניות אחורה" title="15 שניות אחורה">−15</button>
+      <button type="button" class="dock-play" data-toggle data-state="paused" aria-label="ניגון">${ICONS.play}${ICONS.pause}</button>
+      <button type="button" class="dock-btn dock-skip" data-fwd aria-label="15 שניות קדימה" title="15 שניות קדימה">+15</button>
+      <button type="button" class="dock-btn" data-next aria-label="לתוכנית הבאה" title="לתוכנית הבאה">${ICONS.next}</button>
+      <button type="button" class="dock-btn moment-btn" data-moment aria-pressed="false" aria-label="סימון הרגע הזה" title="סימון הרגע הזה ברשימת הרגעים שאהבתם">${ICONS.heart}</button>
     </div>
-    <time data-dur>0:00</time>
+    <div class="dock-bar">
+      <time data-cur>0:00</time>
+      <div class="scrub" data-scrub role="slider" tabindex="0" aria-label="מיקום בתוכנית" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
+        <div class="segs" data-segs></div>
+        <div class="markers" data-markers aria-hidden="true"></div>
+        <div class="knob" data-knob style="left:0"></div>
+        <div class="tip" data-tip></div>
+      </div>
+      <time data-dur>0:00</time>
+    </div>
   </div>
   <div class="dock-extra">
-    <select data-speed aria-label="מהירות ניגון">
-      ${RATES.map((r) => `<option value="${r}"${r === 1 ? ' selected' : ''}>${r === 1 ? 'מהירות רגילה' : `${r}×`}</option>`).join('')}
-    </select>
-    <select data-sleep aria-label="טיימר כיבוי">
-      <option value="">טיימר כיבוי</option><option value="15">בעוד 15 דקות</option><option value="30">בעוד 30 דקות</option><option value="45">בעוד 45 דקות</option><option value="60">בעוד שעה</option>
-    </select>
-    <button type="button" class="chip hide-sm" data-mute aria-pressed="false">השתקה</button>
-    <button type="button" class="chip moment-btn" data-moment aria-pressed="false" title="סימון הרגע הזה ברשימת הרגעים שאהבתם">♡ הרגע הזה</button>
-    <button type="button" class="chip" data-share>שיתוף הרגע הזה</button>
-    <a class="chip hide-sm" data-download href="#" download rel="noopener">הורדה</a>
-    <span class="spacer"></span>
-    <span class="dock-sleep-left" data-sleep-left style="color:var(--gold-ink);font-size:11px;font-weight:800"></span>
-    <button type="button" class="icon-btn dock-close" data-close aria-label="סגירת הנגן">✕</button>
+    <button type="button" class="dock-btn" data-share aria-label="שיתוף הרגע הזה" title="שיתוף הרגע הזה">${ICONS.share}</button>
+    <a class="dock-btn hide-sm" data-download href="#" download rel="noopener" aria-label="הורדת ההקלטה" title="הורדת ההקלטה">${ICONS.download}</a>
+    <button type="button" class="dock-btn dock-close" data-close aria-label="סגירת הנגן" title="סגירת הנגן">${ICONS.close}</button>
   </div>
 </div>`;
     document.body.appendChild(d);
@@ -82,7 +90,7 @@
       art: q('[data-art]'), link: q('[data-link]'), title: q('[data-title]'), now: q('[data-now]'),
       toggle: q('[data-toggle]'), cur: q('[data-cur]'), dur: q('[data-dur]'),
       scrub: q('[data-scrub]'), segs: q('[data-segs]'), markers: q('[data-markers]'), knob: q('[data-knob]'), tip: q('[data-tip]'),
-      speed: q('[data-speed]'), sleep: q('[data-sleep]'), sleepLeft: q('[data-sleep-left]'), mute: q('[data-mute]'), download: q('[data-download]'),
+      speed: q('[data-speed]'), download: q('[data-download]'),
     };
 
     q('[data-toggle]').addEventListener('click', toggle);
@@ -93,9 +101,7 @@
     q('[data-close]').addEventListener('click', close);
     q('[data-share]').addEventListener('click', shareMoment);
     q('[data-moment]').addEventListener('click', toggleMoment);
-    P.els.mute.addEventListener('click', () => { audio.muted = !audio.muted; P.els.mute.setAttribute('aria-pressed', String(audio.muted)); P.els.mute.textContent = audio.muted ? 'ביטול השתקה' : 'השתקה'; });
     P.els.speed.addEventListener('change', () => setRate(Number(P.els.speed.value)));
-    P.els.sleep.addEventListener('change', () => setSleep(P.els.sleep.value));
 
     // גרירה על הפס
     const sc = P.els.scrub;
@@ -232,16 +238,6 @@
     S.prefs.set('rate', r);
     emit('rate', { rate: r });
   }
-  function setSleep(v) {
-    P.sleepAt = null;
-    if (v) P.sleepAt = Date.now() + Number(v) * 60_000;
-    paintSleep();
-  }
-  function paintSleep() {
-    if (!P.els.sleepLeft) return;
-    if (P.sleepAt) P.els.sleepLeft.textContent = `כיבוי בעוד ${Math.max(1, Math.ceil((P.sleepAt - Date.now()) / 60_000))} דק׳`;
-    else P.els.sleepLeft.textContent = '';
-  }
 
   /* ---------- תוכנית קודמת / הבאה ---------- */
 
@@ -296,8 +292,8 @@
       else if (t >= s.from) { el.classList.remove('done'); el.classList.add('on'); fill.style.width = `${((t - s.from) / Math.max(.001, s.to - s.from)) * 100}%`; }
       else { el.classList.remove('done', 'on'); fill.style.width = '0'; }
     });
-    P.els.toggle.textContent = audio.paused ? '▶' : '■';
-    P.els.toggle.setAttribute('aria-label', audio.paused ? 'ניגון' : 'השהיה');
+    const state = audio.paused ? 'paused' : 'playing';
+    if (P.els.toggle.dataset.state !== state) { P.els.toggle.dataset.state = state; P.els.toggle.setAttribute('aria-label', audio.paused ? 'ניגון' : 'השהיה'); }
   }
   function preview(ratio) { paint(ratio); }
   function showTip(ratio) {
@@ -378,7 +374,7 @@
   function paintMomentBtn() {
     const b = P.dock?.querySelector('[data-moment]'); if (!b || !P.episode) return;
     const on = S.moments.near(P.episode.id, audio.currentTime) != null;
-    if (b.getAttribute('aria-pressed') !== String(on)) { b.setAttribute('aria-pressed', String(on)); b.textContent = on ? '♥ הרגע הזה' : '♡ הרגע הזה'; }
+    if (b.getAttribute('aria-pressed') !== String(on)) b.setAttribute('aria-pressed', String(on));
   }
 
   /* ---------- שיתוף ---------- */
@@ -394,7 +390,7 @@
 
   /* ---------- אירועי אודיו ---------- */
 
-  audio.addEventListener('timeupdate', () => { if (!P.dragging) { paint(); updateNow(); save(); paintMomentBtn(); } if (P.sleepAt && Date.now() >= P.sleepAt) { pause(); setSleep(''); P.els.sleep.value = ''; window.RoshUI.notify('הטיימר כיבה את הנגן. לילה טוב.', 'info'); } paintSleep(); emit('time'); });
+  audio.addEventListener('timeupdate', () => { if (!P.dragging) { paint(); updateNow(); save(); paintMomentBtn(); } emit('time'); });
   audio.addEventListener('loadedmetadata', () => { paint(); renderSegments(); paint(); });
   audio.addEventListener('durationchange', () => { renderSegments(); paint(); });
   const paintPlaying = () => document.body.classList.toggle('is-playing', !audio.paused && !audio.ended);
@@ -439,7 +435,7 @@
     });
     if (dl) P.els.download.href = dl;
   });
-  // רק שינוי אמיתי של העוצמה נשמר — לא החלת העוצמה השמורה בבניית הנגן ולא השתקה
+  // רק שינוי אמיתי של העוצמה נשמר — לא החלת העוצמה השמורה בבניית הנגן
   audio.addEventListener('volumechange', () => { if (audio.volume !== S.prefs.get('volume', 1)) S.prefs.set('volume', audio.volume); });
   // כשהדף נסגר או עובר לרקע (בטלפון זה לפעמים הרגע האחרון) — שליחה ב־sendBeacon, שלא נחתכת
   document.addEventListener('visibilitychange', () => { if (document.hidden) { save(true); flushListen(true); } });
@@ -465,7 +461,6 @@
       case 'ArrowLeft': e.preventDefault(); e.shiftKey ? prevEpisode() : seek(audio.currentTime - 15); break;
       case 'KeyJ': seek(audio.currentTime - 15); break;
       case 'KeyL': seek(audio.currentTime + 15); break;
-      case 'KeyM': P.els.mute.click(); break;
       case 'KeyR': random(); break;
       case 'Equal': case 'NumpadAdd': setRate(RATES[Math.min(RATES.length - 1, RATES.indexOf(audio.playbackRate) + 1)] || 1); break;
       case 'Minus': case 'NumpadSubtract': setRate(RATES[Math.max(0, RATES.indexOf(audio.playbackRate) - 1)] || 1); break;
