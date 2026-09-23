@@ -1903,7 +1903,7 @@ ${inboxCard()}
 ${pushCard()}
 <div class="card">
   <div class="section-title"><div><p class="kicker">רשימת התפוצה</p><h2>נשארים בראש</h2></div>${A.subs ? `<strong>${n2(A.subs.active)}</strong>` : ''}</div>
-  <div class="card-body"><p class="help">${A.subs ? `${n2(A.subs.active)} נרשמים פעילים, מהם ${n2(A.subs.fromProgram)} שנרשמו דרך אתר התוכניות. זו אותה רשימה של אתר הסקר — ניהול הרשימה והורדה לאקסל נעשים שם, בלשונית "רשימת תפוצה".` : 'המאזינים מצטרפים בלחיצה אחת עם חשבון Google בדף הבית ובאזור האישי. הרשימה משותפת עם אתר הסקר.'}</p>${site.storage?.cloudflare?.apiBase ? `<a class="btn small" href="${esc(new URL(site.storage.cloudflare.apiBase).origin)}/admin" target="_blank" rel="noopener">לניהול הרשימה באתר הסקר</a>` : ''}</div>
+  <div class="card-body"><p class="help">${A.subs ? `${n2(A.subs.active)} נרשמים פעילים, מהם ${n2(A.subs.fromProgram)} שנרשמו דרך אתר התוכניות. זו אותה רשימה של אתר הסקר — הוספת כתובות (הדבקה או קובץ אקסל), ניהול הרשימה והורדה לאקסל נעשים שם, בלשונית "רשימת תפוצה". אפשר להוסיף כתובות גם מעורך טיוטת המייל ("✉ מייל למאזינים").` : 'המאזינים מצטרפים בלחיצה אחת עם חשבון Google בדף הבית ובאזור האישי. הרשימה משותפת עם אתר הסקר.'}</p>${site.storage?.cloudflare?.apiBase ? `<a class="btn small" href="${esc(new URL(site.storage.cloudflare.apiBase).origin)}/admin" target="_blank" rel="noopener">לניהול הרשימה באתר הסקר</a>` : ''}</div>
 </div>`;
   }
 

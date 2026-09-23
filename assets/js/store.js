@@ -325,6 +325,8 @@
       count: () => sb.call('/api/program/subscribers/count'),
       /** כל הכתובות הפעילות ברשימה (למנהלים; לטיוטת המייל על תוכנית חדשה) */
       list: () => sb.call('/api/program/subscribers'),
+      /** הוספת כתובות לרשימה (טקסט: שורה לכל כתובת, אפשר עם שם). מי שהסיר את עצמו בעבר לא חוזר. */
+      add: (content) => sb.call('/api/program/subscribers', { method: 'POST', body: { content } }),
     },
     /** מרענן את פרטי המשתמש מהשרת; מחזיר true רק למנהל. סשן שפג נמחק. */
     async isAdmin() {
