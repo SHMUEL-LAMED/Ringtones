@@ -81,6 +81,7 @@
   const canSync = () => CLOUD && !!S.sb.user?.isAdmin;
   function touch() {
     A.unsynced = true;
+    refreshLive();
     scheduleSync();
     paintStatus();
   }
@@ -227,21 +228,23 @@
 
   /** מה בדיוק ישתנה באתר: לכל תוכנית — אילו שדות, ומה היה לעומת מה יהיה */
   const FIELD_NAMES = { title: 'השם', date: 'התאריך', number: 'המספר', season: 'העונה', description: 'התיאור', cover: 'התמונה', thumb: 'התמונה הקטנה', audio: 'ההקלטה', duration: 'האורך', visible: 'מוצגת באתר', featured: 'מומלצת בדף הבית', publishAt: 'מועד הפרסום', guests: 'האורחים', tags: 'מילות החיפוש', links: 'הקישורים', surveyId: 'המצעד המקושר' };
-  function detailedChanges() {
-    if (!A.origin) return [];
+  const detailedChanges = () => (A.origin ? diffData(A.origin, A.data) : []);
+  /** ההבדלים בין שתי גרסאות של האתר (מה שמפורסם מול הטיוטה, או שתי גרסאות קודמות) */
+  function diffData(fromRaw, toRaw) {
+    const from = S.admin.normalize(fromRaw), to = S.admin.normalize(toRaw);
     const out = [];
     const short = (v, f) => {
       if (f === 'visible' || f === 'featured') return v ? 'כן' : 'לא';
       if (f === 'date') return v ? fmtDate(v, true) : 'בלי';
       if (f === 'duration') return v ? fmtDuration(v) : 'בלי';
       if (f === 'cover' || f === 'thumb' || f === 'audio') return v ? 'יש' : 'אין';
-      if (f === 'season') return A.data.seasons.find((x) => x.id === v)?.title || v || 'בלי';
+      if (f === 'season') return (to.seasons.find((x) => x.id === v) || from.seasons.find((x) => x.id === v))?.title || v || 'בלי';
       if (Array.isArray(v)) return v.map((x) => (typeof x === 'object' ? x.label || x.url : x)).join(', ') || 'בלי';
       const t = String(v ?? '').trim(); return t ? (t.length > 60 ? `${t.slice(0, 60)}…` : t) : 'ריק';
     };
-    const om = new Map(A.origin.episodes.map((e) => [e.id, e]));
-    for (const raw of A.data.episodes) {
-      const e = S.admin.normEpisode(raw, 0), o = om.get(e.id);
+    const om = new Map(from.episodes.map((e) => [e.id, e]));
+    for (const e of to.episodes) {
+      const o = om.get(e.id);
       if (!o) { out.push({ id: e.id, head: `תוכנית חדשה: "${label(e)}"`, rows: [] }); continue; }
       const rows = [];
       for (const f of Object.keys(FIELD_NAMES)) {
@@ -253,10 +256,10 @@
       }
       if (rows.length) out.push({ id: e.id, head: `"${label(e)}"`, rows });
     }
-    for (const o of A.origin.episodes) if (!A.data.episodes.some((x) => x.id === o.id)) out.push({ id: '', head: `תימחק מהאתר: "${label(o)}"`, rows: [] });
-    const ch = changes();
-    if (ch?.seasons) out.push({ id: '', head: 'העונות השתנו', rows: [] });
-    const os = S.admin.normSettings(A.origin.settings), ns = S.admin.normSettings(A.data.settings);
+    for (const o of from.episodes) if (!to.episodes.some((x) => x.id === o.id)) out.push({ id: '', head: `תימחק מהאתר: "${label(o)}"`, rows: [] });
+    const declared = (raw) => JSON.stringify(S.admin.normalize({ seasons: raw?.seasons }).seasons);
+    if (declared(fromRaw) !== declared(toRaw)) out.push({ id: '', head: 'העונות השתנו', rows: [] });
+    const os = from.settings, ns = to.settings;
     if (JSON.stringify(os.banner) !== JSON.stringify(ns.banner)) out.push({ id: '', head: 'ההודעה בראש האתר השתנתה', rows: [ns.banner.enabled ? `"${short(ns.banner.text)}"` : 'ההודעה כבויה'] });
     if (JSON.stringify(os.updates) !== JSON.stringify(ns.updates)) out.push({ id: '', head: 'דף העדכונים השתנה', rows: [] });
     if (JSON.stringify(os.contacts) !== JSON.stringify(ns.contacts)) out.push({ id: '', head: 'פרטי הקשר השתנו', rows: Object.keys(ns.contacts).filter((k) => os.contacts[k] !== ns.contacts[k]).map((k) => `${short(os.contacts[k])} ← ${short(ns.contacts[k])}`) });
@@ -347,6 +350,7 @@
     if (canSync() && !A.surveys) { try { A.surveys = (await S.sb.surveys()).surveys; } catch { A.surveys = []; } }
     if (A.unsynced) scheduleSync();
     paintStatus(); render();
+    markSeen();
   }
 
   async function checkAccess() {
@@ -381,9 +385,10 @@
       data: clone(S.data), origin: null, originError: false, base: null, selected: null, bulk: false,
       unsynced: false, offline: false, syncState: '', retryDelay: 0, draftAt: null, draftBy: '', conflict: null, overwrite: false, echoRetry: false, lastSent: '',
       checks: { audio: null, media: null }, versions: null, stats: null, messages: null, admins: null, subs: null, surveys: null, comments: null, pushCount: null, statsEp: '', proof: null,
+      seenPrev: undefined, since: null, live: false, inboxEp: '', inboxFilter: 'todo', share: null,
     });
     if (!A.data.settings) A.data.settings = S.admin.normSettings({});
-    A.picked.clear(); A.versionCache.clear(); A.epStats.clear(); A.ai.clear();
+    A.picked.clear(); A.versionCache.clear(); A.epStats.clear(); A.epStatsP.clear(); A.ai.clear(); A.inboxPicked.clear();
     dropDeviceDraft();
     S.signOut(); gateMounted = false;
     await checkAccess(); render(); paintStatus();
@@ -453,6 +458,150 @@
     if (S.scheduled(e)) return { cls: 'scheduled', text: `תעלה ב־${when(e.publishAt)}` };
     return { cls: 'live', text: 'מוצגת' };
   }
+  /** זמן בשעון ישראל ("2026-10-01T20:00") → מילישניות */
+  const ilMs = (local) => Date.parse(`${local}:00Z`) - Math.round((Date.parse(`${S.nowIL()}:00Z`) - Date.now()) / 900000) * 900000;
+  const ago = (ms) => {
+    const rtf = new Intl.RelativeTimeFormat('he', { numeric: 'auto' });
+    const s = (ms - Date.now()) / 1000, abs = Math.abs(s);
+    if (abs < 3600) return rtf.format(Math.round(s / 60), 'minute');
+    if (abs < 86400) return rtf.format(Math.round(s / 3600), 'hour');
+    return rtf.format(Math.round(s / 86400), 'day');
+  };
+
+  /* ---------- מד שלמות: כמה מהתוכנית מוכן, ומה חסר ---------- */
+  const COMPLETE = [
+    ['title', 'שם', (e) => !!e.title.trim()],
+    ['date', 'תאריך', (e) => !!e.date],
+    ['number', 'מספר', (e) => e.number != null],
+    ['season', 'עונה', (e) => !!e.season],
+    ['audio', 'הקלטה', (e) => !!U.streamUrl(e)],
+    ['duration', 'אורך', (e) => !!e.duration],
+    ['cover', 'תמונה', (e) => !!e.cover],
+    ['description', 'תיאור', (e) => !!e.description.trim() && !GENERIC_DESC.test(e.description.trim())],
+  ];
+  function completeness(e) {
+    const missing = COMPLETE.filter(([, , ok]) => !ok(e)).map(([f, name]) => ({ f, name }));
+    return { pct: Math.round((COMPLETE.length - missing.length) / COMPLETE.length * 100), missing };
+  }
+  const cmpTitle = (c) => (c.missing.length ? `${c.pct}% מוכנה · חסר: ${c.missing.map((m) => m.name).join(', ')}` : 'התוכנית שלמה');
+  const cmpRing = (e) => { const c = completeness(e); return `<span class="cmp${c.pct === 100 ? ' full' : ''}" style="--p:${c.pct}" title="${esc(cmpTitle(c))}" aria-label="${esc(cmpTitle(c))}"></span>`; };
+  function cmpBar(e) {
+    const c = completeness(e);
+    return `<div class="cmp-meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${c.pct}" aria-label="כמה מהתוכנית מוכן"><i style="width:${c.pct}%"></i></div>
+<b>${c.pct === 100 ? '✓ התוכנית שלמה' : `${c.pct}% מוכנה`}</b>${c.missing.length ? `<span class="cue-hint">חסר:</span>${c.missing.map((m) => `<button type="button" class="chip" data-op="cmp-go" data-field="${m.f}">${esc(m.name)}</button>`).join('')}` : ''}`;
+  }
+  const paintCompleteness = () => { const e = cur(), el = $('#cmp-bar'); if (e && el) el.innerHTML = cmpBar(e); };
+  /** לוחצים על מה שחסר — והטופס קופץ לשדה שממלא אותו */
+  function goToField(f) {
+    const target = { title: '[data-f="title"]', date: '[data-f="date"]', number: '[data-f="number"]', season: '[data-f="season"]', audio: '[data-upload="audio"]', duration: '#preview-audio, [data-upload="audio"]', cover: '[data-op="cover-auto"]', description: CLOUD && $('#ai-card') ? '#ai-card [data-op="ai-run"]' : '[data-f="description"]' }[f];
+    const el = target && $(target, P);
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    setTimeout(() => el.focus({ preventScroll: true }), 350);
+  }
+
+  /* ======================================================
+     לוח בקרה — מה שמחכה לכם, כשאף תוכנית לא פתוחה
+     ====================================================== */
+
+  /* "מה השתנה מאז שהייתי כאן": בכל כניסה נשמר (במכשיר, לכל מנהל) איזו גרסה הייתה
+     באתר. בכניסה הבאה — הפרסומים של מנהלים אחרים מאז, ומה בדיוק השתנה בכל אחד. */
+  const seenKey = () => `rosh:admin:seen:${S.sb.user?.email || ''}`;
+  A.seenPrev = undefined; A.since = null;
+  function markSeen() {
+    if (A.seenPrev !== undefined || !A.origin || !S.sb.user) return;
+    try { A.seenPrev = JSON.parse(localStorage.getItem(seenKey()) || 'null'); localStorage.setItem(seenKey(), JSON.stringify({ versionId: A.origin.versionId ?? null, at: Date.now() })); } catch { A.seenPrev = null; }
+    loadSince();
+  }
+  async function loadSince() {
+    if (!CLOUD || !A.seenPrev?.at) { A.since = { list: [] }; return; }
+    try {
+      if (!A.versions) A.versions = (await S.sb.versions.list()).versions || [];
+      const mine = S.sb.user?.email;
+      const fresh = A.versions.filter((v) => Number(v.createdAt) * 1000 > A.seenPrev.at && v.by !== mine).slice(0, 3);
+      const list = [];
+      for (const v of fresh) {
+        const prev = A.versions[A.versions.indexOf(v) + 1];
+        let items = [];
+        if (prev) { try { items = diffData((await versionData(prev.id)).data, (await versionData(v.id)).data); } catch { /* הגרסה לא נטענה */ } }
+        list.push({ v, items });
+      }
+      A.since = { list, more: A.versions.filter((v) => Number(v.createdAt) * 1000 > A.seenPrev.at && v.by !== mine).length - fresh.length };
+    } catch { A.since = { list: [], error: true }; }
+    paintDash();
+  }
+  const paintDash = () => { if (A.tab === 'programs' && !cur()) renderEditor(); };
+
+  /** האזנות בשבוע האחרון מול השבוע שלפניו (מתוך 30 הימים שבסטטיסטיקה) */
+  function weekTrend() {
+    const days = (A.stats?.days || []).slice().sort((a, b) => a.day.localeCompare(b.day));
+    if (!days.length) return null;
+    const today = S.todayIL(), dayMs = 86400000;
+    const back = (n) => new Date(Date.parse(`${today}T12:00:00Z`) - n * dayMs).toISOString().slice(0, 10);
+    const sum = (from, to) => days.filter((d) => d.day > from && d.day <= to).reduce((n, d) => n + (Number(d.plays) || 0), 0);
+    const now = sum(back(7), today), before = sum(back(14), back(7));
+    return { now, before, delta: before ? Math.round((now - before) / before * 100) : null };
+  }
+  function greeting() {
+    const h = Number(S.nowIL().slice(11, 13));
+    const first = String(S.sb.user?.name || '').trim().split(/\s+/)[0];
+    return `${h < 5 ? 'לילה טוב' : h < 12 ? 'בוקר טוב' : h < 17 ? 'צהריים טובים' : h < 22 ? 'ערב טוב' : 'לילה טוב'}${first ? `, ${first}` : ''}`;
+  }
+  /** "מה השתנה מאז הביקור הקודם": הפרסומים של מנהלים אחרים, ומה בדיוק השתנה בכל אחד */
+  function sinceCard() {
+    const since = A.since, seen = A.seenPrev;
+    if (!seen?.at || !since) return '';
+    const epBtn = (id, text) => (id && liveEp(id) ? `<button type="button" class="link-btn" data-op="open" data-id="${esc(id)}">${esc(text)}</button>` : `<b>${esc(text)}</b>`);
+    const item = ({ v, items }) => `
+    <div class="since-item"><p class="since-head">פרסום של <b class="ltr">${esc(v.by || 'מנהל אחר')}</b> · ${esc(when(v.createdAt))}${items.length ? ` · ${items.length === 1 ? 'שינוי אחד' : `${items.length} שינויים`}` : ''}</p>
+    ${items.length ? `<ul class="diff-list">${items.slice(0, 6).map((d) => `<li>${epBtn(d.id, d.head)}${d.rows.length ? `<ul>${d.rows.slice(0, 4).map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}</li>`).join('')}${items.length > 6 ? `<li class="cue-hint">ועוד ${items.length - 6}…</li>` : ''}</ul>` : ''}</div>`;
+    const body = since.list.length
+      ? since.list.map(item).join('') + (since.more > 0 ? `<p class="cue-hint">ועוד ${since.more} פרסומים — הכול בחלק "פרסום", בגרסאות הקודמות.</p>` : '')
+      : `<p class="help" style="margin:0">${since.error ? 'לא הצלחנו לבדוק מה השתנה.' : '✓ אף מנהל אחר לא פרסם מאז הביקור הקודם שלכם.'}</p>`;
+    return `<div class="card dash-since">
+  <div class="section-title"><div><p class="kicker">מאז הביקור הקודם · ${esc(ago(seen.at))}</p><h2>מה השתנה</h2></div></div>
+  <div class="card-body">${body}</div>
+</div>`;
+  }
+  function dashboard() {
+    const ch = changes(), hc = health();
+    const waiting = (A.messages?.unread || 0) + (A.comments?.pending || 0);
+    const pending = ch ? ch.added + ch.changed + ch.removed.length + (ch.seasons ? 1 : 0) + (ch.settings ? 1 : 0) : 0;
+    const trend = weekTrend();
+    const partial = A.data.episodes.filter((e) => completeness(e).pct < 100).length;
+    const tile = (n, text, sub, attrs, tone = '') => `<button type="button" class="dash-tile${tone ? ` ${tone}` : ''}" ${attrs}><b>${n}</b><span>${text}</span>${sub ? `<small>${sub}</small>` : ''}</button>`;
+    const upcoming = A.data.episodes.filter((e) => e.visible && S.scheduled(e)).sort((a, b) => a.publishAt.localeCompare(b.publishAt));
+    const latest = A.data.episodes.filter((e) => e.visible && !S.scheduled(e)).sort(byDate)[0];
+    const plays = (id) => Number((A.stats?.recent || []).find((r) => r.id === id)?.plays) || 0;
+    const groups = Object.entries(HEALTH_GROUPS).map(([kind, g]) => ({ kind, g, n: hc.should.filter((p) => p.kind === kind).length })).filter((x) => x.n);
+    const other = A.draftBy && A.draftBy !== S.sb.user?.email ? A.draftBy : '';
+    const epBtn = (id, text) => (id && liveEp(id) ? `<button type="button" class="link-btn" data-op="open" data-id="${esc(id)}">${esc(text)}</button>` : `<b>${esc(text)}</b>`);
+    return `
+<div class="card dash">
+  <div class="section-title"><div><p class="kicker">לוח בקרה · ${esc(fmtDate(S.todayIL()))}</p><h2>${esc(greeting())}</h2></div>
+</div>
+  <div class="card-body">
+    <div class="dash-tiles">
+      ${CLOUD ? tile(A.messages || A.comments ? n2(waiting) : '…', 'מחכות לתשובה', 'הודעות ותגובות של מאזינים', 'data-op="goto" data-tab="listeners"', waiting ? 'hot' : '') : ''}
+      ${tile(ch ? n2(pending) : '…', 'שינויים שלא פורסמו', pending ? 'לבדיקה ולפרסום' : 'הכול מפורסם', 'data-op="goto" data-tab="publish"', pending ? 'gold' : '')}
+      ${CLOUD ? tile(trend ? n2(trend.now) : '…', 'האזנות השבוע', trend?.delta != null ? `<span class="delta ${trend.delta >= 0 ? 'up' : 'down'}">${trend.delta >= 0 ? '▲' : '▼'} ${Math.abs(trend.delta)}%</span> לעומת השבוע הקודם` : '', 'data-op="goto" data-tab="listeners"') : ''}
+      ${tile(n2(partial), 'תוכניות לא שלמות', 'חסר בהן משהו', 'data-op="filter" data-filter="partial"')}
+    </div>
+  </div>
+</div>
+${other ? `<div class="card"><div class="card-body"><p class="help" style="margin:0">✎ אתם עובדים על הטיוטה המשותפת — שמר בה לאחרונה <b class="ltr">${esc(other)}</b>. השינויים של שניכם יתפרסמו יחד.</p></div></div>` : ''}
+${sinceCard()}
+<div class="two-col dash-cols">
+  <div class="card"><div class="section-title"><div><p class="kicker">באתר</p><h2>התוכניות</h2></div></div><div class="card-body">
+    ${upcoming.length ? `<p class="kicker">מתוזמנות</p><ul class="dash-list">${upcoming.slice(0, 4).map((e) => `<li>${epBtn(e.id, label(e))}<small>תעלה ${esc(ago(ilMs(e.publishAt)))} · ${esc(when(e.publishAt))}</small></li>`).join('')}</ul>` : ''}
+    ${latest ? `<p class="kicker">האחרונה באתר</p><ul class="dash-list"><li>${epBtn(latest.id, label(latest))}<small>${esc(fmtDate(latest.date, true) || 'בלי תאריך')}${CLOUD && A.stats && !A.stats.error ? ` · ${n2(plays(latest.id))} האזנות ב־30 יום` : ''}</small></li></ul>` : '<p class="help">עדיין אין תוכניות באתר.</p>'}
+  </div></div>
+  <div class="card"><div class="section-title"><div><p class="kicker">בדיקת תקינות</p><h2>מה כדאי להשלים</h2></div></div><div class="card-body">
+    ${hc.must.length ? `<div class="problems"><b>לפני הפרסום הבא צריך לתקן:</b><ul>${hc.must.slice(0, 5).map((p) => `<li>${epBtn(p.id, p.text)}</li>`).join('')}</ul></div>` : ''}
+    ${groups.length ? `<div class="dash-chips">${groups.map(({ g, n }) => `<button type="button" class="chip" data-op="goto" data-tab="publish">${n2(n)} ${esc(g.title)}</button>`).join('')}</div>` : !hc.must.length ? '<p class="help" style="margin:0">✓ לכל התוכניות יש כל מה שצריך.</p>' : ''}
+  </div></div>
+</div>`;
+  }
 
   /* ======================================================
      1. תוכניות
@@ -480,6 +629,7 @@
             <option value="scheduled">מתוזמנות</option>
             <option value="noaudio">בלי הקלטה</option>
             <option value="nocover">בלי תמונה</option>
+            <option value="partial">לא שלמות</option>
           </select>
           <span class="count" id="ep-count"></span>
           <button type="button" class="chip" data-op="bulk" aria-pressed="${A.bulk}">${A.bulk ? '✕ סיום בחירה' : 'בחירה מרובה'}</button>
@@ -490,6 +640,7 @@
     </div>
   </aside>
   <section class="editor" id="editor"></section>
+  <aside class="live-pane" id="live-pane" aria-label="תצוגה חיה" hidden></aside>
 </div>`;
     $('#ep-filter').value = A.filter;
     renderList(); renderEditor();
@@ -502,6 +653,7 @@
     if (A.filter === 'scheduled') l = l.filter((e) => S.scheduled(e));
     if (A.filter === 'noaudio') l = l.filter((e) => !U.streamUrl(e));
     if (A.filter === 'nocover') l = l.filter((e) => !e.cover);
+    if (A.filter === 'partial') l = l.filter((e) => completeness(e).pct < 100);
     if (A.q) l = S.searchEpisodes(A.q, l);
     return l;
   }
@@ -515,7 +667,7 @@
 <button type="button" class="ep-item${e.visible ? '' : ' hidden-ep'}${A.picked.has(e.id) ? ' picked' : ''}" role="option" data-id="${esc(e.id)}" aria-current="${A.selected === e.id}" aria-selected="${A.bulk ? A.picked.has(e.id) : A.selected === e.id}">
   ${A.bulk ? `<span class="pick-box" aria-hidden="true">${A.picked.has(e.id) ? '✓' : ''}</span>` : `<span class="num">${e.number ?? '♫'}</span>`}
   <span class="txt"><b>${esc(label(e))}</b><small>${esc(fmtDate(e.date, true) || 'בלי תאריך')} · <i class="st ${st.cls}">${esc(st.text)}</i></small></span>
-  <span class="flags">${e.featured ? '<span class="flag featured" title="מומלצת בדף הבית"></span>' : ''}${U.streamUrl(e) ? '<span class="flag audio" title="יש הקלטה"></span>' : '<span class="flag none" title="בלי הקלטה"></span>'}</span>
+  <span class="flags">${cmpRing(e)}${e.featured ? '<span class="flag featured" title="מומלצת בדף הבית"></span>' : ''}${U.streamUrl(e) ? '<span class="flag audio" title="יש הקלטה"></span>' : '<span class="flag none" title="בלי הקלטה"></span>'}</span>
 </button>`; }).join('') : '<div class="state" style="padding:24px"><p>אין תוכניות שמתאימות לחיפוש.</p></div>';
     renderBulkBar();
   }
@@ -539,7 +691,8 @@
     const E = $('#editor'); if (!E) return;
     const e = cur();
     if (!e) {
-      E.innerHTML = `<div class="card"><div class="state empty-editor"><span class="mark">♫</span><h3>בחרו תוכנית מהרשימה</h3><p>או לחצו "+ תוכנית חדשה". כל שינוי נשמר מיד; כשמסיימים, לוחצים "פרסום לאתר".</p></div></div>`;
+      E.innerHTML = dashboard();
+      paintLive();
       return;
     }
     const stream = U.streamUrl(e);
@@ -547,11 +700,12 @@
     E.innerHTML = `
 <div class="card">
   <div class="section-title">
-    <div><p class="kicker">${e.number != null ? `תוכנית ${e.number}` : 'תוכנית'} · <i class="st ${st.cls}">${esc(st.text)}</i></p><h2 id="ed-title-echo">${esc(label(e))}</h2></div>
+    <div><p class="kicker">${e.number != null ? `תוכנית ${e.number}` : 'תוכנית'} · <i class="st ${st.cls}">${esc(st.text)}</i></p><h2 id="ed-title-echo">${esc(label(e))}</h2><div class="cmp-bar" id="cmp-bar">${cmpBar(e)}</div></div>
     <div class="inline-toggles">
       <button type="button" class="btn small editor-back" data-op="back-to-list">← לרשימה</button>
-      <a class="btn small" href="episode.html?ep=${encodeURIComponent(e.slug)}" target="_blank" rel="noopener">צפייה באתר</a>
-      <button type="button" class="btn small" data-op="share">טקסט לוואטסאפ</button>
+      <button type="button" class="btn small" data-op="live" aria-pressed="${A.live}">${A.live ? '✓ תצוגה חיה' : 'תצוגה חיה'}</button>
+      <button type="button" class="btn small" data-op="share">ערכת שיתוף</button>
+      ${CLOUD ? '<button type="button" class="btn small gold" data-op="publish-one" title="מפרסם עכשיו רק את התוכנית הזו; שאר השינויים נשארים בטיוטה">פרסום של התוכנית הזו</button>' : ''}
       <button type="button" class="btn small" data-op="dup">שכפול</button>
       <button type="button" class="btn small" data-op="history" ${CLOUD ? '' : 'disabled'}>גרסאות קודמות</button>
       <button type="button" class="btn small danger" data-op="del">מחיקה</button>
@@ -619,11 +773,13 @@
 
 ${aiCard(e)}
 
+${epStatsCard(e)}
+
 <div class="card">
-  <div class="section-title"><div><p class="kicker">כך זה ייראה</p><h2>באתר</h2></div></div>
-  <div class="card-body"><div class="preview-wrap"><div id="preview-card"></div><p class="help">זה הכרטיס של התוכנית בדף הבית ובארכיון.</p></div></div>
+  <div class="section-title"><div><p class="kicker">כך זה ייראה</p><h2>באתר</h2></div>${A.live ? '' : '<button type="button" class="btn small" data-op="live">תצוגה חיה של הדף ←</button>'}</div>
+  <div class="card-body"><div class="preview-wrap"><div id="preview-card"></div><p class="help">זה הכרטיס של התוכנית בדף הבית ובארכיון. "תצוגה חיה" פותחת לצד העריכה את דף התוכנית המלא, כמו שהמאזינים יראו אותו.</p></div></div>
 </div>`;
-    renderPreview(); paintAi();
+    renderPreview(); paintAi(); paintEpStats(); paintLive();
   }
 
   function renderLinks(e) {
@@ -638,6 +794,7 @@ ${aiCard(e)}
     const e = cur(); const box = $('#preview-card'); if (!e || !box) return;
     box.innerHTML = U.epCard(S.admin.normEpisode(e, 0), { href: '#' });
     $('#ed-title-echo').textContent = label(e);
+    paintCompleteness();
   }
   const schedulePreview = () => { clearTimeout(A.previewTimer); A.previewTimer = setTimeout(() => { renderPreview(); renderList(); }, 200); };
 
@@ -679,6 +836,341 @@ ${aiCard(e)}
     const url = new URL(`episode.html?ep=${encodeURIComponent(e.slug)}`, site.url || location.href).href;
     const first = (e.description || '').split(/\n+/)[0].trim().slice(0, 200);
     return [`🎙️ ${site.name || 'ראש בראש'}${e.number != null ? ` · תוכנית ${e.number}` : ''}`, `*${label(e)}*`, e.date ? fmtDate(e.date) : '', first, `להאזנה: ${url}`].filter(Boolean).join('\n');
+  }
+
+  /* ---------- מספרים של התוכנית, בתוך העורך ---------- */
+
+  /** הסטטיסטיקה של תוכנית אחת (האזנות, עד איפה שמעו, רגעים אהובים) — נטענת פעם אחת */
+  A.epStatsP = new Map();
+  function fetchEpStats(id) {
+    if (A.epStats.has(id)) return Promise.resolve(A.epStats.get(id));
+    if (!A.epStatsP.has(id)) {
+      A.epStatsP.set(id, Promise.allSettled([S.sb.call(`/api/program/stats/episode/${encodeURIComponent(id)}`), S.sb.call(`/api/program/moments/${encodeURIComponent(id)}`)]).then(([st, mo]) => {
+        const v = { ...(st.status === 'fulfilled' ? st.value : { error: st.reason?.message || 'error' }), moments: mo.status === 'fulfilled' ? mo.value : null };
+        A.epStats.set(id, v); A.epStatsP.delete(id);
+        return v;
+      }));
+    }
+    return A.epStatsP.get(id);
+  }
+  function epStatsCard(e) {
+    if (!CLOUD || !A.origin?.episodes.some((x) => x.id === e.id)) return '';
+    return `
+<div class="card" id="ep-stats-card">
+  <div class="section-title"><div><p class="kicker">מאזינים</p><h2>מי שמע את התוכנית</h2></div><button type="button" class="btn small" data-op="inbox-ep">מה כתבו עליה</button></div>
+  <div class="card-body" id="ep-stats-box"><p class="help">טוענים…</p></div>
+</div>`;
+  }
+  function paintEpStats() {
+    const e = cur(), box = $('#ep-stats-box'); if (!e || !box) return;
+    const id = e.id, s = A.epStats.get(id);
+    if (!s) { fetchEpStats(id).then(() => { if (cur()?.id === id) paintEpStats(); }); return; }
+    if (s.error) { box.innerHTML = `<p class="help">${/404|לא נמצא/.test(s.error) ? 'השרת עדיין לא אוסף מספרים לכל תוכנית.' : esc(s.error)}</p>`; return; }
+    const ret = (s.retention || []).map((r) => ({ pct: Number(r.pct) || 0, n: Number(r.listeners) || 0 }));
+    const start = ret[0]?.n || 0, end = ret.at(-1)?.n || 0;
+    const likes = Number((A.stats?.likes || []).find((r) => r.id === id)?.likes) || 0;
+    const wrote = (A.comments?.comments || []).filter((c) => c.episodeId === id).length + (A.messages?.messages || []).filter((m) => m.episodeId === id).length;
+    const rmax = Math.max(1, ...ret.map((r) => r.n));
+    const stat = (n, t) => `<div class="stat"><b>${n}</b><small>${t}</small></div>`;
+    box.innerHTML = `
+<div class="stats admin-stats mini">${stat(n2(s.plays), 'האזנות')}${stat(n2(s.listeners), 'מאזינים')}${stat(start ? `${Math.round(end / start * 100)}%` : '—', 'שמעו עד הסוף')}${stat(`♥ ${n2(likes)}`, 'אהבו')}${stat(n2(wrote), 'כתבו')}</div>
+${ret.some((r) => r.n) ? `<div class="bars retention mini" role="img" aria-label="כמה מאזינים הגיעו לכל נקודה בתוכנית">${ret.map((r) => `<div class="bar" title="${r.pct}% מהתוכנית: ${n2(r.n)} מאזינים"><i style="height:${Math.round(r.n / rmax * 100)}%"></i><small>${r.pct % 25 ? '' : `${r.pct}%`}</small></div>`).join('')}</div><p class="cue-hint">כל עמודה: כמה מאזינים הגיעו לנקודה הזו. ירידה חדה = שם עוזבים.</p>` : '<p class="help">עוד אין מספיק האזנות לגרף של עד איפה שומעים.</p>'}
+${s.moments?.top?.length ? `<p class="kicker" style="margin-top:14px">הרגעים הכי אהובים — לחיצה משמיעה</p><div class="hot-list">${s.moments.top.slice(0, 6).map((t) => `<button type="button" class="pill" data-op="hear-at" data-t="${Number(t.at) || 0}">♥ ${U.fmtTime(t.at)} · ${n2(t.count)}</button>`).join('')}</div>` : ''}`;
+  }
+
+  /* ---------- פרסום של תוכנית אחת בלבד ----------
+     מפרסמים את מה שכבר באתר + התוכנית הזו. שאר השינויים נשארים בטיוטה. */
+  const epChanged = (e) => { const o = A.origin?.episodes.find((x) => x.id === e.id); return !o || JSON.stringify(o) !== JSON.stringify(S.admin.normEpisode(e, 0)); };
+  async function publishOne(e, btn) {
+    if (!CLOUD) return;
+    if (!A.origin) { U.notify('עוד לא ידוע מה מפורסם באתר. נסו שוב בעוד רגע.', 'info'); return; }
+    if (jobsBusy()) { U.notify('ממתינים לסיום העבודה — אחר כך אפשר לפרסם.', 'info'); return; }
+    if (A.publishing) return;
+    if (!epChanged(e)) { U.notify('התוכנית הזו כבר מפורסמת בדיוק כמו שהיא כאן.', 'info'); return; }
+    if (!e.title.trim()) { U.notify('לפני הפרסום צריך לתת לתוכנית שם.', 'error'); goToField('title'); return; }
+    const isPublic = (x) => x.visible && !S.scheduled(x);
+    const o = A.origin.episodes.find((x) => x.id === e.id);
+    const fresh = isPublic(e) && !(o && isPublic(o));
+    const others = detailedChanges().filter((d) => d.id !== e.id).length;
+    if (!confirm(`לפרסם עכשיו רק את "${label(e)}"?${others ? `\n\n${others === 1 ? 'שינוי אחד אחר נשאר' : `${others} שינויים אחרים נשארים`} בטיוטה ולא יתפרסמו.` : ''}${fresh && A.notify ? '\n\nמי שביקש התראות יקבל התראה על התוכנית.' : ''}`)) return;
+    const snap = clone(A.origin); delete snap.versionId;
+    const ne = clone(S.admin.normEpisode(e, 0));
+    const i = snap.episodes.findIndex((x) => x.id === e.id);
+    if (i >= 0) snap.episodes[i] = ne; else snap.episodes.unshift(ne);
+    if (ne.featured) snap.episodes.forEach((x) => { if (x.id !== ne.id) x.featured = false; });
+    if (ne.season && !snap.seasons.some((s) => s.id === ne.season)) { const sd = A.data.seasons.find((s) => s.id === ne.season); if (sd) snap.seasons.push(clone(sd)); }
+    if (btn) btn.disabled = true;
+    const stop = U.notify('מפרסמים את התוכנית…', 'progress');
+    const go = async (force) => {
+      A.publishing = true;
+      try {
+        clearTimeout(A.syncTimer); A.syncTimer = null;
+        await A.syncing;
+        if (A.conflict) { showDraftConflict(); throw new Error('קודם בחרו מה לעשות עם הטיוטה החדשה שבשרת.'); }
+        const r = await S.sb.push(snap, { removedIds: [], baseVersion: A.base ?? null, force, notify: fresh && A.notify });
+        A.origin = S.admin.normalize(snap); A.origin.versionId = r.versionId ?? null; A.base = A.origin.versionId;
+        A.originError = false; A.versions = null; A.versionCache.clear();
+        // השרת מוחק את הטיוטה המשותפת בכל פרסום — מה שנשאר בה נשמר שוב מיד
+        A.syncGen++; A.draftAt = null; A.draftBy = ''; A.syncState = '';
+        if (sameData(A.data, A.origin)) { A.unsynced = false; try { await S.sb.draft.clear(); } catch { /* */ } }
+        else { A.unsynced = true; A.overwrite = true; }
+        stop(); U.notify(`"${label(e)}" פורסמה באתר.${others ? ' שאר השינויים עדיין בטיוטה.' : ''}`, 'success');
+        paintStatus(); render();
+        if (fresh && A.notify && r.notified) drainPush().then((n) => n && U.notify(n === 1 ? 'נשלחה התראה למכשיר אחד.' : `נשלחה התראה ל־${n} מכשירים.`, 'success'));
+      } finally { A.publishing = false; if (A.unsynced) scheduleSync(0); }
+    };
+    try { await go(false); }
+    catch (err) {
+      stop();
+      if (err.conflict) {
+        const who = err.latest?.by ? ` (${err.latest.by}${err.latest.createdAt ? `, ${when(err.latest.createdAt)}` : ''})` : '';
+        showConflict(who, async () => { const s2 = U.notify('מפרסמים…', 'progress'); try { await go(true); } catch (e2) { s2(); U.notify(`הפרסום לא הצליח: ${e2.message}`, 'error'); } });
+      } else U.notify(`הפרסום לא הצליח: ${err.message}`, 'error');
+    } finally { if (btn) btn.disabled = false; }
+  }
+
+  /* ---------- תצוגה חיה: דף התוכנית כמו שייראה באתר, לצד העריכה ----------
+     הדף נטען ב־iframe מאותו אתר (episode.html?live=1) ולוקח את הטיוטה מהזיכרון של
+     הניהול — בלי שרת ובלי פרסום. כל שינוי מרענן אותו אחרי רגע. */
+  A.live = false; A.liveSize = 'phone';
+  window.RoshAdminLive = () => clone(A.data);
+  function paintLive() {
+    const pane = $('#live-pane'), ws = $('#panel .workspace'); if (!pane || !ws) return;
+    const e = cur(), on = A.live && !!e;
+    ws.classList.toggle('live', on); pane.hidden = !on;
+    if (!on) { pane.innerHTML = ''; return; }
+    const src = `episode.html?ep=${encodeURIComponent(e.slug)}&live=1`;
+    let f = $('#live-frame');
+    if (!f) {
+      pane.innerHTML = `
+<div class="card live-card">
+  <div class="live-head"><b>כך זה ייראה באתר</b><div class="segmented" role="group" aria-label="גודל המסך"><button type="button" data-op="live-size" data-size="phone" aria-pressed="${A.liveSize === 'phone'}">טלפון</button><button type="button" data-op="live-size" data-size="desktop" aria-pressed="${A.liveSize === 'desktop'}">מחשב</button></div><button type="button" class="icon-btn" data-op="live" aria-label="סגירת התצוגה החיה">✕</button></div>
+  <div class="live-stage"><iframe id="live-frame" title="תצוגה חיה של דף התוכנית" src="${esc(src)}"></iframe></div>
+  <p class="cue-hint">מתעדכן מכל שינוי. רק אתם רואים את זה — המאזינים רואים רק מה שפורסם.</p>
+</div>`;
+      f = $('#live-frame');
+      f.addEventListener('load', () => { try { const y = Number(f.dataset.y || 0); if (y) f.contentWindow.scrollTo(0, y); } catch { /* */ } });
+    } else if (f.dataset.slug !== e.slug) { f.dataset.y = '0'; f.src = src; }
+    f.dataset.slug = e.slug;
+    fitLive();
+  }
+  function refreshLive() {
+    clearTimeout(A.liveTimer);
+    if (!A.live) return;
+    A.liveTimer = setTimeout(() => {
+      const f = $('#live-frame'); if (!f) return;
+      try { f.dataset.y = String(f.contentWindow.scrollY || 0); f.contentWindow.location.reload(); } catch { f.src = f.src; }
+    }, 900);
+  }
+  function fitLive() {
+    const stage = $('.live-stage'), f = $('#live-frame'); if (!stage || !f) return;
+    const W = A.liveSize === 'phone' ? 390 : 1280, H = A.liveSize === 'phone' ? 820 : 1500;
+    const scale = Math.min(1, stage.clientWidth / W);
+    Object.assign(f.style, { width: `${W}px`, height: `${H}px`, transform: `scale(${scale})`, marginLeft: `${Math.max(0, (stage.clientWidth - W * scale) / 2)}px` });
+    stage.style.height = `${Math.round(H * scale)}px`;
+  }
+  window.addEventListener('resize', () => { if (A.live) fitLive(); });
+
+  /* ---------- ערכת שיתוף: טקסטים, תמונת סטורי וקליפ וידאו קצר ---------- */
+
+  /** התמונה של התוכנית כתמונה שאפשר לצייר על קנבס (ואם אי אפשר — העטיפה האוטומטית) */
+  async function coverBitmap(e) {
+    if (e.cover) { try { const r = await fetch(e.cover, { mode: 'cors' }); if (r.ok) return await createImageBitmap(await r.blob()); } catch { /* */ } }
+    return createImageBitmap(await drawCover(e));
+  }
+  const roundRect = (x, px, py, w, h, r) => { x.beginPath(); x.moveTo(px + r, py); x.arcTo(px + w, py, px + w, py + h, r); x.arcTo(px + w, py + h, px, py + h, r); x.arcTo(px, py + h, px, py, r); x.arcTo(px, py, px + w, py, r); x.closePath(); };
+  /** תמונת סטורי (9:16): העטיפה במרכז, השם והתאריך, וכפתור "האזינו". בקליפ — בלי הכפתור (שם יש גל קול). */
+  async function drawStory(e, { w = 1080, clip = false } = {}) {
+    try { await document.fonts.load('700 120px Karantina'); await document.fonts.load('800 30px Heebo'); } catch { /* */ }
+    const k = w / 1080, W = w, H = Math.round(1920 * k);
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d');
+    const img = await coverBitmap(e);
+    const h1 = U.hue(e);
+    const g = x.createLinearGradient(0, 0, 0, H); g.addColorStop(0, `hsl(${h1} 55% 12%)`); g.addColorStop(1, `hsl(${(h1 + 60) % 360} 50% 6%)`);
+    x.fillStyle = g; x.fillRect(0, 0, W, H);
+    // העטיפה עצמה, מטושטשת, כרקע
+    x.save(); x.filter = `blur(${Math.round(70 * k)}px) brightness(.5) saturate(1.3)`;
+    const cov = Math.max(W / img.width, H / img.height);
+    x.drawImage(img, (W - img.width * cov) / 2, (H - img.height * cov) / 2, img.width * cov, img.height * cov);
+    x.restore();
+    const shade = x.createLinearGradient(0, 0, 0, H); shade.addColorStop(0, 'rgba(0,0,0,.35)'); shade.addColorStop(.55, 'rgba(0,0,0,.1)'); shade.addColorStop(1, 'rgba(0,0,0,.75)');
+    x.fillStyle = shade; x.fillRect(0, 0, W, H);
+    x.direction = 'rtl'; x.textAlign = 'center'; x.textBaseline = 'alphabetic';
+    x.fillStyle = '#f0c65a'; x.font = `800 ${Math.round(44 * k)}px Heebo, Arial`;
+    x.fillText(`${site.name || 'ראש בראש'}${e.number != null ? `  ·  תוכנית ${e.number}` : ''}`, W / 2, 220 * k);
+    // העטיפה בריבוע עם צל ופינות מעוגלות
+    const S2 = 820 * k, sx = (W - S2) / 2, sy = 300 * k;
+    x.save(); x.shadowColor = 'rgba(0,0,0,.55)'; x.shadowBlur = 60 * k; x.shadowOffsetY = 24 * k; roundRect(x, sx, sy, S2, S2, 44 * k); x.fillStyle = '#000'; x.fill(); x.restore();
+    x.save(); roundRect(x, sx, sy, S2, S2, 44 * k); x.clip();
+    const sc = Math.max(S2 / img.width, S2 / img.height);
+    x.drawImage(img, sx + (S2 - img.width * sc) / 2, sy + (S2 - img.height * sc) / 2, img.width * sc, img.height * sc);
+    x.restore();
+    // השם
+    x.fillStyle = '#fff'; x.shadowColor = 'rgba(0,0,0,.5)'; x.shadowBlur = 20 * k;
+    let size = 150 * k; x.font = `700 ${size}px Karantina, Impact, Arial`;
+    while (size > 80 * k && wrap(x, label(e), 940 * k).length > 2) { size -= 10 * k; x.font = `700 ${size}px Karantina, Impact, Arial`; }
+    const lines = wrap(x, label(e), 940 * k).slice(0, 3);
+    const top = 1250 * k;
+    lines.forEach((ln, i) => x.fillText(ln, W / 2, top + size * .8 + i * size * .95));
+    x.shadowBlur = 0;
+    const after = top + size * .8 + (lines.length - 1) * size * .95 + 70 * k;
+    x.fillStyle = 'rgba(255,255,255,.82)'; x.font = `700 ${Math.round(40 * k)}px Heebo, Arial`;
+    x.fillText([e.date ? fmtDate(e.date) : '', e.guests.length ? `עם ${e.guests.slice(0, 2).join(' ו')}` : ''].filter(Boolean).join('  ·  '), W / 2, after);
+    if (!clip) {
+      const bw = 520 * k, bh = 110 * k, bx = (W - bw) / 2, by = 1660 * k;
+      roundRect(x, bx, by, bw, bh, bh / 2); x.fillStyle = '#f0c65a'; x.fill();
+      x.fillStyle = '#15110a'; x.font = `900 ${Math.round(46 * k)}px Heebo, Arial`; x.fillText('▶ האזינו עכשיו', W / 2, by + bh * .66);
+    }
+    x.fillStyle = 'rgba(255,255,255,.6)'; x.font = `700 ${Math.round(30 * k)}px Heebo, Arial`;
+    try { x.fillText(new URL(site.url || location.href).host, W / 2, H - 60 * k); } catch { /* */ }
+    return c;
+  }
+  const toBlob = (c, type = 'image/png', q) => new Promise((res) => c.toBlob(res, type, q));
+  const once = (el, ev, ms) => new Promise((res, rej) => {
+    const t = setTimeout(() => rej(new Error('ההקלטה לא נטענה בזמן.')), ms);
+    el.addEventListener(ev, () => { clearTimeout(t); res(); }, { once: true });
+    el.addEventListener('error', () => { clearTimeout(t); rej(new Error('ההקלטה לא נטענה ליצירת קליפ.')); }, { once: true });
+  });
+  const CLIP_TYPES = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
+  const clipType = () => (window.MediaRecorder && HTMLCanvasElement.prototype.captureStream ? CLIP_TYPES.find((t) => MediaRecorder.isTypeSupported(t)) || '' : '');
+  /** קליפ וידאו (9:16) של רגע מהתוכנית: הסטורי + גל קול שזז עם הצליל. מוקלט בזמן אמת. */
+  async function makeClip(e, start, secs, onTick) {
+    const mime = clipType();
+    if (!mime) throw new Error('הדפדפן הזה לא יודע ליצור וידאו. נסו בכרום או באדג׳ במחשב.');
+    const url = U.streamUrl(e); if (!url) throw new Error('לתוכנית הזו אין הקלטה.');
+    const base = await drawStory(e, { w: 720, clip: true });
+    const W = base.width, H = base.height;
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d');
+    const audio = new Audio(); audio.crossOrigin = 'anonymous'; audio.preload = 'auto'; audio.src = url;
+    await once(audio, 'loadedmetadata', 30000);
+    const from = Math.max(0, Math.min(start, (audio.duration || start + secs) - secs));
+    audio.currentTime = from;
+    await once(audio, 'seeked', 30000);
+    const ac = new AudioContext();
+    const an = ac.createAnalyser(); an.fftSize = 256; an.smoothingTimeConstant = .7;
+    const dest = ac.createMediaStreamDestination();
+    ac.createMediaElementSource(audio).connect(an); an.connect(dest);
+    const stream = new MediaStream([...c.captureStream(30).getVideoTracks(), ...dest.stream.getAudioTracks()]);
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 3000000, audioBitsPerSecond: 128000 });
+    const chunks = []; rec.ondataavailable = (ev) => { if (ev.data.size) chunks.push(ev.data); };
+    const stopped = new Promise((res) => { rec.onstop = res; });
+    const bins = new Uint8Array(an.frequencyBinCount);
+    let heard = 0, timer = 0;
+    const frame = () => {
+      x.drawImage(base, 0, 0);
+      an.getByteFrequencyData(bins);
+      const n = 40, span = W * .78, bw = span / n, left = (W - span) / 2, mid = H * .835, max = H * .05;
+      x.fillStyle = '#f0c65a';
+      for (let i = 0; i < n; i++) {
+        const v = bins[Math.floor(i * bins.length * .7 / n)] / 255; if (v > .04) heard++;
+        const hh = 3 + v * max; roundRect(x, left + i * bw + bw * .2, mid - hh, bw * .6, hh * 2, Math.min(bw * .3, hh));
+        x.fill();
+      }
+      const t = Math.min(1, (audio.currentTime - from) / secs);
+      x.fillStyle = 'rgba(255,255,255,.25)'; x.fillRect(left, H * .9, span, 6);
+      x.fillStyle = '#f0c65a'; x.fillRect(left + span * (1 - t), H * .9, span * t, 6);   // מימין לשמאל
+      x.fillStyle = 'rgba(255,255,255,.85)'; x.font = '800 22px Heebo, Arial'; x.textAlign = 'center';
+      x.fillText(`${U.fmtTime(audio.currentTime)} מתוך התוכנית`, W / 2, H * .9 + 40);
+      return t;
+    };
+    const finish = () => { clearInterval(timer); audio.pause(); if (rec.state !== 'inactive') rec.stop(); };
+    frame();
+    rec.start(250);
+    try { await audio.play(); } catch (err) { finish(); await stopped; ac.close(); throw new Error('לא הצלחנו להשמיע את ההקלטה ליצירת הקליפ.'); }
+    // setInterval ולא requestAnimationFrame: ממשיך גם כשהלשונית ברקע
+    timer = setInterval(() => { const t = frame(); onTick?.(t); if (t >= 1 || audio.ended) finish(); }, 1000 / 30);
+    await stopped;
+    ac.close(); audio.removeAttribute('src'); audio.load();
+    if (!heard) throw new Error('הצליל של ההקלטה לא נקלט (השרת לא אפשר לקרוא אותו). נסו שוב מאוחר יותר.');
+    return new Blob(chunks, { type: mime.split(';')[0] });
+  }
+  function socialText(e, kind) {
+    const url = U.shareUrl(e);
+    const first = (e.description || '').split(/(?<=[.!?])\s+|\n+/)[0].trim().slice(0, 220);
+    const tags = uniq(['ראש_בראש', ...e.tags.slice(0, 4).map((t) => t.replace(/[^\p{L}\p{N}]+/gu, '_'))]).map((t) => `#${t}`).join(' ');
+    if (kind === 'short') return `${label(e)} — ${site.name || 'ראש בראש'}${e.number != null ? `, תוכנית ${e.number}` : ''}. להאזנה: ${url}`;
+    return [`🎙️ ${label(e)}`, first, e.guests.length ? `עם ${e.guests.join(', ')}` : '', `להאזנה מלאה ←  ${url}`, '', tags].filter((l, i, a) => l || (i && a[i - 1])).join('\n');
+  }
+  const download = (blob, name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); };
+  const canShareFile = (f) => { try { return !!navigator.canShare?.({ files: [f] }); } catch { return false; } };
+  async function openShare(e) {
+    let d = $('#dlg-share');
+    if (!d) {
+      d = document.createElement('dialog'); d.id = 'dlg-share'; d.className = 'sheet wide'; d.setAttribute('aria-labelledby', 'dlg-share-title');
+      document.body.appendChild(d);
+      d.addEventListener('click', (ev) => { if (ev.target === d || ev.target.closest('[data-close]')) d.close(); });
+      d.addEventListener('click', shareClick);
+      d.addEventListener('change', (ev) => { if (ev.target.matches('[data-sh="clip-from"]')) d.querySelector('[data-custom]').hidden = ev.target.value !== 'custom'; });
+    }
+    A.share = { id: e.id, story: null, clip: null };
+    const hot = A.epStats.get(e.id)?.moments?.top?.[0]?.at;
+    const texts = [['whatsapp', 'לוואטסאפ', shareText(e)], ['social', 'לפייסבוק ולאינסטגרם', socialText(e, 'social')], ['short', 'קצר, לסטטוס', socialText(e, 'short')]];
+    const canClip = !!clipType() && !!U.streamUrl(e);
+    d.innerHTML = `<div class="section-title"><div><p class="kicker">ערכת שיתוף</p><h2 id="dlg-share-title">${esc(label(e))}</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+<div class="card-body share-kit">
+  <div class="share-visual">
+    <div class="story-frame"><img id="story-img" alt="תמונת סטורי של התוכנית"><span class="notice-spinner" aria-hidden="true"></span></div>
+    <div class="actions" style="margin:0"><button type="button" class="btn small gold" data-sh="story-dl" disabled>הורדת התמונה</button><button type="button" class="btn small" data-sh="story-share" hidden>שיתוף…</button></div>
+    <p class="cue-hint">גודל של סטורי (1080×1920) — לאינסטגרם, לסטטוס בוואטסאפ ולפייסבוק.</p>
+  </div>
+  <div class="share-side">
+    ${texts.map(([k, t, text]) => `<div class="share-text"><div class="share-text-head"><b>${t}</b><button type="button" class="btn small" data-sh="copy" data-text="${esc(text)}">העתקה</button></div><div class="whatsapp-text">${esc(text)}</div></div>`).join('')}
+    <div class="share-clip">
+      <p class="kicker">קליפ וידאו קצר</p>
+      ${canClip ? `<p class="help">הסטורי עם גל קול שזז לפי ההקלטה. הקליפ מוקלט בזמן אמת — השאירו את החלון פתוח עד הסוף.</p>
+      <div class="clip-opts">
+        <label class="field"><span>מאיזה רגע</span><select data-sh="clip-from">${hot != null ? `<option value="${Math.max(0, hot - 5)}">הרגע הכי אהוב (${U.fmtTime(hot)})</option>` : ''}<option value="0">מההתחלה</option><option value="custom">זמן אחר…</option></select></label>
+        <label class="field" data-custom hidden><span>זמן (דקות:שניות)</span><input data-sh="clip-at" value="0:00" class="ltr" inputmode="numeric"></label>
+        <label class="field"><span>אורך</span><select data-sh="clip-len"><option value="15">15 שניות</option><option value="30" selected>30 שניות</option><option value="60">דקה</option></select></label>
+      </div>
+      <div class="actions" style="margin:0"><button type="button" class="btn gold" data-sh="clip-make">יצירת קליפ</button><span class="upload-status" data-sh="clip-status" role="status"></span></div>
+      <div data-sh="clip-out"></div>` : `<p class="help">${U.streamUrl(e) ? 'הדפדפן הזה לא יודע ליצור וידאו. נסו בכרום או באדג׳ במחשב.' : 'לתוכנית הזו עוד אין הקלטה.'}</p>`}
+    </div>
+  </div>
+</div>`;
+    if (!d.open) d.showModal();
+    // הרגע הכי אהוב (אם עוד לא נטען) — נוסף לבחירה כשהוא מגיע
+    if (hot == null && CLOUD) fetchEpStats(e.id).then((st) => {
+      const at = st?.moments?.top?.[0]?.at, sel = $('[data-sh="clip-from"]', d);
+      if (at == null || !sel || A.share?.id !== e.id || sel.querySelector('[data-hot]')) return;
+      sel.insertAdjacentHTML('afterbegin', `<option value="${Math.max(0, at - 5)}" data-hot>הרגע הכי אהוב (${U.fmtTime(at)})</option>`);
+      sel.value = String(Math.max(0, at - 5));
+    }).catch(() => {});
+    try {
+      const blob = await toBlob(await drawStory(e), 'image/jpeg', .9);
+      if (A.share?.id !== e.id) return;
+      A.share.story = new File([blob], `story-${e.slug || e.id}.jpg`, { type: 'image/jpeg' });
+      const img = $('#story-img', d); img.src = URL.createObjectURL(blob); img.closest('.story-frame').classList.add('ready');
+      $('[data-sh="story-dl"]', d).disabled = false;
+      $('[data-sh="story-share"]', d).hidden = !canShareFile(A.share.story);
+    } catch (err) { $('.story-frame', d).innerHTML = `<p class="problems">התמונה לא נוצרה: ${esc(err.message)}</p>`; }
+  }
+  async function shareClick(ev) {
+    const b = ev.target.closest('[data-sh]'); const d = $('#dlg-share'); const sh = A.share; if (!b || !sh || b.tagName === 'SELECT' || b.tagName === 'INPUT') return;
+    const e = liveEp(sh.id); if (!e) return;
+    const k = b.dataset.sh;
+    if (k === 'copy') { (await U.copy(b.dataset.text)) ? U.notify('הועתק.', 'success') : U.notify('ההעתקה לא הצליחה.', 'error'); return; }
+    if (k === 'story-dl' && sh.story) download(sh.story, sh.story.name);
+    if (k === 'story-share' && sh.story) { try { await navigator.share({ files: [sh.story], text: socialText(e, 'short') }); } catch { /* בוטל */ } }
+    if (k === 'clip-dl' && sh.clip) download(sh.clip, sh.clip.name);
+    if (k === 'clip-share' && sh.clip) { try { await navigator.share({ files: [sh.clip], text: socialText(e, 'short') }); } catch { /* */ } }
+    if (k === 'clip-make') {
+      const sel = $('[data-sh="clip-from"]', d).value;
+      const start = sel === 'custom' ? (U.parseTime($('[data-sh="clip-at"]', d).value) || 0) : Number(sel) || 0;
+      const secs = Number($('[data-sh="clip-len"]', d).value) || 30;
+      const status = $('[data-sh="clip-status"]', d), out = $('[data-sh="clip-out"]', d);
+      b.disabled = true; out.innerHTML = ''; status.textContent = 'מכינים…';
+      try {
+        const blob = await makeClip(e, start, secs, (t) => { status.textContent = `מקליטים… ${Math.round(t * 100)}%`; });
+        const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+        sh.clip = new File([blob], `clip-${e.slug || e.id}.${ext}`, { type: blob.type });
+        status.textContent = '✓ הקליפ מוכן';
+        out.innerHTML = `<video class="clip-video" controls playsinline src="${URL.createObjectURL(blob)}"></video><div class="actions" style="margin:0"><button type="button" class="btn small gold" data-sh="clip-dl">הורדת הקליפ</button>${canShareFile(sh.clip) ? '<button type="button" class="btn small" data-sh="clip-share">שיתוף…</button>' : ''}</div>${ext === 'webm' ? '<p class="cue-hint">הקובץ בפורמט WebM. וואטסאפ ואינסטגרם בטלפון מעדיפים MP4 — אם לא עולה, העבירו אותו דרך ממיר.</p>' : ''}`;
+      } catch (err) { status.textContent = err.message; }
+      b.disabled = false;
+    }
   }
 
   /* ---------- תמונה אוטומטית: עטיפה בסגנון האתר על קנבס ---------- */
@@ -1073,15 +1565,17 @@ ${st.transcript != null ? `<details class="ai-transcript" open><summary>התמל
     const ups = A.data.settings.updates || [];
     $('#panel').innerHTML = `
 <div class="card">
-  <div class="section-title"><div><p class="kicker">הודעה</p><h2>הודעה בראש האתר</h2></div><span class="toggle${b.enabled ? ' on' : ''}" aria-hidden="true">${b.enabled ? 'מוצגת' : 'כבויה'}</span></div>
+  <div class="section-title"><div><p class="kicker">הודעה</p><h2>הודעה בראש האתר</h2></div><span class="toggle${b.enabled ? ' on' : ''}" aria-hidden="true">${!b.enabled ? 'כבויה' : b.from && b.from > S.todayIL() ? 'מתוזמנת' : 'מוצגת'}</span></div>
   <div class="card-body">
     <p class="help">פס הודעה שמופיע בראש כל הדפים — למשל "התוכנית הבאה ביום חמישי" או ברכה לחג. נעלם לבד בתאריך שתבחרו.</p>
     <div class="form-grid">
       <label class="field span2"><span>ההודעה</span><input data-sf="text" value="${esc(b.text || '')}" maxlength="300" placeholder="למשל: התוכנית הבאה — יום חמישי ב־20:00"></label>
       <label class="field"><span>קישור (לא חובה)</span><input data-sf="link" value="${esc(b.link || '')}" placeholder="https://… או episode.html?ep=…" class="ltr"></label>
       <label class="field"><span>טקסט הכפתור</span><input data-sf="linkLabel" value="${esc(b.linkLabel || '')}" placeholder="לפרטים"></label>
+      <label class="field"><span>להתחיל להציג ב־ (לא חובה)</span><input data-sf="from" type="date" value="${esc(b.from || '')}"><small>ריק = מיד אחרי הפרסום. כך אפשר להכין ברכה לחג מראש.</small></label>
       <label class="field"><span>להציג עד (לא חובה)</span><input data-sf="until" type="date" value="${esc(b.until || '')}"></label>
     </div>
+    ${b.enabled && b.text && b.from && b.from > S.todayIL() ? `<p class="cue-hint banner-when">🕒 ההודעה תופיע באתר ב־${esc(fmtDate(b.from))}${b.until ? ` ותרד אחרי ${esc(fmtDate(b.until))}` : ''}.</p>` : ''}
     <div class="switches"><button type="button" class="toggle${b.enabled ? ' on' : ''}" data-op="banner-toggle" aria-pressed="${!!b.enabled}">${b.enabled ? '✓ ההודעה מוצגת' : 'להציג את ההודעה'}</button></div>
     <div class="banner-sites"><span class="cue-hint">איפה להציג:</span><label class="check"><input type="checkbox" data-bs="program" ${b.sites?.program !== false ? 'checked' : ''}> באתר התוכניות</label><label class="check"><input type="checkbox" data-bs="survey" ${b.sites?.survey ? 'checked' : ''}> באתר הסקר</label></div>
     ${b.enabled && b.text ? `<div class="banner-preview"><span class="kicker">כך זה נראה</span><div class="site-banner"><span class="site-banner-mark">✦</span><p>${esc(b.text)}</p>${b.link ? `<span class="btn small">${esc(b.linkLabel || 'לפרטים')} <span>←</span></span>` : ''}</div></div>` : ''}
@@ -1161,6 +1655,7 @@ ${st.transcript != null ? `<details class="ai-transcript" open><summary>התמל
     const badge = $('#tab-unread'); const unread = (A.messages?.unread || 0) + (A.comments?.pending || 0);
     badge.hidden = !unread; badge.textContent = unread;
     if (A.tab === 'listeners') renderListeners();
+    paintDash(); paintEpStats();
   }
   /* ---------- סטטיסטיקה מעמיקה: מאיפה מגיעים, מתי מאזינים, מה אוהבים, ועד איפה שומעים ---------- */
   const SOURCE_NAMES = { whatsapp: 'וואטסאפ', google: 'גוגל', facebook: 'פייסבוק', direct: 'ישיר (קישור או כתובת)', internal: 'מתוך האתר', other: 'אחר' };
@@ -1208,70 +1703,152 @@ ${st.transcript != null ? `<details class="ai-transcript" open><summary>התמל
     A.statsEp = id; if (!id) { renderListeners(); return; }
     if (!A.epStats.has(id)) {
       renderListeners();
-      const [st, mo] = await Promise.allSettled([S.sb.call(`/api/program/stats/episode/${encodeURIComponent(id)}`), S.sb.call(`/api/program/moments/${encodeURIComponent(id)}`)]);
-      A.epStats.set(id, { ...(st.status === 'fulfilled' ? st.value : { error: st.reason?.message }), moments: mo.status === 'fulfilled' ? mo.value : null });
+      await fetchEpStats(id);
     }
     if (A.tab === 'listeners') renderListeners();
   }
-  /* ---------- תגובות המאזינים: אישור, תשובה של המגישים, תגובה נבחרת ---------- */
-  A.commentFilter = 'pending';
-  const COMMENT_TABS = [['pending', 'ממתינות'], ['approved', 'מוצגות'], ['hidden', 'מוסתרות'], ['all', 'הכול']];
-  const commentCount = (st) => (A.comments?.comments || []).filter((c) => c.status === st).length;
-  const commentTabText = (k, t) => `${t}${k !== 'all' ? ` (${commentCount(k)})` : ''}`;
+  /* ---------- תיבת הדואר: הודעות ("כתבו לנו") ותגובות מדפי התוכניות, במקום אחד ----------
+     סינון (צריך טיפול / הודעות / תגובות / הכול, ולפי תוכנית), תשובות מוכנות, ופעולה
+     על כמה פריטים יחד. פעולה על פריט מעדכנת רק אותו (ואת המונים) — תשובות שמוקלדות
+     בפריטים אחרים לא נמחקות. */
+  A.inboxFilter = 'todo'; A.inboxEp = ''; A.inboxPicked = new Set();
+  const INBOX_TABS = [['todo', 'צריך טיפול'], ['messages', 'הודעות'], ['comments', 'תגובות'], ['all', 'הכול']];
+  const REPLIES_KEY = 'rosh:admin:replies';
+  const DEFAULT_REPLIES = ['תודה רבה! שמחים שנהניתם 🙏', 'תודה על ההערה — נבדוק ונתקן.', 'תודה! הבקשה נרשמה, ונשתדל להשמיע אותה בתוכנית הבאה.'];
+  function replies() { try { const v = JSON.parse(localStorage.getItem(REPLIES_KEY) || 'null'); return Array.isArray(v) && v.length ? v : DEFAULT_REPLIES; } catch { return DEFAULT_REPLIES; } }
+  const secs = (v) => (typeof v === 'number' ? v : (Date.parse(v) / 1000) || 0);
+  const epName = (id) => { const e = A.data.episodes.find((x) => x.id === id); return e ? label(e) : 'תוכנית שנמחקה'; };
+  function inboxItems() {
+    const ms = (A.messages?.messages || []).map((m) => ({ kind: 'msg', id: m.id, at: secs(m.createdAt), ep: m.episodeId || '', todo: !m.readAt, m }));
+    const cs = (A.comments?.comments || []).map((c) => ({ kind: 'com', id: c.id, at: secs(c.createdAt), ep: c.episodeId || '', todo: c.status === 'pending', c }));
+    return [...ms, ...cs].sort((a, b) => b.at - a.at);
+  }
+  const inboxMatch = (it, f = A.inboxFilter) => (!A.inboxEp || it.ep === A.inboxEp) && (f === 'all' || (f === 'todo' ? it.todo : f === 'messages' ? it.kind === 'msg' : it.kind === 'com'));
+  const inboxTabText = (k, t) => { const n = inboxItems().filter((it) => inboxMatch(it, k)).length; return `${t}${k === 'all' ? '' : ` (${n})`}`; };
+  const pickKey = (it) => `${it.kind}:${it.id}`;
+  const COMMENT_STATES = { pending: 'ממתינה לאישור', approved: 'מוצגת באתר', hidden: 'מוסתרת' };
   function commentItem(c) {
-    const epName = (id) => { const e = A.data.episodes.find((x) => x.id === id); return e ? label(e) : 'תוכנית שנמחקה'; };
+    const it = { kind: 'com', id: c.id };
     return `
-      <li class="mod ${c.status}" data-id="${esc(c.id)}">
-        <div class="mod-head"><b>${esc(c.name || 'מאזין')}</b>${c.email ? `<small class="ltr">${esc(c.email)}</small>` : ''}<small>על "${esc(epName(c.episodeId))}"${c.at != null ? ` · ברגע ${U.fmtTime(c.at)}` : ''} · ${esc(when(c.createdAt))}</small>${c.pinned ? '<span class="pill gold">★ נבחרת</span>' : ''}</div>
+      <li class="inbox-item mod ${c.status}" data-kind="com" data-id="${esc(c.id)}">
+        <label class="pick"><input type="checkbox" data-inbox-pick="${esc(pickKey(it))}" ${A.inboxPicked.has(pickKey(it)) ? 'checked' : ''} aria-label="בחירה"></label>
+        <div class="inbox-body">
+        <div class="mod-head"><span class="kind">תגובה</span><b>${esc(c.name || 'מאזין')}</b>${c.email ? `<small class="ltr">${esc(c.email)}</small>` : ''}<small>על "${esc(epName(c.episodeId))}"${c.at != null ? ` · ברגע ${U.fmtTime(c.at)}` : ''} · ${esc(when(c.createdAt))}</small><span class="pill st-${c.status}">${COMMENT_STATES[c.status] || c.status}</span>${c.pinned ? '<span class="pill gold">★ נבחרת</span>' : ''}</div>
         <p>${esc(c.text)}</p>
         <label class="field"><span>תשובת המגישים (לא חובה)</span><textarea data-reply-for="${esc(c.id)}" maxlength="1000" placeholder="תשובה שתופיע מתחת לתגובה">${esc(c.reply || '')}</textarea></label>
+        <div class="tpl-chips"><span class="cue-hint">תשובה מוכנה:</span>${replies().map((r, i) => `<button type="button" class="chip" data-op="reply-tpl" data-id="${esc(c.id)}" data-i="${i}" title="${esc(r)}">${esc(r.length > 26 ? `${r.slice(0, 24)}…` : r)}</button>`).join('')}</div>
         <div class="mod-ops">
           ${c.status !== 'approved' ? `<button type="button" class="btn small primary" data-op="comment-status" data-id="${esc(c.id)}" data-st="approved">✓ אישור והצגה</button>` : ''}
           ${c.status !== 'hidden' ? `<button type="button" class="btn small" data-op="comment-status" data-id="${esc(c.id)}" data-st="hidden">הסתרה</button>` : ''}
           <button type="button" class="btn small" data-op="comment-pin" data-id="${esc(c.id)}">${c.pinned ? 'ביטול "נבחרת"' : '★ תגובה נבחרת'}</button>
           <button type="button" class="btn small" data-op="comment-reply" data-id="${esc(c.id)}">שמירת התשובה</button>
           <button type="button" class="btn small danger" data-op="comment-del" data-id="${esc(c.id)}">מחיקה</button>
+        </div></div>
+      </li>`;
+  }
+  function messageItem(m) {
+    const it = { kind: 'msg', id: m.id };
+    const mail = (body) => `mailto:${encodeURIComponent(m.email)}?subject=${encodeURIComponent(`תשובה מ${site.name || 'ראש בראש'}`)}${body ? `&body=${encodeURIComponent(body)}` : ''}`;
+    return `
+      <li class="inbox-item msg${m.readAt ? '' : ' unread'}" data-kind="msg" data-id="${esc(m.id)}">
+        <label class="pick"><input type="checkbox" data-inbox-pick="${esc(pickKey(it))}" ${A.inboxPicked.has(pickKey(it)) ? 'checked' : ''} aria-label="בחירה"></label>
+        <div class="inbox-body">
+        <div class="msg-head"><span class="kind">הודעה</span><b>${esc(m.name || 'מאזין/ה')}</b>${m.email ? `<a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : ''}<small>${esc(when(m.createdAt))}${m.episodeId ? ` · על "${esc(epName(m.episodeId))}"` : ''}</small></div>
+        <p>${esc(m.text)}</p>
+        <div class="msg-ops"><button type="button" class="btn small" data-op="msg-read" data-id="${esc(m.id)}" data-read="${m.readAt ? '0' : '1'}">${m.readAt ? 'סימון כלא נקרא' : '✓ נקרא'}</button>${m.email ? `<details class="reply-menu"><summary class="btn small">תשובה במייל ▾</summary><div class="reply-menu-list"><a href="${esc(mail(''))}">מייל ריק</a>${replies().map((r) => `<a href="${esc(mail(r))}">${esc(r)}</a>`).join('')}</div></details>` : ''}<button type="button" class="btn small danger" data-op="msg-del" data-id="${esc(m.id)}">מחיקה</button></div>
         </div>
       </li>`;
   }
-  function commentsCard() {
-    const cs = A.comments;
-    if (!cs) return '<div class="card"><div class="card-body"><p class="help">טוענים את התגובות…</p></div></div>';
-    const list = (cs.comments || []).filter((c) => A.commentFilter === 'all' || c.status === A.commentFilter);
+  const itemHtml = (it) => (it.kind === 'msg' ? messageItem(it.m) : commentItem(it.c));
+  function inboxBulk() {
+    const n = A.inboxPicked.size;
+    if (!n) return '';
+    const kinds = [...A.inboxPicked].map((k) => k.split(':')[0]);
+    return `<span class="cue-hint">${n === 1 ? 'נבחר פריט אחד' : `נבחרו ${n} פריטים`}</span>
+<div class="bulk-actions">${kinds.includes('msg') ? '<button type="button" class="btn small" data-op="inbox-bulk" data-do="read">✓ סימון כנקרא</button>' : ''}${kinds.includes('com') ? '<button type="button" class="btn small primary" data-op="inbox-bulk" data-do="approved">✓ אישור והצגה</button><button type="button" class="btn small" data-op="inbox-bulk" data-do="hidden">הסתרה</button>' : ''}<button type="button" class="btn small danger" data-op="inbox-bulk" data-do="delete">מחיקה</button><button type="button" class="btn small" data-op="inbox-unpick">ניקוי הבחירה</button></div>`;
+  }
+  function inboxCard() {
+    const ms = A.messages, cs = A.comments;
+    if (!ms && !cs) return '<div class="card" id="inbox-card"><div class="card-body"><p class="help">טוענים את ההודעות והתגובות…</p></div></div>';
+    const notReady = (o) => o?.error && /404|לא נמצא|לא עודכן/.test(o.error);
+    const errs = [ms?.error && (notReady(ms) ? 'השרת עדיין לא עודכן לגרסה שמקבלת הודעות מהמאזינים.' : ms.error), cs?.error].filter(Boolean);
+    const all = inboxItems(), list = all.filter((it) => inboxMatch(it));
+    const todo = all.filter((it) => it.todo).length;
+    const eps = [...new Set(all.map((it) => it.ep).filter(Boolean))];
     return `
-<div class="card" id="comments-card">
-  <div class="section-title"><div><p class="kicker">תגובות באתר</p><h2>מה המאזינים כותבים בדפי התוכניות</h2></div><strong data-comments-pending ${cs.pending ? '' : 'hidden'}>${cs.pending || ''}</strong></div>
+<div class="card" id="inbox-card">
+  <div class="section-title"><div><p class="kicker">תיבת הדואר</p><h2>מה המאזינים כותבים</h2></div><strong data-inbox-todo ${todo ? '' : 'hidden'}>${todo || ''}</strong></div>
   <div class="card-body">
-    <p class="help">תגובה מופיעה באתר רק אחרי שאישרתם אותה. אפשר לענות בשם המגישים, ולסמן "תגובה נבחרת" שתופיע ראשונה. תגובה על רגע בתוכנית מופיעה גם כסימן על פס ההתקדמות.</p>
-    ${cs.error ? `<p class="problems">${esc(cs.error)}</p>` : ''}
-    <div class="segmented" role="group" aria-label="סינון תגובות">${COMMENT_TABS.map(([k, t]) => `<button type="button" data-op="comments-filter" data-f2="${k}" aria-pressed="${A.commentFilter === k}">${commentTabText(k, t)}</button>`).join('')}</div>
-    ${list.length ? `<ul class="mod-list">${list.map(commentItem).join('')}</ul>` : `<p class="help">${A.commentFilter === 'pending' ? '✓ אין תגובות שממתינות לאישור.' : 'אין תגובות כאן.'}</p>`}
+    <p class="help">הודעות מ"כתבו לנו" ותגובות מדפי התוכניות, במקום אחד. תגובה מופיעה באתר רק אחרי שאישרתם אותה; אפשר לענות בשם המגישים ולסמן "תגובה נבחרת" שתופיע ראשונה.</p>
+    ${errs.map((x) => `<p class="problems">${esc(x)}</p>`).join('')}
+    <div class="inbox-bar">
+      <div class="segmented" role="group" aria-label="סינון">${INBOX_TABS.map(([k, t]) => `<button type="button" data-op="inbox-filter" data-inbox="${k}" aria-pressed="${A.inboxFilter === k}">${inboxTabText(k, t)}</button>`).join('')}</div>
+      ${eps.length ? `<label class="visually-hidden" for="inbox-ep">לפי תוכנית</label><select id="inbox-ep" class="input small-select"><option value="">כל התוכניות</option>${eps.map((id) => `<option value="${esc(id)}" ${A.inboxEp === id ? 'selected' : ''}>${esc(epName(id))}</option>`).join('')}</select>` : ''}
+    </div>
+    <div class="bulk-bar inbox-bulk" data-inbox-bulk ${A.inboxPicked.size ? '' : 'hidden'}>${inboxBulk()}</div>
+    ${list.length ? `<ul class="inbox-list">${list.map(itemHtml).join('')}</ul>` : `<div class="state" style="padding:20px"><p>${A.inboxFilter === 'todo' ? '✓ אין שום דבר שמחכה לטיפול.' : all.length ? 'אין כאן כלום בסינון הזה.' : 'עדיין לא הגיעו הודעות. המאזינים כותבים דרך "כתבו לנו" ובדפי התוכניות.'}</p></div>`}
+    <details class="tpl-edit"><summary>התשובות המוכנות</summary><p class="help">כל שורה היא תשובה מוכנה. נשמרות במכשיר הזה.</p><textarea data-replies rows="4">${esc(replies().join('\n'))}</textarea><div class="actions" style="margin:8px 0 0"><button type="button" class="btn small" data-op="replies-save">שמירה</button></div></details>
   </div>
 </div>`;
   }
-  /** פעולה על תגובה. מחזיר true כשהשרת קיבל. מתעדכנת רק השורה של התגובה (ולא כל החלק),
-      כדי שתשובות שמוקלדות בתגובות אחרות לא יימחקו. */
-  async function moderate(id, body) {
+  /** מעדכנים את תיבת הדואר במקום (בלי לצייר את כל החלק), ואת התג בלשונית */
+  function paintInbox() { const card = $('#inbox-card'); if (card) card.outerHTML = inboxCard(); loadListenersBadge(); }
+  function paintInboxCounts() {
+    const card = $('#inbox-card'); if (!card) return;
+    INBOX_TABS.forEach(([k, t]) => { const b = card.querySelector(`[data-op="inbox-filter"][data-inbox="${k}"]`); if (b) b.textContent = inboxTabText(k, t); });
+    const todo = inboxItems().filter((it) => it.todo).length, el = card.querySelector('[data-inbox-todo]');
+    if (el) { el.hidden = !todo; el.textContent = todo || ''; }
+    const bulk = card.querySelector('[data-inbox-bulk]'); if (bulk) { bulk.hidden = !A.inboxPicked.size; bulk.innerHTML = inboxBulk(); }
+    loadListenersBadge();
+  }
+  function repaintItem(kind, id) {
+    const li = P.querySelector(`.inbox-item[data-kind="${kind}"][data-id="${CSS.escape(id)}"]`);
+    const it = inboxItems().find((x) => x.kind === kind && x.id === id);
+    if (li && it) {
+      const typed = li.querySelector('textarea[data-reply-for]')?.value;
+      li.outerHTML = itemHtml(it);
+      if (typed != null) { const ta = P.querySelector(`[data-reply-for="${CSS.escape(id)}"]`); if (ta && ta.value !== typed && it.kind === 'com' && (it.c.reply || '') !== typed) ta.value = typed; }
+    } else if (li) li.remove();
+    paintInboxCounts();
+  }
+  /** פעולה על תגובה. מחזיר true כשהשרת קיבל. */
+  async function moderate(id, body, { quiet = false } = {}) {
     try {
       const r = await S.sb.call('/api/program/comments/moderate', { method: 'POST', body: { id, ...body } });
       const list = A.comments?.comments || []; const i = list.findIndex((c) => c.id === id);
       if (i >= 0 && r.comment) list[i] = r.comment;
       A.comments.pending = list.filter((c) => c.status === 'pending').length;
-      const li = P.querySelector(`.mod[data-id="${CSS.escape(id)}"]`);
-      if (li && i >= 0) {
-        const typed = li.querySelector('textarea[data-reply-for]')?.value;
-        li.outerHTML = commentItem(list[i]);
-        const ta = P.querySelector(`[data-reply-for="${CSS.escape(id)}"]`);
-        if (ta && !('reply' in body) && typed != null) ta.value = typed;   // תשובה שהוקלדה ועוד לא נשמרה נשארת
-      }
-      const card = $('#comments-card');
-      if (card) {
-        const pend = card.querySelector('[data-comments-pending]'); if (pend) { pend.hidden = !A.comments.pending; pend.textContent = A.comments.pending || ''; }
-        COMMENT_TABS.forEach(([k, t]) => { const b = card.querySelector(`[data-op="comments-filter"][data-f2="${k}"]`); if (b) b.textContent = commentTabText(k, t); });
-      }
-      loadListenersBadge();
+      if (!quiet) repaintItem('com', id);
       return true;
-    } catch (err) { U.notify(err.message, 'error'); return false; }
+    } catch (err) { if (!quiet) U.notify(err.message, 'error'); return false; }
+  }
+  async function readMessage(id, read, { quiet = false } = {}) {
+    await S.sb.messages.read(id, read);
+    const m = (A.messages?.messages || []).find((x) => x.id === id);
+    if (m) m.readAt = read ? Math.floor(Date.now() / 1000) : null;
+    A.messages.unread = (A.messages.messages || []).filter((x) => !x.readAt).length;
+    if (!quiet) repaintItem('msg', id);
+  }
+  async function deleteItem(kind, id) {
+    if (kind === 'msg') { await S.sb.messages.remove(id); A.messages.messages = A.messages.messages.filter((m) => m.id !== id); A.messages.unread = A.messages.messages.filter((x) => !x.readAt).length; }
+    else { await S.sb.call('/api/program/comments', { method: 'DELETE', body: { id } }); A.comments.comments = A.comments.comments.filter((c) => c.id !== id); A.comments.pending = A.comments.comments.filter((c) => c.status === 'pending').length; }
+    A.inboxPicked.delete(`${kind}:${id}`);
+  }
+  async function inboxBulkDo(what) {
+    const picked = [...A.inboxPicked].map((k) => { const [kind, ...rest] = k.split(':'); return { kind, id: rest.join(':') }; });
+    if (what === 'delete' && !confirm(picked.length === 1 ? 'למחוק את הפריט לתמיד?' : `למחוק ${picked.length} פריטים לתמיד?`)) return;
+    let ok = 0, failed = 0;
+    for (const { kind, id } of picked) {
+      try {
+        if (what === 'delete') await deleteItem(kind, id);
+        else if (what === 'read' && kind === 'msg') await readMessage(id, true, { quiet: true });
+        else if ((what === 'approved' || what === 'hidden') && kind === 'com') { if (!await moderate(id, { status: what }, { quiet: true })) throw new Error(); }
+        else continue;
+        ok++;
+      } catch { failed++; }
+    }
+    A.inboxPicked.clear(); paintInbox();
+    U.notify(`${ok === 1 ? 'פריט אחד עודכן' : `${ok} פריטים עודכנו`}${failed ? ` · ${failed} נכשלו` : ''}.`, failed ? 'info' : 'success');
   }
   function loadListenersBadge() { const badge = $('#tab-unread'); const n = (A.messages?.unread || 0) + (A.comments?.pending || 0); badge.hidden = !n; badge.textContent = n; }
   function pushCard() {
@@ -1293,7 +1870,7 @@ ${st.transcript != null ? `<details class="ai-transcript" open><summary>התמל
   }
   function renderListeners() {
     if (!CLOUD) { $('#panel').innerHTML = '<div class="card"><div class="state"><span class="mark">☺</span><h3>המאזינים</h3><p>הסטטיסטיקות וההודעות עובדות רק כשהאתר מחובר לשרת.</p></div></div>'; return; }
-    const st = A.stats, ms = A.messages;
+    const st = A.stats;
     const notReady = (o) => o?.error && /404|לא נמצא/.test(o.error);
     const epName = (id) => { const e = A.data.episodes.find((x) => x.id === id); return e ? label(e) : 'תוכנית שנמחקה'; };
     const days = st?.days || [];
@@ -1314,22 +1891,12 @@ ${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי י
 </div>
 <p class="cue-hint" style="margin-top:12px">מכשירים ב־30 הימים האחרונים: טלפון ${n2(st.devices?.phone)} · מחשב ${n2(st.devices?.desktop)}. הספירה אנונימית — בלי שמות ובלי כתובות.</p>
 ${deepStats(st)}`;
-    const msgsHtml = !ms ? '<p class="help">טוענים…</p>' : notReady(ms) ? '<p class="problems">השרת עדיין לא עודכן לגרסה שמקבלת הודעות מהמאזינים.</p>' : ms.error ? `<p class="problems">${esc(ms.error)}</p>` : (ms.messages || []).length ? `<div class="msg-list">${ms.messages.map((m) => `
-<div class="msg${m.readAt ? '' : ' unread'}" data-id="${esc(m.id)}">
-  <div class="msg-head"><b>${esc(m.name || 'מאזין/ה')}</b>${m.email ? `<a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : ''}<small>${esc(when(m.createdAt))}${m.episodeId ? ` · על "${esc(epName(m.episodeId))}"` : ''}</small></div>
-  <p>${esc(m.text)}</p>
-  <div class="msg-ops"><button type="button" class="btn small" data-op="msg-read" data-id="${esc(m.id)}" data-read="${m.readAt ? '0' : '1'}">${m.readAt ? 'סימון כלא נקרא' : '✓ נקרא'}</button>${m.email ? `<a class="btn small" href="mailto:${esc(m.email)}?subject=${encodeURIComponent('תשובה מראש בראש')}">תשובה במייל</a>` : ''}<button type="button" class="btn small danger" data-op="msg-del" data-id="${esc(m.id)}">מחיקה</button></div>
-</div>`).join('')}</div>` : '<div class="state" style="padding:20px"><p>עדיין לא הגיעו הודעות. המאזינים כותבים דרך "כתבו לנו" בדף הבית ובדפי התוכניות.</p></div>';
     $('#panel').innerHTML = `
+${inboxCard()}
 <div class="card">
   <div class="section-title"><div><p class="kicker">מספרים</p><h2>מי מאזין</h2></div><button type="button" class="btn small" data-op="reload-listeners">רענון</button></div>
   <div class="card-body">${statsHtml}</div>
 </div>
-<div class="card">
-  <div class="section-title"><div><p class="kicker">הודעות</p><h2>מה המאזינים כותבים</h2></div>${ms?.unread ? `<strong>${ms.unread}</strong>` : ''}</div>
-  <div class="card-body">${msgsHtml}</div>
-</div>
-${commentsCard()}
 ${pushCard()}
 <div class="card">
   <div class="section-title"><div><p class="kicker">רשימת התפוצה</p><h2>נשארים בראש</h2></div>${A.subs ? `<strong>${n2(A.subs.active)}</strong>` : ''}</div>
@@ -1411,7 +1978,7 @@ ${proofCard()}
   <div class="section-title"><div><p class="kicker">גיבוי אוטומטי</p><h2>גרסאות קודמות</h2></div><button type="button" class="btn small" data-op="versions" ${CLOUD ? '' : 'disabled'}>${A.versions ? 'רענון' : 'הצגת הגרסאות'}</button></div>
   <div class="card-body">
     <p class="help">כל פרסום נשמר אוטומטית כגרסה. אם משהו השתבש, בוחרים גרסה, לוחצים "שחזור" — והכול חוזר לטיוטה כפי שהיה. אחר כך לוחצים פרסום.${CLOUD ? ' הגיבוי המלא של שני האתרים יחד (הסקר והתוכניות) נמצא בניהול הסקר, בלשונית "ארכיון וגיבויים".' : ''}</p>
-    ${!CLOUD ? '<p class="cue-hint">עובד רק כשהאתר מחובר לשרת.</p>' : A.versions === null ? '' : A.versions.length ? `<div class="version-list">${A.versions.map((v, i) => `<div class="version"><div><b>${esc(when(v.createdAt))}${i === 0 ? ' <span class="pill gold">הגרסה שבאתר</span>' : ''}</b><small>${n2(v.episodes)} תוכניות${v.by ? ` · פורסם על ידי ${esc(v.by)}` : ''}</small></div><button type="button" class="btn small" data-op="restore-version" data-id="${esc(v.id)}">שחזור</button></div>`).join('')}</div>` : '<p class="help">עדיין אין גרסאות שמורות — הראשונה תישמר בפרסום הבא.</p>'}
+    ${!CLOUD ? '<p class="cue-hint">עובד רק כשהאתר מחובר לשרת.</p>' : A.versions === null ? '' : A.versions.length ? `${compareRow()}<div class="version-list">${A.versions.map((v, i) => `<div class="version"><div><b>${esc(when(v.createdAt))}${i === 0 ? ' <span class="pill gold">הגרסה שבאתר</span>' : ''}</b><small>${n2(v.episodes)} תוכניות${v.by ? ` · פורסם על ידי ${esc(v.by)}` : ''}</small></div>${A.versions[i + 1] ? `<button type="button" class="btn small" data-op="version-diff" data-from="${esc(A.versions[i + 1].id)}" data-to="${esc(v.id)}">מה השתנה בו</button>` : ''}<button type="button" class="btn small" data-op="restore-version" data-id="${esc(v.id)}">שחזור</button></div>`).join('')}</div>` : '<p class="help">עדיין אין גרסאות שמורות — הראשונה תישמר בפרסום הבא.</p>'}
   </div>
 </div>
 
@@ -1426,6 +1993,36 @@ ${proofCard()}
     <div class="tool"><div><b>החשבון</b><small>${u ? `מחוברים כ־${esc(u.email || u.name || '')}` : 'לא מחוברים'}</small></div>${u ? '<button type="button" class="btn small" data-op="logout">התנתקות</button>' : ''}</div>
   </div>
 </details>`;
+  }
+  /* ---------- השוואת גרסאות: מה ההבדל בין שתי גרסאות (או בין גרסה לטיוטה) ---------- */
+  function compareRow() {
+    const vs = A.versions || [];
+    const opt = (id, text, sel) => `<option value="${esc(id)}" ${sel ? 'selected' : ''}>${esc(text)}</option>`;
+    const list = (sel) => vs.map((v, i) => opt(v.id, `${when(v.createdAt)}${i === 0 ? ' (באתר עכשיו)' : ''}`, v.id === sel)).join('') + opt('draft', 'הטיוטה שלכם עכשיו', sel === 'draft');
+    const a = vs[1]?.id || vs[0]?.id, b = vs[1] ? vs[0].id : 'draft';
+    return `<div class="compare-row"><span class="cue-hint">השוואה בין</span><label class="visually-hidden" for="cmp-from">הגרסה הישנה</label><select id="cmp-from" class="input small-select">${list(a)}</select><span class="cue-hint">לבין</span><label class="visually-hidden" for="cmp-to">הגרסה החדשה</label><select id="cmp-to" class="input small-select">${list(b)}</select><button type="button" class="btn small gold" data-op="compare">השוואה</button></div>`;
+  }
+  const versionTitle = (id) => (id === 'draft' ? 'הטיוטה שלכם' : (() => { const v = A.versions?.find((x) => x.id === id); return v ? when(v.createdAt) : 'גרסה'; })());
+  async function compareVersions(fromId, toId) {
+    if (fromId === toId) { U.notify('בחרו שתי גרסאות שונות.', 'info'); return; }
+    const stop = U.notify('משווים…', 'progress');
+    try {
+      const dataOf = async (id) => (id === 'draft' ? A.data : (await versionData(id)).data);
+      const items = diffData(await dataOf(fromId), await dataOf(toId));
+      stop();
+      let d = $('#dlg-compare');
+      if (!d) {
+        d = document.createElement('dialog'); d.id = 'dlg-compare'; d.className = 'sheet wide'; d.setAttribute('aria-labelledby', 'dlg-compare-title');
+        document.body.appendChild(d);
+        d.addEventListener('click', (ev) => {
+          if (ev.target === d || ev.target.closest('[data-close]')) { d.close(); return; }
+          const o = ev.target.closest('[data-open]'); if (o) { d.close(); A.bulk = false; select(o.dataset.open, { tab: 'programs' }); }
+        });
+      }
+      d.innerHTML = `<div class="section-title"><div><p class="kicker">השוואת גרסאות</p><h2 id="dlg-compare-title">מה השתנה</h2></div><button type="button" class="icon-btn" data-close aria-label="סגירה">✕</button></div>
+<div class="card-body"><p class="help"><b>${esc(versionTitle(fromId))}</b> ← <b>${esc(versionTitle(toId))}</b>${items.length ? ` · ${items.length === 1 ? 'שינוי אחד' : `${items.length} שינויים`}` : ''}</p>${items.length ? `<ul class="diff-list">${items.map((x) => `<li>${x.id && liveEp(x.id) ? `<button type="button" class="link-btn" data-open="${esc(x.id)}">${esc(x.head)}</button>` : `<b>${esc(x.head)}</b>`}${x.rows.length ? `<ul>${x.rows.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}</li>`).join('')}</ul>` : '<p class="help">✓ אין הבדלים — שתי הגרסאות זהות.</p>'}</div>`;
+      d.showModal();
+    } catch (err) { stop(); U.notify(`ההשוואה לא הצליחה: ${err.message}`, 'error'); }
   }
   function renderAdmins() {
     if (!A.admins) return '';
@@ -1674,6 +2271,9 @@ ${proofCard()}
     if (t.id === 'ep-filter') { A.filter = t.value; renderList(); return; }
     if (t.id === 'pub-notify') { A.notify = t.checked; return; }
     if (t.id === 'stats-ep') { loadEpStats(t.value); return; }
+    if (t.dataset.sf === 'from' || t.dataset.sf === 'until') { renderSite(); return; }
+    if (t.id === 'inbox-ep') { A.inboxEp = t.value; A.inboxPicked.clear(); paintInbox(); return; }
+    if (t.dataset.inboxPick) { t.checked ? A.inboxPicked.add(t.dataset.inboxPick) : A.inboxPicked.delete(t.dataset.inboxPick); paintInboxCounts(); return; }
     if (t.dataset.op === 'bulk-season') {
       const v = t.value; if (!v) return;
       A.picked.forEach((id) => { const e = A.data.episodes.find((x) => x.id === id); if (e) e.season = v === '__none' ? '' : v; });
@@ -1767,6 +2367,9 @@ ${proofCard()}
       // כללי
       case 'new': newEpisode(); break;
       case 'open': A.bulk = false; select(b.dataset.id, { tab: 'programs' }); break;
+      case 'goto': setTab(b.dataset.tab); break;
+      case 'filter': A.filter = b.dataset.filter; A.q = ''; A.bulk = false; renderPrograms(); $('#ep-list')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); break;
+      case 'cmp-go': goToField(b.dataset.field); break;
       case 'copy': (await U.copy(b.dataset.text)) ? U.notify('הועתק.', 'success') : U.notify('ההעתקה לא הצליחה.', 'error'); break;
       // רשימה ובחירה מרובה
       case 'bulk': A.bulk = !A.bulk; A.picked.clear(); renderPrograms(); break;
@@ -1779,14 +2382,23 @@ ${proofCard()}
       case 'unschedule': if (e) { e.publishAt = ''; touch(); renderEditor(); renderList(); } break;
       case 'dup': if (e) duplicate(e); break;
       case 'del': if (e && confirm(`למחוק את "${label(e)}"?`)) removeMany([e.id]); break;
-      case 'share': if (e) { (await U.copy(shareText(e))) ? U.notify('הטקסט הועתק — הדביקו בוואטסאפ.', 'success') : U.notify('ההעתקה לא הצליחה.', 'error'); } break;
+      case 'share': if (e) openShare(e); break;
+      case 'publish-one': if (e) publishOne(e, b); break;
+      case 'live': A.live = !A.live; renderEditor(); if (A.live) $('#live-pane')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); break;
+      case 'live-size': A.liveSize = b.dataset.size; $$('[data-op="live-size"]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); fitLive(); break;
+      case 'hear-at': { const au = $('#preview-audio'); if (au) { au.currentTime = Number(b.dataset.t) || 0; au.play().catch(() => {}); au.scrollIntoView({ block: 'center', behavior: 'smooth' }); } break; }
+      case 'inbox-ep': if (e) { A.inboxEp = e.id; A.inboxFilter = 'all'; setTab('listeners'); } break;
       case 'history': if (e) openHistory(e); break;
       case 'cover-clear': if (e) { e.cover = ''; e.thumb = ''; touch(); renderEditor(); } break;
       case 'thumbs-all': thumbsAll(); break;
       case 'dates-screen': datesScreen(); break;
       case 'back-to-list': $('#ep-list')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); break;
       case 'proof-changed': runProofread('changed'); break;
-      case 'comments-filter': A.commentFilter = b.dataset.f2; renderListeners(); break;
+      case 'inbox-filter': A.inboxFilter = b.dataset.inbox; A.inboxPicked.clear(); paintInbox(); break;
+      case 'inbox-unpick': A.inboxPicked.clear(); paintInbox(); break;
+      case 'inbox-bulk': inboxBulkDo(b.dataset.do); break;
+      case 'reply-tpl': { const ta = P.querySelector(`[data-reply-for="${CSS.escape(b.dataset.id)}"]`); const r = replies()[i]; if (ta && r) { ta.value = ta.value.trim() ? `${ta.value.trim()} ${r}` : r; ta.focus(); } break; }
+      case 'replies-save': { const lines = (P.querySelector('[data-replies]')?.value || '').split('\n').map((x) => x.trim()).filter(Boolean); try { if (lines.length) localStorage.setItem(REPLIES_KEY, JSON.stringify(lines.slice(0, 20))); else localStorage.removeItem(REPLIES_KEY); } catch { /* */ } paintInbox(); U.notify('התשובות המוכנות נשמרו.', 'success'); break; }
       case 'comment-status': {
         // אישור או הסתרה שומרים גם תשובה שהוקלדה ועוד לא נשמרה
         const c = A.comments?.comments?.find((x) => x.id === b.dataset.id);
@@ -1797,7 +2409,7 @@ ${proofCard()}
       }
       case 'comment-pin': { const c = A.comments?.comments?.find((x) => x.id === b.dataset.id); if (c) moderate(c.id, { pinned: !c.pinned, ...(c.pinned || c.status === 'approved' ? {} : { status: 'approved' }) }); break; }
       case 'comment-reply': { const ta = P.querySelector(`[data-reply-for="${CSS.escape(b.dataset.id)}"]`); if (await moderate(b.dataset.id, { reply: ta?.value.trim() || '' })) U.notify('התשובה נשמרה.', 'success'); break; }
-      case 'comment-del': if (confirm('למחוק את התגובה לתמיד?')) { try { await S.sb.call('/api/program/comments', { method: 'DELETE', body: { id: b.dataset.id } }); A.comments.comments = A.comments.comments.filter((c) => c.id !== b.dataset.id); A.comments.pending = A.comments.comments.filter((c) => c.status === 'pending').length; renderListeners(); loadListenersBadge(); } catch (err) { U.notify(err.message, 'error'); } } break;
+      case 'comment-del': if (confirm('למחוק את התגובה לתמיד?')) { try { await deleteItem('com', b.dataset.id); repaintItem('com', b.dataset.id); } catch (err) { U.notify(err.message, 'error'); } } break;
       case 'proof-all': if (confirm('לבדוק את האיות של כל השמות והתיאורים באתר? זה לוקח כדקה.')) runProofread('all'); break;
       case 'proof-apply': { const r = A.proof?.results[i]; if (r && applyProof(r)) { touch(); U.notify('תוקן בטיוטה.', 'success'); } renderPublish(); break; }
       case 'proof-ignore': { const r = A.proof?.results[i]; if (r) r.ignored = true; renderPublish(); break; }
@@ -1831,8 +2443,8 @@ ${proofCard()}
       case 'season-del': { const s = A.data.seasons[i]; if (!s) break; const n = A.data.episodes.filter((x) => x.season === s.id).length; if (!confirm(`למחוק את העונה "${s.title}"?${n ? ` ${n} תוכניות יישארו בלי עונה.` : ''}`)) break; A.data.episodes.forEach((x) => { if (x.season === s.id) x.season = ''; }); A.data.seasons.splice(i, 1); touch(); renderSite(); break; }
       // מאזינים
       case 'reload-listeners': A.stats = A.messages = null; renderListeners(); loadListeners(); break;
-      case 'msg-read': try { await S.sb.messages.read(b.dataset.id, b.dataset.read === '1'); await loadListeners(); } catch (err) { U.notify(err.message, 'error'); } break;
-      case 'msg-del': if (confirm('למחוק את ההודעה?')) { try { await S.sb.messages.remove(b.dataset.id); await loadListeners(); } catch (err) { U.notify(err.message, 'error'); } } break;
+      case 'msg-read': try { await readMessage(b.dataset.id, b.dataset.read === '1'); } catch (err) { U.notify(err.message, 'error'); } break;
+      case 'msg-del': if (confirm('למחוק את ההודעה?')) { try { await deleteItem('msg', b.dataset.id); repaintItem('msg', b.dataset.id); } catch (err) { U.notify(err.message, 'error'); } } break;
       // פרסום
       case 'publish': publish(b); break;
       case 'discard': discard(); break;
@@ -1841,6 +2453,8 @@ ${proofCard()}
       case 'check-media': runCheck('media'); break;
       case 'versions': b.disabled = true; try { A.versions = (await S.sb.versions.list()).versions; } catch (err) { U.notify(err.message, 'error'); A.versions = []; } renderPublish(); break;
       case 'restore-version': restoreVersion(b.dataset.id); break;
+      case 'version-diff': compareVersions(b.dataset.from, b.dataset.to); break;
+      case 'compare': compareVersions($('#cmp-from').value, $('#cmp-to').value); break;
       case 'preview-link': previewLink(); break;
       case 'preview-revoke': try { await S.sb.preview.revoke(); $('#preview-link').innerHTML = '<span class="cue-hint">הקישור בוטל.</span>'; } catch (err) { U.notify(err.message, 'error'); } break;
       case 'backup': backupFile(); U.notify('קובץ הגיבוי ירד למחשב.', 'success'); break;
