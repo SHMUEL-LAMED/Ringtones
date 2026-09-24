@@ -1,4 +1,4 @@
-/* הדף "טיוטת מייל לתוכנית" (mail.html?ep=…). מגיעים אליו מדף הניהול המשותף — עם קוד
+/* הדף "טיוטת מייל" (mail.html?ep=… או ?kind=digest / ?kind=note). מגיעים אליו מדף הניהול המשותף — עם קוד
    מעבר, בלי כניסה נוספת — או ישירות. התוכניות: מה שבאתר (כולל מוסתרות ומתוזמנות, למנהלים)
    ועוד הטיוטה המשותפת של הניהול, כך שאפשר להכין מייל גם לתוכנית שעוד לא פורסמה. */
 (async function () {
@@ -42,12 +42,15 @@
     const episodes = [...byId.values()];
     const want = U.qs('ep');
     const first = episodes.find((e) => e.id === want || e.slug === want);
-    window.RoshMailComposer.mount(host, {
+    const ctl = window.RoshMailComposer.mount(host, {
       episodes: () => episodes,
       episodeId: first?.id,
+      kind: U.qs('kind') || '',   // mail.html?kind=digest (סיכום) או kind=note (הודעה חופשית)
       isLive: (e) => live.has(e.id),
       contacts: () => draft?.settings?.contacts || pub.settings?.contacts || S.settings?.contacts || {},
     });
+    // מה שנערך נשמר בחשבון גם כשסוגרים את הדף מיד
+    window.addEventListener('pagehide', () => { ctl.flush(); if (S.me?.dirty) S.me.save(true, { keepalive: true }); });
   }
   start();
 })();
