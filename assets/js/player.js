@@ -309,16 +309,52 @@
   // דקות האזנה לסטטיסטיקה: כל שתי דקות של ניגון נשלחות כאירוע אחד, ומה שנשאר
   // נשלח גם בעצירה, במעבר לתוכנית אחרת ובסגירת הדף — כדי ששום דקה לא תלך לאיבוד.
   // עם כל אירוע נשלח גם עד איפה הגיעו (באחוזים) — לגרף "עד איפה מאזינים".
+  // בשרת, האזנה נספרת רק כששמעו כמה דקות באותו יום (ברירת מחדל 10; המנהלים קובעים).
   const pctNow = () => { const D = dur(); return D ? Math.min(100, Math.round((audio.currentTime / D) * 100)) : 0; };
   function flushListen(closing = false) {
     if (!P.episode || !P.listened) return;
-    S.sb.event('listen', P.episode.id, P.listened, { pct: pctNow() }, { beacon: closing });
-    P.listened = 0;
+    // השרת מקבל עד 600 שניות באירוע — זמן ארוך (אחרי מסך נעול) נשלח בכמה אירועים
+    while (P.listened > 0) {
+      const secs = Math.min(P.listened, 600);
+      S.sb.event('listen', P.episode.id, secs, { pct: pctNow() }, { beacon: closing });
+      P.listened -= secs;
+    }
   }
+
+  /* האזנה מלאה: אילו קטעים של 10 שניות בתוכנית באמת נשמעו (ניגון רציף, לא קפיצה). כשנשמעו
+     90% מהקטעים נשלח אירוע complete — פעם אחת לכל תוכנית בביקור. מהירות הניגון לא משנה
+     (גם ב־2× כל הקטעים נשמעים), ומי שקפץ לסוף לא נחשב כמי ששמע את כולה. */
+  const HEARD_STEP = 10, HEARD_FULL = 0.9;
+  const heard = new Map();   // מזהה תוכנית → { parts: Set, done }
+  function markHeard(from, to) {
+    const D = dur(); if (!D || !P.episode) return;
+    let h = heard.get(P.episode.id);
+    if (!h) { h = { parts: new Set(), done: false }; heard.set(P.episode.id, h); }
+    for (let i = Math.floor(from / HEARD_STEP), last = Math.floor(Math.min(to, D - 0.001) / HEARD_STEP); i <= last; i++) h.parts.add(i);
+    if (h.done || h.parts.size < Math.ceil(D / HEARD_STEP) * HEARD_FULL) return;
+    h.done = true;
+    S.sb.event('complete', P.episode.id, 0, { pct: pctNow() });
+  }
+
+  /* כל שנייה של ניגון. כשהטלפון עוצר את הטיימרים (מסך נעול) והנגן ממשיך לנגן, בחזרה נספר כל
+     הזמן שעבר — לפי כמה שההקלטה התקדמה, ולא יותר מהזמן שעבר בשעון. */
+  let tick = null;   // { at, t, id }: השנייה הקודמת של ניגון רציף; מתאפס בעצירה ובקפיצה
+  audio.addEventListener('seeking', () => { tick = null; });
   setInterval(() => {
-    if (audio.paused || !P.episode) return;
-    P.listened = (P.listened || 0) + 1;
-    S.listening.tick(1);   // זמן האזנה אמיתי באזור האישי
+    if (audio.paused || !P.episode) { tick = null; return; }
+    const now = Date.now(), t = audio.currentTime, rate = audio.playbackRate || 1;
+    let secs = 1;
+    if (tick && tick.id === P.episode.id) {
+      const wall = (now - tick.at) / 1000, moved = t - tick.t;
+      // ההקלטה התקדמה כמו שאפשר בזמן שעבר — ניגון רציף
+      if (moved >= 0 && moved <= wall * rate + 2) {
+        markHeard(tick.t, t);
+        if (wall > 3) secs = Math.max(1, Math.round(Math.min(wall, moved / rate)));
+      }
+    }
+    tick = { at: now, t, id: P.episode.id };
+    P.listened = (P.listened || 0) + secs;
+    S.listening.tick(secs);   // זמן האזנה אמיתי באזור האישי
     if (P.listened >= 120) flushListen();
   }, 1000);
 
@@ -404,6 +440,8 @@
     paintPlaying(); paint();
     if (!P.episode) return;
     const id = P.episode.id;
+    // השניות האחרונות, מאז הסימון האחרון, עד הסוף
+    if (tick?.id === id && Date.now() - tick.at < 5000) markHeard(tick.t, dur());
     flushListen();
     // ה־pause שלפני ended כבר לא שומר (audio.ended), ו"התוכנית האחרונה" חוזרת להתחלה — כדי שהביקור הבא לא ייפתח בסוף
     S.positions.clear(id); S.last.set(id, 0); S.listening.finish(id);

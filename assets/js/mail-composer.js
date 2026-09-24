@@ -170,6 +170,8 @@
     const base = () => (S.site || {}).url || new URL('.', location.href).href;
     const abs = (path) => new URL(path, base()).href;
     const listenUrl = (e) => abs(`episode.html?ep=${encodeURIComponent(e.slug || e.id)}&utm_source=email`);
+    // ref=email: ההורדות מהמייל נספרות בסטטיסטיקה בנפרד ("מאיפה הורידו")
+    const downloadFor = (e) => { const u = U.downloadUrl(e); return u.includes('/api/program/download/') ? `${u}?ref=email` : u; };
     const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
     function excerpt(text, max = 170) {
       const s = M.plain(String(text || '')).split('\n\n')[0].replace(/\s+/g, ' ').trim();
@@ -177,7 +179,7 @@
       const c = s.slice(0, max);
       return `${c.slice(0, Math.max(c.lastIndexOf(' '), Math.floor(max * 0.6))).trim()}…`;
     }
-    const itemFor = (e) => ({ id: e.id, title: label(e), number: e.number, url: listenUrl(e), downloadUrl: U.downloadUrl(e), dateText: e.date ? U.fmtDate(e.date) : '', durationText: e.duration ? U.fmtDuration(e.duration) : '', thumb: e.thumb || e.cover || '', hue: U.hue(e), excerpt: excerpt(e.description) });
+    const itemFor = (e) => ({ id: e.id, title: label(e), number: e.number, url: listenUrl(e), downloadUrl: downloadFor(e), dateText: e.date ? U.fmtDate(e.date) : '', durationText: e.duration ? U.fmtDuration(e.duration) : '', thumb: e.thumb || e.cover || '', hue: U.hue(e), excerpt: excerpt(e.description) });
 
     function ctxFor(kind = st.kind, e = ep()) {
       const site = S.site || {};
@@ -188,7 +190,7 @@
         contacts: contacts(), items, more: kind === 'digest' ? [] : liveEps().filter((x) => !e || x.id !== e.id).slice(0, 4).map(itemFor),
         hue: e ? U.hue(e) : items[0]?.hue ?? 268, dateText: U.fmtDate(todayIso()), shareUrl: base(),
       };
-      if (e) Object.assign(c, { listenUrl: listenUrl(e), downloadUrl: U.downloadUrl(e), shareUrl: U.shareUrl(e), dateText: e.date ? U.fmtDate(e.date) : '', durationText: e.duration ? U.fmtDuration(e.duration) : '', links: U.publicLinks(e) });
+      if (e) Object.assign(c, { listenUrl: listenUrl(e), downloadUrl: downloadFor(e), shareUrl: U.shareUrl(e), dateText: e.date ? U.fmtDate(e.date) : '', durationText: e.duration ? U.fmtDuration(e.duration) : '', links: U.publicLinks(e) });
       return c;
     }
     function optionsFor(kind, e) {

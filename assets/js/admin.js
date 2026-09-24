@@ -573,7 +573,9 @@
     const tile = (n, text, sub, attrs, tone = '') => `<button type="button" class="dash-tile${tone ? ` ${tone}` : ''}" ${attrs}><b>${n}</b><span>${text}</span>${sub ? `<small>${sub}</small>` : ''}</button>`;
     const upcoming = A.data.episodes.filter((e) => e.visible && S.scheduled(e)).sort((a, b) => a.publishAt.localeCompare(b.publishAt));
     const latest = A.data.episodes.filter((e) => e.visible && !S.scheduled(e)).sort(byDate)[0];
-    const plays = (id) => Number((A.stats?.recent || []).find((r) => r.id === id)?.plays) || 0;
+    const recentRow = (id) => (A.stats?.recent || []).find((r) => r.id === id) || {};
+    const plays = (id) => Number(recentRow(id).plays) || 0;
+    const downloads = (id) => (A.stats?.config ? ` · ${n2(recentRow(id).downloads)} הורדות` : '');
     const groups = Object.entries(HEALTH_GROUPS).map(([kind, g]) => ({ kind, g, n: hc.should.filter((p) => p.kind === kind).length })).filter((x) => x.n);
     const other = A.draftBy && A.draftBy !== S.sb.user?.email ? A.draftBy : '';
     const epBtn = (id, text) => (id && liveEp(id) ? `<button type="button" class="link-btn" data-op="open" data-id="${esc(id)}">${esc(text)}</button>` : `<b>${esc(text)}</b>`);
@@ -595,7 +597,7 @@ ${sinceCard()}
 <div class="two-col dash-cols">
   <div class="card"><div class="section-title"><div><p class="kicker">באתר</p><h2>התוכניות</h2></div></div><div class="card-body">
     ${upcoming.length ? `<p class="kicker">מתוזמנות</p><ul class="dash-list">${upcoming.slice(0, 4).map((e) => `<li>${epBtn(e.id, label(e))}<small>תעלה ${esc(ago(ilMs(e.publishAt)))} · ${esc(when(e.publishAt))}</small></li>`).join('')}</ul>` : ''}
-    ${latest ? `<p class="kicker">האחרונה באתר</p><ul class="dash-list"><li>${epBtn(latest.id, label(latest))}<small>${esc(fmtDate(latest.date, true) || 'בלי תאריך')}${CLOUD && A.stats && !A.stats.error ? ` · ${n2(plays(latest.id))} האזנות ב־30 יום` : ''}</small></li></ul>` : '<p class="help">עדיין אין תוכניות באתר.</p>'}
+    ${latest ? `<p class="kicker">האחרונה באתר</p><ul class="dash-list"><li>${epBtn(latest.id, label(latest))}<small>${esc(fmtDate(latest.date, true) || 'בלי תאריך')}${CLOUD && A.stats && !A.stats.error ? ` · ${n2(plays(latest.id))} האזנות${downloads(latest.id)} ב־30 יום` : ''}</small></li></ul>` : '<p class="help">עדיין אין תוכניות באתר.</p>'}
   </div></div>
   <div class="card"><div class="section-title"><div><p class="kicker">בדיקת תקינות</p><h2>מה כדאי להשלים</h2></div></div><div class="card-body">
     ${hc.must.length ? `<div class="problems"><b>לפני הפרסום הבא צריך לתקן:</b><ul>${hc.must.slice(0, 5).map((p) => `<li>${epBtn(p.id, p.text)}</li>`).join('')}</ul></div>` : ''}
@@ -874,8 +876,11 @@ ${epStatsCard(e)}
     const wrote = (A.comments?.comments || []).filter((c) => c.episodeId === id).length + (A.messages?.messages || []).filter((m) => m.episodeId === id).length;
     const rmax = Math.max(1, ...ret.map((r) => r.n));
     const stat = (n, t) => `<div class="stat"><b>${n}</b><small>${t}</small></div>`;
+    // שרת שסופר האזנות מלאות והורדות (s.config); בגרסה ישנה — כמה מהמתחילים הגיעו לסוף
+    const counted = s.config ? `${stat(n2(s.full), 'האזנות מלאות')}${stat(n2(s.downloads), 'הורדות')}` : stat(start ? `${Math.round(end / start * 100)}%` : '—', 'שמעו עד הסוף');
     box.innerHTML = `
-<div class="stats admin-stats mini">${stat(n2(s.plays), 'האזנות')}${stat(n2(s.listeners), 'מאזינים')}${stat(start ? `${Math.round(end / start * 100)}%` : '—', 'שמעו עד הסוף')}${stat(`♥ ${n2(likes)}`, 'אהבו')}${stat(n2(wrote), 'כתבו')}</div>
+<div class="stats admin-stats mini">${stat(n2(s.plays), 'האזנות')}${stat(n2(s.listeners), 'מאזינים')}${counted}${stat(`♥ ${n2(likes)}`, 'אהבו')}${stat(n2(wrote), 'כתבו')}</div>
+${s.config ? `<p class="cue-hint">מאז ${esc(fmtDate(s.config.since))} · ${esc(countRule(s.config))} · ${n2(s.starts)} התחילו לשמוע.</p>` : ''}
 ${ret.some((r) => r.n) ? `<div class="bars retention mini" role="img" aria-label="כמה מאזינים הגיעו לכל נקודה בתוכנית">${ret.map((r) => `<div class="bar" title="${r.pct}% מהתוכנית: ${n2(r.n)} מאזינים"><i style="height:${Math.round(r.n / rmax * 100)}%"></i><small>${r.pct % 25 ? '' : `${r.pct}%`}</small></div>`).join('')}</div><p class="cue-hint">כל עמודה: כמה מאזינים הגיעו לנקודה הזו. ירידה חדה = שם עוזבים.</p>` : '<p class="help">עוד אין מספיק האזנות לגרף של עד איפה שומעים.</p>'}
 ${s.moments?.top?.length ? `<p class="kicker" style="margin-top:14px">הרגעים הכי אהובים — לחיצה משמיעה</p><div class="hot-list">${s.moments.top.slice(0, 6).map((t) => `<button type="button" class="pill" data-op="hear-at" data-t="${Number(t.at) || 0}">♥ ${U.fmtTime(t.at)} · ${n2(t.count)}</button>`).join('')}</div>` : ''}`;
   }
@@ -1668,6 +1673,7 @@ ${st.transcript != null ? `<details class="ai-transcript" open><summary>התמל
   }
   function deepStats(st) {
     const sources = (st.sources || []).filter((r) => Number(r.plays)).sort((a, b) => b.plays - a.plays);
+    const dlSources = (st.downloads?.sources || []).filter((r) => Number(r.downloads)).sort((a, b) => b.downloads - a.downloads);
     const hours = st.hours || [];
     const hmax = Math.max(1, ...hours.map((h) => Number(h.plays) || 0));
     const likes = (st.likes || []).filter((r) => Number(r.likes));
@@ -1680,12 +1686,13 @@ ${st.transcript != null ? `<details class="ai-transcript" open><summary>התמל
   <div><p class="kicker">מאיפה הגיעו המאזינים (30 יום)</p>${sources.length ? hbars(sources.map((r) => ({ label: SOURCE_NAMES[r.ref] || r.ref || 'אחר', n: Number(r.plays) || 0 }))) : '<p class="help">עוד אין נתונים — הם מתחילים להיאסף מעכשיו.</p>'}</div>
   <div><p class="kicker">באיזו שעה מאזינים (30 יום)</p>${hours.some((h) => Number(h.plays)) ? `<div class="bars hours" role="img" aria-label="האזנות לפי שעה ביום">${hours.map((h) => `<div class="bar" title="${String(h.hour).padStart(2, '0')}:00 — ${n2(h.plays)} האזנות"><i style="height:${Math.round((Number(h.plays) || 0) / hmax * 100)}%"></i><small>${Number(h.hour) % 3 ? '' : String(h.hour).padStart(2, '0')}</small></div>`).join('')}</div>` : '<p class="help">עוד אין נתונים.</p>'}</div>
 </div>
+${dlSources.length ? `<div style="margin-top:22px"><p class="kicker">מאיפה הורידו${st.config ? ` (מאז ${esc(fmtDate(st.config.since))})` : ''}</p>${hbars(dlSources.map((r) => ({ label: SOURCE_NAMES[r.ref] || r.ref || 'אחר', n: Number(r.downloads) || 0 })))}</div>` : ''}
 <div class="two-col" style="margin-top:22px">
   <div><p class="kicker">הכי אהובות (♥)</p>${likes.length ? `<ol class="top-list">${likes.slice(0, 10).map((r) => `<li><span>${esc(epName(r.id))}</span><b>♥ ${n2(r.likes)}</b></li>`).join('')}</ol>` : '<p class="help">עוד אף אחד לא סימן "אהבתי".</p>'}${(st.moments || []).length ? `<p class="kicker" style="margin-top:14px">הכי הרבה רגעים מסומנים</p><ol class="top-list">${st.moments.slice(0, 5).map((r) => `<li><span>${esc(epName(r.id))}</span><b>♥ ${n2(r.count)}</b></li>`).join('')}</ol>` : ''}</div>
   <div><p class="kicker">עד איפה מאזינים</p>
     <label class="visually-hidden" for="stats-ep">תוכנית</label>
     <select id="stats-ep" class="input small-select" style="width:100%"><option value="">בחרו תוכנית…</option>${withAudio.map((e) => `<option value="${esc(e.id)}" ${A.statsEp === e.id ? 'selected' : ''}>${esc(label(e))}</option>`).join('')}</select>
-    ${A.statsEp ? (!ret ? '<p class="help">טוענים…</p>' : ret.error ? `<p class="problems">${esc(ret.error)}</p>` : (ret.retention || []).some((r) => Number(r.listeners)) ? `<div class="bars retention" role="img" aria-label="כמה מאזינים הגיעו לכל נקודה בתוכנית">${ret.retention.map((r) => `<div class="bar" title="${r.pct}% מהתוכנית: ${n2(r.listeners)} מאזינים"><i style="height:${Math.round((Number(r.listeners) || 0) / rmax * 100)}%"></i><small>${r.pct % 25 ? '' : `${r.pct}%`}</small></div>`).join('')}</div><p class="cue-hint">${n2(ret.listeners)} מאזינים · ${n2(ret.plays)} האזנות. כל עמודה: כמה מאזינים הגיעו לנקודה הזו בתוכנית. ירידה חדה = שם עוזבים.</p>` : '<p class="help">עוד אין מספיק נתונים לתוכנית הזו.</p>') : '<p class="help">בחרו תוכנית כדי לראות באיזה רגע מאזינים מפסיקים לשמוע.</p>'}
+    ${A.statsEp ? (!ret ? '<p class="help">טוענים…</p>' : ret.error ? `<p class="problems">${esc(ret.error)}</p>` : (ret.retention || []).some((r) => Number(r.listeners)) ? `<div class="bars retention" role="img" aria-label="כמה מאזינים הגיעו לכל נקודה בתוכנית">${ret.retention.map((r) => `<div class="bar" title="${r.pct}% מהתוכנית: ${n2(r.listeners)} מאזינים"><i style="height:${Math.round((Number(r.listeners) || 0) / rmax * 100)}%"></i><small>${r.pct % 25 ? '' : `${r.pct}%`}</small></div>`).join('')}</div><p class="cue-hint">${n2(ret.listeners)} מאזינים · ${n2(ret.plays)} האזנות${ret.config ? ` · ${n2(ret.full)} האזנות מלאות · ${n2(ret.downloads)} הורדות` : ''}. כל עמודה: כמה מאזינים הגיעו לנקודה הזו בתוכנית (כל מי שהתחיל לשמוע). ירידה חדה = שם עוזבים.</p>` : '<p class="help">עוד אין מספיק נתונים לתוכנית הזו.</p>') : '<p class="help">בחרו תוכנית כדי לראות באיזה רגע מאזינים מפסיקים לשמוע.</p>'}
     ${ret?.moments ? hotMoments(ret.moments) : ''}
   </div>
 </div>`;
@@ -1871,6 +1878,47 @@ ${st.transcript != null ? `<details class="ai-transcript" open><summary>התמל
   </div>
 </div>`;
   }
+  /* ---------- מה נספר: אחרי כמה דקות האזנה היא נספרת, ומאיזה יום (איפוס) ----------
+     ההגדרה בשרת (/api/program/stats/config) ומשותפת לכל המנהלים. */
+  const minutesOf = (cfg) => Math.round((Number(cfg?.minSeconds) || 600) / 60);
+  const countRule = (cfg) => `האזנה נספרת אחרי ${minutesOf(cfg) === 1 ? 'דקה' : `${minutesOf(cfg)} דקות`} האזנה`;
+  const MINUTE_CHOICES = [1, 2, 3, 5, 10, 15, 20, 30];
+  A.statsAll = false;
+  /** טבלה: לכל תוכנית — האזנות, האזנות מלאות, הורדות ומאזינים */
+  function episodeTable(rows, epName) {
+    if (!rows.length) return '<p class="help">אין עדיין נתונים.</p>';
+    const sorted = rows.slice().sort((a, b) => (Number(b.plays) || 0) - (Number(a.plays) || 0) || (Number(b.downloads) || 0) - (Number(a.downloads) || 0));
+    const shown = A.statsAll ? sorted : sorted.slice(0, 15);
+    return `<div class="stats-table-wrap"><table class="stats-table">
+<thead><tr><th scope="col">תוכנית</th><th scope="col">האזנות</th><th scope="col">האזנות מלאות</th><th scope="col">הורדות</th><th scope="col">מאזינים</th></tr></thead>
+<tbody>${shown.map((r) => `<tr><td>${esc(epName(r.id))}</td><td>${n2(r.plays)}</td><td>${n2(r.full)}</td><td>${n2(r.downloads)}</td><td>${n2(r.listeners)}</td></tr>`).join('')}</tbody>
+</table></div>${sorted.length > 15 ? `<button type="button" class="btn small" data-op="stats-all">${A.statsAll ? 'פחות' : `כל ${n2(sorted.length)} התוכניות`}</button>` : ''}`;
+  }
+  function countSettings(cfg) {
+    const minutes = minutesOf(cfg);
+    const choices = [...new Set([...MINUTE_CHOICES, minutes])].sort((a, b) => a - b);
+    return `
+<div class="count-box">
+  <p class="kicker">מה נספר</p>
+  <p class="help"><b>האזנה</b> — מי ששמע לפחות ${minutes === 1 ? 'דקה' : `${minutes} דקות`} מהתוכנית באותו יום (או את כולה). <b>האזנה מלאה</b> — שמע לפחות 90% מהתוכנית. <b>הורדה</b> — לחיצה על קישור ההורדה, באתר או במייל; פעם אחת לכל מכשיר ביום, ובוטים וסורקי קישורים לא נספרים.</p>
+  <div class="count-row">
+    <label>האזנה נספרת אחרי <select id="stats-min" class="input small-select">${choices.map((m) => `<option value="${m}" ${m === minutes ? 'selected' : ''}>${m === 1 ? 'דקה' : `${m} דקות`}</option>`).join('')}</select></label>
+    <label>סופרים מ־<input type="date" id="stats-since" class="input" value="${esc(cfg.since)}" max="${esc(S.todayIL())}"></label>
+    <button type="button" class="btn small" data-op="stats-since">שמירת התאריך</button>
+    <button type="button" class="btn small" data-op="stats-reset">איפוס — לספור מהיום</button>
+  </div>
+  ${cfg.by ? `<p class="cue-hint">עודכן לאחרונה על ידי <span class="ltr">${esc(cfg.by)}</span>${cfg.updatedAt ? ` · ${esc(when(cfg.updatedAt))}` : ''}.</p>` : ''}
+</div>`;
+  }
+  async function saveStatsConfig(body, done) {
+    try {
+      await S.sb.call('/api/program/stats/config', { method: 'POST', body });
+      U.notify(done, 'success');
+      A.epStats.clear(); A.stats = null;
+      renderListeners(); loadListeners();
+    } catch (err) { U.notify(err.message, 'error'); }
+  }
+
   function renderListeners() {
     if (!CLOUD) { $('#panel').innerHTML = '<div class="card"><div class="state"><span class="mark">☺</span><h3>המאזינים</h3><p>הסטטיסטיקות וההודעות עובדות רק כשהאתר מחובר לשרת.</p></div></div>'; return; }
     const st = A.stats;
@@ -1879,21 +1927,30 @@ ${st.transcript != null ? `<details class="ai-transcript" open><summary>התמל
     const days = st?.days || [];
     const max = Math.max(1, ...days.map((d) => Number(d.plays) || 0));
     const dayName = (iso) => new Intl.DateTimeFormat('he-IL', { weekday: 'short', day: 'numeric' }).format(new Date(`${iso}T12:00:00`));
+    // השרת סופר מיום מסוים ולפי סף (st.config); בלי config — גרסה ישנה של השרת, והמספרים כמו קודם
+    const cfg = st?.config, from = cfg ? fmtDate(cfg.since) : '';
+    const top = (rows) => (rows || []).filter((r) => Number(r.plays)).slice(0, 10);
+    const topList = (rows) => (top(rows).length ? `<ol class="top-list">${top(rows).map((r) => `<li><span>${esc(epName(r.id))}</span><b>${n2(r.plays)}</b></li>`).join('')}</ol>` : '<p class="help">אין עדיין נתונים.</p>');
     const statsHtml = !st ? '<p class="help">טוענים…</p>' : notReady(st) ? '<p class="problems">השרת עדיין לא עודכן לגרסה שאוספת סטטיסטיקות. אחרי העדכון המספרים יתחילו להצטבר כאן.</p>' : st.error ? `<p class="problems">${esc(st.error)}</p>` : `
-<div class="stats admin-stats">
+${cfg ? `<p class="cue-hint" style="margin-top:0">סופרים מ־${esc(from)}. ${esc(countRule(cfg))}; האזנה מלאה — שמעו 90% מהתוכנית.</p>` : ''}
+<div class="stats admin-stats${cfg ? ' six' : ''}">
   <div class="stat"><b>${n2(st.week?.plays)}</b><small>האזנות בשבוע האחרון</small></div>
   <div class="stat"><b>${n2(st.week?.listeners)}</b><small>מאזינים בשבוע האחרון</small></div>
-  <div class="stat"><b>${n2(st.totals?.plays)}</b><small>האזנות מאז ההתחלה</small></div>
+  <div class="stat"><b>${n2(st.totals?.plays)}</b><small>${cfg ? `האזנות מאז ${esc(from)}` : 'האזנות מאז ההתחלה'}</small></div>
+  ${cfg ? `<div class="stat"><b>${n2(st.totals?.full)}</b><small>האזנות מלאות</small></div>
+  <div class="stat"><b>${n2(st.totals?.downloads)}</b><small>הורדות</small></div>` : ''}
   <div class="stat"><b>${n2(Math.round((Number(st.totals?.seconds) || 0) / 3600))}</b><small>שעות האזנה בסך הכול</small></div>
 </div>
 <p class="kicker" style="margin-top:20px">30 הימים האחרונים</p>
-${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי יום">${days.map((d) => `<div class="bar" title="${esc(dayName(d.day))}: ${n2(d.plays)} האזנות, ${n2(d.listeners)} מאזינים"><i style="height:${Math.round((Number(d.plays) || 0) / max * 100)}%"></i><small>${esc(dayName(d.day).slice(0, 5))}</small></div>`).join('')}</div>` : '<p class="help">עדיין אין האזנות שנרשמו. המספרים מתחילים להצטבר מהאזנה הראשונה באתר.</p>'}
+${days.length ? `<div class="bars" role="img" aria-label="האזנות לפי יום">${days.map((d) => `<div class="bar" title="${esc(dayName(d.day))}: ${n2(d.plays)} האזנות, ${n2(d.listeners)} מאזינים${cfg ? `, ${n2(d.full)} מלאות, ${n2(d.downloads)} הורדות` : ''}"><i style="height:${Math.round((Number(d.plays) || 0) / max * 100)}%"></i><small>${esc(dayName(d.day).slice(0, 5))}</small></div>`).join('')}</div>` : '<p class="help">עדיין אין האזנות שנרשמו. המספרים מתחילים להצטבר מהאזנה הראשונה באתר.</p>'}
 <div class="two-col">
-  <div><p class="kicker">הכי נשמעות ב־30 הימים האחרונים</p>${(st.recent || []).length ? `<ol class="top-list">${st.recent.slice(0, 10).map((r) => `<li><span>${esc(epName(r.id))}</span><b>${n2(r.plays)}</b></li>`).join('')}</ol>` : '<p class="help">אין עדיין נתונים.</p>'}</div>
-  <div><p class="kicker">הכי נשמעות מאז ומעולם</p>${(st.episodes || []).length ? `<ol class="top-list">${st.episodes.slice(0, 10).map((r) => `<li><span>${esc(epName(r.id))}</span><b>${n2(r.plays)}</b></li>`).join('')}</ol>` : '<p class="help">אין עדיין נתונים.</p>'}</div>
+  <div><p class="kicker">הכי נשמעות ב־30 הימים האחרונים</p>${topList(st.recent)}</div>
+  <div><p class="kicker">${cfg ? `הכי נשמעות מאז ${esc(from)}` : 'הכי נשמעות מאז ומעולם'}</p>${topList(st.episodes)}</div>
 </div>
+${cfg ? `<p class="kicker" style="margin-top:22px">לכל תוכנית (מאז ${esc(from)})</p>${episodeTable(st.episodes || [], epName)}` : ''}
 <p class="cue-hint" style="margin-top:12px">מכשירים ב־30 הימים האחרונים: טלפון ${n2(st.devices?.phone)} · מחשב ${n2(st.devices?.desktop)}. הספירה אנונימית — בלי שמות ובלי כתובות.</p>
-${deepStats(st)}`;
+${deepStats(st)}
+${cfg ? countSettings(cfg) : ''}`;
     $('#panel').innerHTML = `
 ${inboxCard()}
 <div class="card">
@@ -2289,6 +2346,7 @@ ${proofCard()}
     if (t.id === 'pub-notify') { A.notify = t.checked; return; }
     if (t.id === 'pub-mail') { A.mailAfter = t.checked; S.prefs.set('mailAfterPublish', t.checked); return; }
     if (t.id === 'stats-ep') { loadEpStats(t.value); return; }
+    if (t.id === 'stats-min') { saveStatsConfig({ minMinutes: Number(t.value) }, `מעכשיו האזנה נספרת אחרי ${Number(t.value) === 1 ? 'דקה' : `${t.value} דקות`}.`); return; }
     if (t.dataset.sf === 'from' || t.dataset.sf === 'until') { renderSite(); return; }
     if (t.id === 'inbox-ep') { A.inboxEp = t.value; A.inboxPicked.clear(); paintInbox(); return; }
     if (t.dataset.inboxPick) { t.checked ? A.inboxPicked.add(t.dataset.inboxPick) : A.inboxPicked.delete(t.dataset.inboxPick); paintInboxCounts(); return; }
@@ -2462,6 +2520,18 @@ ${proofCard()}
       case 'season-del': { const s = A.data.seasons[i]; if (!s) break; const n = A.data.episodes.filter((x) => x.season === s.id).length; if (!confirm(`למחוק את העונה "${s.title}"?${n ? ` ${n} תוכניות יישארו בלי עונה.` : ''}`)) break; A.data.episodes.forEach((x) => { if (x.season === s.id) x.season = ''; }); A.data.seasons.splice(i, 1); touch(); renderSite(); break; }
       // מאזינים
       case 'reload-listeners': A.stats = A.messages = null; renderListeners(); loadListeners(); break;
+      case 'stats-all': A.statsAll = !A.statsAll; renderListeners(); break;
+      case 'stats-since': {
+        const v = $('#stats-since')?.value || '';
+        if (!v) { U.notify('בחרו תאריך.', 'info'); break; }
+        if (v === A.stats?.config?.since) { U.notify('זה כבר התאריך שממנו סופרים.', 'info'); break; }
+        saveStatsConfig({ since: v }, `הספירה מתחילה עכשיו מ־${fmtDate(v)}.`);
+        break;
+      }
+      case 'stats-reset':
+        if (!confirm('לאפס את הספירה? כל המספרים (האזנות, האזנות מלאות והורדות) יתחילו מאפס מהיום.\nההאזנות הקודמות לא נמחקות — בחירת תאריך מוקדם יותר מחזירה אותן.')) break;
+        saveStatsConfig({ reset: true }, 'הספירה אופסה — מהיום סופרים מחדש.');
+        break;
       case 'msg-read': try { await readMessage(b.dataset.id, b.dataset.read === '1'); } catch (err) { U.notify(err.message, 'error'); } break;
       case 'msg-del': if (confirm('למחוק את ההודעה?')) { try { await deleteItem('msg', b.dataset.id); repaintItem('msg', b.dataset.id); } catch (err) { U.notify(err.message, 'error'); } } break;
       // פרסום

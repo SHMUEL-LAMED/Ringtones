@@ -205,6 +205,21 @@ dialog.sheet.wide { width: min(860px, calc(100% - 32px)); }
 .update-row input:focus, .update-row textarea:focus { outline: none; border-color: var(--gold); }
 .admin-stats { margin: 0; }
 .admin-stats .stat b { font-size: clamp(40px, 5vw, 64px); }
+.admin-stats.six { grid-template-columns: repeat(3, 1fr); }
+/* לכל תוכנית: האזנות, מלאות, הורדות ומאזינים */
+.stats-table-wrap { overflow-x: auto; margin: 8px 0 10px; border: 1px solid var(--border); border-radius: 14px; }
+.stats-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.stats-table th, .stats-table td { padding: 8px 12px; text-align: start; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.stats-table th { background: rgb(var(--fg-rgb) / .05); color: var(--muted); font-size: 12px; font-weight: 800; }
+.stats-table td:first-child { white-space: normal; min-width: 170px; color: var(--text-strong); }
+.stats-table td:not(:first-child) { font-variant-numeric: tabular-nums; font-weight: 800; color: var(--gold-ink); }
+.stats-table tbody tr:last-child td { border-bottom: 0; }
+/* מה נספר: סף הדקות, מאיזה יום, ואיפוס */
+.count-box { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+.count-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 8px; }
+.count-row label { display: inline-flex; align-items: center; gap: 8px; font-weight: 800; font-size: 13.5px; }
+.count-row .small-select { width: auto; }
+.count-row input[type="date"] { width: auto; min-height: 36px; padding: 5px 10px; }
 .bars { display: flex; align-items: flex-end; gap: 4px; height: 140px; margin: 10px 0 6px; }
 .bars .bar { flex: 1; display: grid; grid-template-rows: 1fr auto; height: 100%; align-items: end; gap: 4px; min-width: 0; }
 .bars .bar i { display: block; min-height: 2px; border-radius: 4px 4px 0 0; background: linear-gradient(180deg, var(--gold-ink), var(--gold-deep)); }
@@ -236,6 +251,9 @@ dialog.sheet.wide { width: min(860px, calc(100% - 32px)); }
 .problems.soft { background: rgb(var(--gold-rgb) / .1); border-color: rgb(var(--gold-rgb) / .4); color: var(--gold-ink); }
 .preview-url { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .preview-url input { flex: 1; min-width: 200px; min-height: 36px; padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--field-bg); color: var(--text-strong); font-size: 12px; }
+@media (max-width: 1000px) {
+  .admin-stats.six { grid-template-columns: repeat(2, 1fr); }
+}
 @media (max-width: 900px) {
   .two-col { grid-template-columns: 1fr; }
   .update-head { grid-template-columns: 1fr 1fr; }

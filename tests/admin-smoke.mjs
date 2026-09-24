@@ -14,6 +14,7 @@ let published = null; let draftPuts = 0; let events = []; let messagesSent = [];
 let settings = { banner: { enabled: false, text: '', link: '', linkLabel: '', until: '', sites: { program: true, survey: false } }, updates: [], survey: { id: 'main', name: 'מצעד האלבומים', open: true, url: 'https://rosh-berosh.smwlyqswkwt232.workers.dev/' } };
 let handoffs = 0; let logouts = 0; let ssoBounces = 0; let ssoSignedIn = false;
 let comments = [{ id: 'c1', episodeId: catalog.episodes[0].id, name: 'שרה לוי', email: 's@x.com', text: 'הוויכוח בדקה 12 היה מצוין!', at: 720, status: 'pending', pinned: false, reply: null, createdAt: 1758500000 }]; let proofreadCalls = 0;
+let statsConfig = { since: '2026-09-24', minSeconds: 600 }; const statsPosts = [];
 let latestVersion = 'v1'; let conflicts = 0; let publishBody = null; let userdata = null; let userdataPuts = 0; let likes = {};
 // הטיוטה המשותפת בשרת (החוזה: PUT { data, ifUpdatedAt? } → 200 או 409 draft-conflict)
 let serverDraft = null; let draftLog = []; let draftDeletes = 0; let draftConflictOnce = false; let draftDown = false;
@@ -46,7 +47,8 @@ await ctx.route(`${API}/**`, async (route) => {
   if (p === '/api/program/ai/proofread') { const b = req.postDataJSON(); proofreadCalls++; return json({ results: b.items.filter((it) => it.text.includes('תוכנית בדיקה חדשה')).map((it) => ({ key: it.key, fixed: it.text.replace('בדיקה', 'הבדיקה'), changes: [{ from: 'בדיקה', to: 'הבדיקה' }] })) }); }
   if (p === '/api/program/push/drain') return json({ sent: 0, failed: 0, removed: 0, remaining: 0 });
   if (p.startsWith('/api/program/moments/')) return json({ id: decodeURIComponent(p.split('/').pop()), total: 3, buckets: [{ at: 60, count: 2 }, { at: 600, count: 3 }], top: [{ at: 600, count: 3 }, { at: 60, count: 2 }] });
-  if (p.startsWith('/api/program/stats/episode/')) return json({ id: p.split('/').pop(), plays: 10, listeners: 8, retention: Array.from({ length: 20 }, (_, i) => ({ pct: i * 5, listeners: 8 - Math.floor(i / 3) })) });
+  if (p === '/api/program/stats/config' && m === 'POST') { const b = req.postDataJSON(); statsPosts.push(b); if (b.reset) statsConfig = { ...statsConfig, since: '2026-09-25' }; if (b.minMinutes) statsConfig = { ...statsConfig, minSeconds: b.minMinutes * 60 }; statsConfig = { ...statsConfig, by: 'admin@example.com', updatedAt: 1758700000 }; return json({ ok: true, config: statsConfig }); }
+  if (p.startsWith('/api/program/stats/episode/')) return json({ id: p.split('/').pop(), config: statsConfig, plays: 10, listeners: 8, full: 4, starts: 12, downloads: 6, retention: Array.from({ length: 20 }, (_, i) => ({ pct: i * 5, listeners: 8 - Math.floor(i / 3) })) });
   if (p === '/api/program/draft' && m === 'GET') return json({ draft: serverDraft });
   if (p === '/api/program/draft' && m === 'PUT') {
     if (draftDown) return route.abort();
@@ -64,7 +66,7 @@ await ctx.route(`${API}/**`, async (route) => {
     return json({ ok: true, updatedAt: serverDraft.updatedAt, by: serverDraft.by });
   }
   if (p === '/api/program/draft' && m === 'DELETE') { draftDeletes++; serverDraft = null; return json({ ok: true }); }
-  if (p === '/api/program/stats') return json({ sources: [{ ref: 'whatsapp', plays: 20 }, { ref: 'direct', plays: 12 }], hours: Array.from({ length: 24 }, (_, h) => ({ hour: h, plays: h % 5 })), likes: [{ id: catalog.episodes[2].id, likes: 4 }], days: [{ day: '2026-09-20', plays: 12, listeners: 9, seconds: 4000 }, { day: '2026-09-21', plays: 20, listeners: 15, seconds: 9000 }], episodes: [{ id: catalog.episodes[0].id, plays: 30, listeners: 20, seconds: 5000 }], recent: [{ id: catalog.episodes[1].id, plays: 8, listeners: 6, seconds: 500 }], totals: { plays: 32, listeners: 24, seconds: 13000 }, week: { plays: 32, listeners: 24 }, devices: { phone: 20, desktop: 12 } });
+  if (p === '/api/program/stats') return json({ config: statsConfig, sources: [{ ref: 'whatsapp', plays: 20 }, { ref: 'direct', plays: 12 }], hours: Array.from({ length: 24 }, (_, h) => ({ hour: h, plays: h % 5 })), likes: [{ id: catalog.episodes[2].id, likes: 4 }], days: [{ day: '2026-09-24', plays: 12, listeners: 9, seconds: 4000, full: 3, downloads: 2 }, { day: '2026-09-25', plays: 20, listeners: 15, seconds: 9000, full: 5, downloads: 4 }], episodes: [{ id: catalog.episodes[0].id, plays: 30, listeners: 20, seconds: 5000, full: 7, starts: 40, downloads: 5 }, { id: catalog.episodes[1].id, plays: 0, listeners: 0, seconds: 0, full: 0, starts: 0, downloads: 1 }], recent: [{ id: catalog.episodes[1].id, plays: 8, listeners: 6, seconds: 500, full: 1, starts: 9, downloads: 1 }], totals: { plays: 32, listeners: 24, seconds: 13000, full: 8, starts: 49, downloads: 6 }, week: { plays: 32, listeners: 24, full: 8, downloads: 6 }, month: { downloads: 6 }, devices: { phone: 20, desktop: 12 }, downloads: { sources: [{ ref: 'email', downloads: 4 }, { ref: 'internal', downloads: 2 }] } });
   if (p === '/api/program/messages' && m === 'GET') return json({ messages: [{ id: 'm1', name: 'דוד', email: 'd@x.com', text: 'תוכנית מצוינת!', episodeId: catalog.episodes[0].id, readAt: null, createdAt: 1758500000 }], unread: 1 });
   if (p === '/api/program/messages' && m === 'POST') { messagesSent.push(req.postDataJSON()); return json({ ok: true, id: 'm2' }); }
   if (p === '/api/program/messages/read') return json({ ok: true });
@@ -232,15 +234,22 @@ check((await page.locator('#season-rows .season-row').count()) === 6, 'עונה 
 /* ---------- מאזינים ---------- */
 await page.click('[data-tab="listeners"]');
 await page.waitForSelector('.admin-stats', { timeout: 10000 });
-check((await page.locator('.admin-stats .stat').count()) === 4, 'סטטיסטיקות מוצגות');
+check((await page.locator('.admin-stats:not(.mini) .stat').count()) === 6, 'סטטיסטיקות מוצגות: האזנות, מאזינים, מאז יום ההתחלה, האזנות מלאות, הורדות ושעות');
+{
+  const tiles = await page.locator('.admin-stats:not(.mini)').innerText();
+  check(/האזנות מלאות/.test(tiles) && /הורדות/.test(tiles) && /מאז 24 בספט/.test(tiles), 'כמה האזנות מלאות וכמה הורדות — ומאיזה יום סופרים');
+}
+check((await page.locator('.stats-table tbody tr').count()) === 2 && (await page.locator('.stats-table tbody tr').first().innerText()).includes('7'), 'טבלה לכל תוכנית: האזנות, מלאות, הורדות (גם תוכנית שרק הורידו)');
+check((await page.locator('.hbars').count()) === 2 && (await page.locator('.hbars').nth(1).locator('.hbar').first().innerText()).includes('מייל'), 'מאיפה הורידו: מהמייל ומהאתר');
 check((await page.locator('.bars:not(.hours):not(.retention) .bar').count()) === 2, 'גרף ימים');
 check((await page.locator('.msg.unread').count()) === 1, 'הודעה מהמאזינים מוצגת');
 check((await page.locator('#tab-unread').innerText()) === '2', 'תג: הודעה שלא נקראה ותגובה שממתינה לאישור');
-check((await page.locator('.hbars .hbar').count()) === 2, 'סטטיסטיקה: מאיפה הגיעו המאזינים');
+check((await page.locator('.hbars').first().locator('.hbar').count()) === 2, 'סטטיסטיקה: מאיפה הגיעו המאזינים');
 check((await page.locator('.bars.hours .bar').count()) === 24, 'סטטיסטיקה: האזנות לפי שעה');
 await page.selectOption('#stats-ep', { index: 1 });
 await page.waitForSelector('.bars.retention .bar');
 check((await page.locator('.bars.retention .bar').count()) === 20, 'סטטיסטיקה: עד איפה מאזינים בתוכנית');
+check((await page.locator('.bars.retention + .cue-hint').innerText()).includes('4 האזנות מלאות · 6 הורדות'), 'בכל תוכנית: כמה האזנות מלאות וכמה הורדות');
 check((await page.locator('.hot-list li').count()) === 2, 'הרגעים הכי חמים בתוכנית — גלוי רק בניהול');
 check((await page.locator('[data-push-send]').count()) === 1, 'שליחת התראה לכל המאזינים');
 check((await page.locator('#inbox-card .mod.pending').count()) === 1, 'תגובה שממתינה לאישור מופיעה בתיבת הדואר');
@@ -259,6 +268,25 @@ await page.fill('[data-reply-for="c1"]', 'תודה שרה!');
 await page.click('[data-op="comment-reply"][data-id="c1"]');
 await page.waitForTimeout(300);
 check((await noticeText()) === 'התשובה נשמרה.', 'תשובה שנשמרה: "התשובה נשמרה"');
+
+// מה נספר: הסף בדקות, ואיפוס הספירה (הגדרה בשרת, לכל המנהלים)
+check((await page.locator('#stats-min').inputValue()) === '10', 'האזנה נספרת אחרי 10 דקות (ברירת המחדל)');
+await page.selectOption('#stats-min', '5');
+await page.waitForFunction(() => document.querySelector('#stats-min')?.value === '5', null, { timeout: 5000 }).catch(() => {});
+check(statsPosts.at(-1)?.minMinutes === 5 && (await page.locator('#stats-min').inputValue()) === '5', 'שינוי הסף נשמר בשרת והמספרים נטענים מחדש');
+await page.click('[data-op="stats-reset"]');
+await page.waitForFunction(() => document.querySelector('#stats-since')?.value === '2026-09-25', null, { timeout: 5000 }).catch(() => {});
+check(statsPosts.at(-1)?.reset === true && dialogs.at(-1).includes('לאפס את הספירה'), 'איפוס — שואל קודם, ואז מתחילים לספור מהיום');
+check((await page.locator('.admin-stats:not(.mini)').innerText()).includes('מאז 25 בספט'), 'אחרי האיפוס: הספירה מהיום');
+
+// המספרים של תוכנית בתוך העורך
+await page.click('[data-tab="programs"]');
+await page.click('#ep-list .ep-item >> nth=6');
+await page.waitForSelector('#ep-stats-box .stat', { timeout: 10000 }).catch(() => {});
+{
+  const box = await page.locator('#ep-stats-box').innerText().catch(() => '');
+  check(/האזנות מלאות/.test(box) && /הורדות/.test(box) && /12 התחילו לשמוע/.test(box), 'בעורך: האזנות, האזנות מלאות והורדות של התוכנית');
+}
 
 /* ---------- פרסום ---------- */
 await page.click('[data-tab="publish"]');
@@ -421,6 +449,34 @@ await page.goto(`${BASE}/admin.html?handoff=bad000&standalone=1`);
 await page.waitForSelector('#admin-gate');
 await page.waitForTimeout(800);
 check(await page.evaluate(() => document.body.classList.contains('admin-locked')), 'קוד מעבר שפג משאיר את הניהול נעול');
+
+/* ---------- האזנה מלאה: הנגן מדווח רק כששמעו באמת 90% מההקלטה ---------- */
+{
+  const wav = readFileSync(new URL('../assets/audio/demo.wav', import.meta.url));   // 42 שניות
+  const p2 = await ctx.newPage();
+  p2.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  await p2.route(`${API}/api/program/stream/**`, (route) => {
+    const m = /bytes=(\d+)-(\d*)/.exec(route.request().headers().range || '');
+    const start = m ? Number(m[1]) : 0, end = m && m[2] ? Number(m[2]) : wav.length - 1;
+    return route.fulfill({ status: m ? 206 : 200, headers: { 'access-control-allow-origin': '*', 'accept-ranges': 'bytes', 'content-type': 'audio/wav', ...(m ? { 'content-range': `bytes ${start}-${end}/${wav.length}` } : {}) }, body: wav.subarray(start, end + 1) });
+  });
+  events = [];
+  await p2.goto(`${BASE}/index.html`);
+  await p2.waitForSelector('#featured [data-play]');
+  await p2.click('#featured [data-play]');
+  await p2.waitForFunction(() => Math.round(window.RoshPlayer.duration) === 42 && window.RoshPlayer.time > 0, null, { timeout: 15000 });
+  const id = await p2.evaluate(() => window.RoshPlayer.episode.id);
+  await p2.evaluate(() => { window.RoshPlayer.setRate(2); window.RoshPlayer.seek(30); });
+  await p2.waitForFunction(() => window.RoshPlayer.paused, null, { timeout: 20000 });
+  await p2.waitForTimeout(300);
+  check(events.some((e) => e.kind === 'listen' && e.episodeId === id && e.seconds > 0) && !events.some((e) => e.kind === 'complete'), 'קפיצה לסוף ושמיעת הסוף בלבד — לא "האזנה מלאה"');
+  await p2.evaluate(() => { window.RoshPlayer.seek(0); window.RoshPlayer.play(); });
+  await p2.waitForFunction(() => window.RoshPlayer.paused && window.RoshPlayer.time > 40, null, { timeout: 40000 }).catch(() => {});
+  await p2.waitForTimeout(300);
+  const full = events.filter((e) => e.kind === 'complete');
+  check(full.length === 1 && full[0].episodeId === id, 'שמעו את כל ההקלטה (גם במהירות כפולה) — נשלחה "האזנה מלאה" אחת');
+  await p2.close();
+}
 
 // תשובות 401/404 מהשרת המדומה הן חלק מהתרחישים (קוד מעבר שפג, נתיב שלא קיים בשרת ישן)
 const real = errors.filter((e) => !/favicon|manifest|sw\.js|serviceWorker|net::ERR_|accounts\.google|gsi|status of 40[149]/i.test(e));
