@@ -17,8 +17,10 @@ const SUBS = ['one@example.com', 'Two@Example.com', 'two@example.com', 'three@ex
 let admin = true, subsMode = 'ok', gmailMode = 'ok', userdata = null, published = null;
 const listAdds = [];   // מה שנשלח להוספה לרשימת התפוצה
 const drafts = []; let tokenRequests = 0;
+const alive = new Set(), deleted = [], sent = [];   // ג'ימייל מדומה: טיוטות שעוד קיימות, מה שנמחק, ומה שנשלח
 
-const browser = await chromium.launch(process.env.PW_EXECUTABLE ? { executablePath: process.env.PW_EXECUTABLE } : {});
+// שם קובץ בעברית (הורדת ‎.eml) דורש שהדפדפן ירוץ עם UTF-8
+const browser = await chromium.launch({ ...(process.env.PW_EXECUTABLE ? { executablePath: process.env.PW_EXECUTABLE } : {}), env: { ...process.env, LANG: /utf-?8/i.test(process.env.LANG || '') ? process.env.LANG : 'C.UTF-8' } });
 const ctx = await browser.newContext({ locale: 'he-IL', viewport: { width: 1360, height: 900 } });
 await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE });
 const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization,content-type,range', 'access-control-allow-methods': 'GET,HEAD,POST,PUT,DELETE,OPTIONS' };
@@ -57,7 +59,11 @@ await ctx.route('https://gmail.googleapis.com/**', async (route) => {
   if (req.headers().authorization !== 'Bearer tok-1') return json({ error: { code: 401, message: 'Invalid Credentials' } }, 401);
   if (gmailMode === 'disabled') return json({ error: { code: 403, message: 'Gmail API has not been used in project 601586229891 before or it is disabled.', status: 'PERMISSION_DENIED' } }, 403);
   if (p.endsWith('/profile')) return json({ emailAddress: 'admin@example.com' });
-  if (p.endsWith('/drafts') && req.method() === 'POST') { const raw = req.postDataJSON().message.raw; drafts.push(Buffer.from(raw, 'base64url').toString('utf8')); return json({ id: `r-${drafts.length}`, message: { id: `18ab${drafts.length}`, threadId: 't' } }); }
+  if (p.endsWith('/drafts') && req.method() === 'POST') { const raw = req.postDataJSON().message.raw; drafts.push(Buffer.from(raw, 'base64url').toString('utf8')); alive.add(`r-${drafts.length}`); return json({ id: `r-${drafts.length}`, message: { id: `18ab${drafts.length}`, threadId: 't' } }); }
+  const dm = p.match(/\/drafts\/([^/]+)$/);
+  if (dm && req.method() === 'GET') return alive.has(dm[1]) ? json({ id: dm[1], message: { id: 'm' } }) : json({ error: { code: 404, message: 'Requested entity was not found.' } }, 404);
+  if (dm && req.method() === 'DELETE') { if (!alive.delete(dm[1])) return json({ error: { code: 404 } }, 404); deleted.push(dm[1]); return route.fulfill({ status: 204, headers: cors, body: '' }); }
+  if (p.endsWith('/messages/send') && req.method() === 'POST') { sent.push(Buffer.from(req.postDataJSON().raw, 'base64url').toString('utf8')); return json({ id: `s-${sent.length}` }); }
   return json({ error: { code: 404 } }, 404);
 });
 await ctx.route('https://accounts.google.com/**', (route) => route.abort());
@@ -86,8 +92,9 @@ const header = (mime, name) => (mime.split('\r\n\r\n')[0].replace(/\r\n /g, ' ')
 const partOf = (mime, type) => { const m = mime.match(new RegExp(`Content-Type: ${type}; charset="UTF-8"\\r\\nContent-Transfer-Encoding: base64\\r\\n\\r\\n([A-Za-z0-9+/=\\r\\n]+?)\\r\\n--`)); return m ? Buffer.from(m[1].replace(/\r\n/g, ''), 'base64').toString('utf8') : ''; };
 const subjectOf = (mime) => header(mime, 'Subject').split(' ').map((w) => Buffer.from(w.replace(/^=\?UTF-8\?B\?|\?=$/g, ''), 'base64').toString('utf8')).join('');
 const settle = (ms = 400) => page.waitForTimeout(ms);
+const tab = (name, scope = '') => page.click(`${scope}[data-mtab="${name}"]`);
 // SHOTS=<תיקייה> שומר צילומי מסך של העורך (לבדיקה בעין; לא חלק מהבדיקה)
-const shot = (name) => (process.env.SHOTS ? page.screenshot({ path: `${process.env.SHOTS}/${name}.png`, fullPage: true }) : null);
+const shot = (name, fullPage = true) => (process.env.SHOTS ? page.screenshot({ path: `${process.env.SHOTS}/${name}.png`, fullPage }) : null);
 
 /* ---------- השער ---------- */
 await page.goto(`${BASE}/mail.html`);
@@ -112,12 +119,15 @@ await page.waitForFunction(() => /3 כתובות/.test(document.querySelector('[
 check(/3 כתובות מרשימת התפוצה/.test(await page.locator('[data-m-count]').innerText()), 'רשימת התפוצה נטענה — בלי כפילויות ובלי כתובת לא תקינה');
 check((await page.locator('[data-m="to"]').inputValue()) === 'admin@example.com', 'הנמען הגלוי: החשבון המחובר');
 
-// עריכה: סגנון, צבע, טקסט, מה נכנס
+// עריכה: סגנון, צבע ומה נכנס (לשונית "עיצוב"), והטקסט (לשונית "תוכן")
+check((await page.locator('[data-mtab="content"]').getAttribute('aria-selected')) === 'true' && await page.locator('[data-panel="design"]').isHidden(), 'העורך נפתח בלשונית "תוכן"');
+await tab('design');
 await page.click('[data-mstyle="gold"]');
-await page.fill('[data-m="intro"]', 'שלום לכולם!\n\nהתוכנית החדשה כאן.');
 await page.fill('[data-m="accent"]', '#1d4ed8');
 await page.uncheck('[data-mshow="phone"]');
 await page.click('[data-mcover="none"]');
+await tab('content');
+await page.fill('[data-m="intro"]', 'שלום לכולם!\n\nהתוכנית החדשה כאן.');
 await settle();
 {
   const html = await frameHtml();
@@ -136,6 +146,7 @@ await settle();
   check(await page.locator('[data-mop="desc-reset"]').isVisible(), 'אחרי עריכה: "חזרה לתיאור מהאתר"');
 }
 await shot('composer-desktop');
+if (process.env.SHOTS) await page.locator('[data-block="intro"]').screenshot({ path: `${process.env.SHOTS}/block-intro.png` });
 await page.click('[data-mview="phone"]');
 await settle(200);
 check(await page.locator('[data-m-frame]').evaluate((f) => f.getBoundingClientRect().width <= 392), 'תצוגת טלפון');
@@ -161,6 +172,7 @@ check((await page.locator('.mc-done a').first().getAttribute('href')) === 'https
 check((await page.locator('[data-mop="create"]').innerText()).includes('טיוטה נוספת'), 'אחרי היצירה: הכפתור מציע טיוטה נוספת');
 
 // רשימה ארוכה: כמה טיוטות
+await tab('people');
 await page.fill('[data-m="chunk"]', '2');
 await page.click('[data-mop="create"]');
 await page.waitForFunction(() => document.querySelectorAll('.mc-done-links a.gold').length === 2, null, { timeout: 10000 });
@@ -200,6 +212,7 @@ check(!(await page.evaluate(() => Object.keys(localStorage).some((k) => /mail/i.
 
 // מעבר לתוכנית אחרת: הניסוח נשאר, השם מתחלף
 const other = catalog.episodes.find((e) => e.id !== EP.id && e.title);
+await tab('content');
 await page.selectOption('[data-m="ep"]', other.id);
 await settle();
 check((await page.locator('[data-m="subject"]').inputValue()).includes(other.title) && !(await page.locator('[data-m="subject"]').inputValue()).includes(EP.title), 'מעבר לתוכנית אחרת: השם בנושא מתחלף');
@@ -214,6 +227,7 @@ check((await page.locator('.notice-host .notice-text').last().innerText()).inclu
 
 // Gmail API לא מופעל בפרויקט: הסבר ברור
 gmailMode = 'disabled';
+await tab('people');
 await page.click('[data-mmode="all"]');
 await page.click('[data-mop="create"]');
 await page.waitForSelector('.mc-result .problems', { timeout: 10000 });
@@ -224,7 +238,9 @@ gmailMode = 'ok';
 subsMode = 'missing';
 await page.goto(`${BASE}/mail.html?ep=${encodeURIComponent(EP.slug)}`);
 await page.waitForSelector('.mail-composer');
-await page.waitForSelector('[data-m-count] .problems');
+await page.waitForSelector('[data-m-count] .problems', { state: 'attached' });
+check((await page.locator('[data-mbadge="people"]').innerText()) === '!', 'בלי רשימה: סימן אזהרה על לשונית "נמענים"');
+await tab('people');
 check((await page.locator('[data-m-count]').innerText()).includes('ייבאו את הקובץ'), 'בלי הרשימה מהשרת: הסבר איך לייבא');
 check(await page.locator('[data-m-listbox]').evaluate((d) => d.open), 'תיבת הרשימה נפתחת לבד');
 await page.setInputFiles('[data-m-file]', { name: 'subscribers.csv', mimeType: 'text/csv', buffer: Buffer.from('email,name\n"a@list.com","מאזין"\nb@list.com,שרה\nA@List.com,כפול\n') });
@@ -236,6 +252,7 @@ subsMode = 'ok';
 await page.goto(`${BASE}/mail.html?ep=${encodeURIComponent(EP.slug)}`);
 await page.waitForSelector('.mail-composer');
 await page.waitForFunction(() => /3 כתובות/.test(document.querySelector('[data-m-count]')?.textContent || ''));
+await tab('people');
 check(await page.locator('[data-m-save]').isHidden(), 'כשהרשימה כמו בשרת — אין מה לשמור');
 await page.click('[data-mop="add-open"]');
 check(await page.locator('[data-m-listbox]').evaluate((d) => d.open) && await page.locator('[data-m="list"]').evaluate((t) => document.activeElement === t), '"+ הוספת כתובות לרשימה" פותח את התיבה, מוכנה להקלדה בסוף');
@@ -274,6 +291,233 @@ await page.waitForFunction(() => document.querySelector('[data-m-save]')?.hidden
   check((await page.locator('.notice-host .notice-text').last().innerText()).includes('2 כתובות נוספו לרשימת התפוצה'), 'הודעה כמה נוספו');
   check(await page.locator('[data-m-save]').isHidden(), 'אחרי השמירה הרשימה נטענת מהשרת, ואין עוד מה לשמור');
 }
+
+/* ---------- הכלי המשוכלל: עבודה שנשמרת, עיצוב טקסט, משתנים, בלוקים, בדיקה, היסטוריה, תבניות, סוגי מייל ---------- */
+await page.goto(`${BASE}/mail.html?ep=${encodeURIComponent(EP.slug)}`);
+await page.waitForSelector('.mail-composer');
+await page.waitForFunction(() => /כתובות מרשימת התפוצה/.test(document.querySelector('[data-m-count]')?.textContent || ''));
+check((await page.locator('[data-m="description"]').inputValue()).includes('ראיון בלעדי') && await page.locator('[data-m-work]').isVisible(), 'העבודה על המייל נשמרה בחשבון: חוזרים לתוכנית — והתיאור שכתבתם שם');
+check(!!userdata?.prefs?.mailWork?.[`ep:${EP.id}`] && !JSON.stringify(userdata.prefs.mailDraft).includes('ראיון בלעדי'), 'העבודה נשמרת לפי התוכנית, בנפרד מהעיצוב לפעם הבאה');
+
+// סרגל העיצוב: הדגשה
+await page.fill('[data-m="intro"]', 'שלום חברים');
+await page.locator('[data-m="intro"]').evaluate((el) => el.setSelectionRange(0, 4));
+await page.click('[data-mfmt="bold"][data-target="intro"]');
+check((await page.locator('[data-m="intro"]').inputValue()) === '**שלום** חברים', 'סרגל העיצוב: הדגשה סביב הטקסט המסומן');
+await page.locator('[data-m="intro"]').evaluate((el) => el.setSelectionRange(el.value.length, el.value.length));
+await page.click('[data-mfmt="ul"][data-target="intro"]');
+await settle();
+{
+  const html = await frameHtml();
+  check(html.includes('<strong style="font-weight:900">שלום</strong>') && /<ul dir="rtl"[^>]*><li[^>]*><strong/.test(html), 'ההדגשה והרשימה נראות במייל');
+}
+// משתנה בנושא, והצעות לנושא
+await page.fill('[data-m="subject"]', 'תוכנית ');
+await page.locator('[data-m="subject"]').evaluate((el) => el.setSelectionRange(el.value.length, el.value.length));
+await page.click('.mc-input-tools .mc-tok summary');
+await page.click('.mc-input-tools [data-mtoken="{{number}}"]');
+await settle();
+check((await page.locator('[data-m-inbox-subject]').innerText()) === `תוכנית ${EP.number}`, 'משתנה {{number}} בנושא מתמלא לפי התוכנית');
+await page.click('.mc-sugg summary');
+await page.waitForSelector('[data-msubject]');
+const sugg = await page.locator('[data-msubject]').first().getAttribute('data-msubject');
+await page.locator('[data-msubject]').first().click();
+check((await page.locator('[data-m="subject"]').inputValue()) === sugg && sugg.includes(EP.title) && !(await page.locator('.mc-sugg').evaluate((d) => d.open)), 'הצעה לנושא נכנסת בלחיצה, והתפריט נסגר');
+
+// בלוק ציטוט: טקסט, הזזה לראש המייל, כיבוי
+await page.click('[data-mexpand="quote"]');
+await page.fill('[data-m="quote"]', 'המוזיקה היא הלב של התוכנית');
+await settle();
+check((await frameHtml()).includes('המוזיקה היא הלב של התוכנית'), 'בלוק ציטוט במייל');
+const order = () => page.evaluate(() => [...document.querySelectorAll('.mc-block')].map((li) => li.dataset.block));
+for (let i = (await order()).indexOf('quote'); i > 0; i--) await page.click('[data-mmove="up"][data-id="quote"]');
+await settle();
+{
+  const html = await frameHtml();
+  check((await order())[0] === 'quote' && html.indexOf('המוזיקה היא הלב') < html.indexOf('להאזנה באתר'), 'הזזת בלוק לראש העורך — וגם לראש המייל');
+}
+await page.uncheck('[data-mblock="quote"]');
+await settle();
+check(!(await frameHtml()).includes('המוזיקה היא הלב'), 'כיבוי בלוק מוריד אותו מהמייל');
+
+// הבדיקה: נושא ריק — שגיאה, והיצירה נעצרת עם "ליצור בכל זאת"
+await page.fill('[data-m="subject"]', '');
+await settle();
+check((await page.locator('[data-mbadge="check"]').getAttribute('class')).includes('err'), 'נושא ריק מסומן כשגיאה על לשונית "בדיקה"');
+await tab('check');
+check((await page.locator('[data-m-audit] .lv-error').first().innerText()).includes('אין נושא'), 'הבדיקה אומרת מה בדיוק לתקן');
+{
+  const n0 = drafts.length;
+  await page.click('[data-mop="create"]');
+  await page.waitForSelector('.mc-result [data-mop="create-anyway"]');
+  check(drafts.length === n0, 'עם שגיאה — לא נוצרת טיוטה, ומוצע "ליצור בכל זאת"');
+}
+// גם "החלפת הטיוטה הקודמת" שנעצרה בבדיקה — "ליצור בכל זאת" מחליף, ולא משאיר שתי טיוטות לרשימה
+{
+  await page.waitForSelector('[data-mop="replace"]:not([hidden])');
+  const n0 = drafts.length, prevId = `r-${drafts.length}`;
+  await page.click('[data-mop="replace"]');
+  await page.waitForSelector('.mc-result [data-mop="create-anyway"]');
+  check(drafts.length === n0, 'החלפה עם שגיאה נעצרת');
+  await page.click('.mc-result [data-mop="create-anyway"]');
+  for (let t = 0; t < 100 && !deleted.includes(prevId); t++) await page.waitForTimeout(100);
+  check(drafts.length === n0 + 1 && deleted.includes(prevId), '"ליצור בכל זאת" אחרי "החלפה": הקודמת נמחקה');
+}
+await tab('check');
+await page.click('.mc-audit [data-mgo="content"]');
+check(await page.locator('[data-panel="content"]').isVisible(), '"לתיקון" מוביל ללשונית הנכונה');
+await page.fill('[data-m="subject"]', 'תוכנית חדשה: {{title}}');
+await settle();
+check(!(await page.locator('[data-mbadge="check"]').getAttribute('class')).includes('err'), 'אחרי התיקון — בלי שגיאות');
+
+// נמענים: טעות הקלדה ותיקון, "לא לשלוח אל"
+await tab('people');
+await page.click('[data-mop="add-open"]');
+await page.keyboard.type('typo@gmial.com\n');
+await page.waitForSelector('[data-mfix="typo@gmial.com"]');
+check((await page.locator('[data-m-quality]').innerText()).includes('typo@gmail.com'), 'טעות הקלדה בדומיין: מוצע תיקון');
+await page.click('[data-mfix="typo@gmial.com"]');
+check((await page.locator('[data-m="list"]').inputValue()).includes('typo@gmail.com') && !(await page.locator('[data-m="list"]').inputValue()).includes('gmial'), 'התיקון נכנס לרשימה');
+await page.click('[data-m-excludebox] summary');
+await page.fill('[data-m="exclude"]', 'two@example.com');
+check(/הוצאו/.test(await page.locator('[data-m-count]').innerText()), 'הספירה מראה כמה הוצאו');
+{
+  const n1 = drafts.length;
+  await page.click('[data-mop="create"]');
+  for (let t = 0; t < 100 && drafts.length === n1; t++) await page.waitForTimeout(100);
+  const mime = drafts.at(-1), bcc = header(mime, 'Bcc');
+  check(bcc.includes('typo@gmail.com') && !bcc.includes('two@example.com') && !bcc.includes('gmial'), 'בטיוטה עצמה: הכתובת המתוקנת, ובלי מי שב"לא לשלוח אל"');
+  check(/^List-Unsubscribe: <[^>]*me\.html#me-subscribe>$/m.test(mime.split('\r\n\r\n')[0]), 'כותרת הסרה (List-Unsubscribe) בטיוטה');
+}
+// החלפת הטיוטה הקודמת: חדשה נוצרת, הקודמת נמחקת מג'ימייל
+await page.waitForSelector('[data-mop="replace"]:not([hidden])');
+{
+  const prevId = `r-${drafts.length}`, n2 = drafts.length;
+  await page.click('[data-mop="replace"]');
+  for (let t = 0; t < 100 && !deleted.includes(prevId); t++) await page.waitForTimeout(100);
+  check(drafts.length === n2 + 1 && deleted.includes(prevId) && alive.has(`r-${drafts.length}`), '"החלפת הטיוטה הקודמת": נוצרה חדשה, והקודמת נמחקה מג\'ימייל');
+}
+// היסטוריה: מצב הטיוטות (טיוטה שנשלחה כבר לא בטיוטות)
+alive.delete('r-1');
+await tab('history');
+await page.waitForSelector('.mc-hist');
+await page.click('[data-mop="hist-check"]');
+await page.waitForFunction(() => !document.querySelector('[data-mop="hist-check"]')?.disabled && document.querySelector('.mc-hist .pill')?.textContent.includes('מחכה'));
+{
+  const cards = page.locator('.mc-hist');
+  check((await cards.nth(0).innerText()).includes('מחכה בטיוטות') && (await cards.nth(1).innerText()).includes('הוחלפה בחדשה'), 'היסטוריה: החדשה מחכה, הקודמת סומנה כהוחלפה');
+  check(!(await page.locator('.mc-hist.done a[href*="compose"]').count()), 'לטיוטה שהוחלפה אין קישור פתיחה');
+  check((await cards.last().innerText()).includes('נשלחה או נמחקה'), 'בדיקת המצב: טיוטה שכבר לא בג\'ימייל מסומנת "נשלחה או נמחקה"');
+  const top = `r-${drafts.length}`;
+  await cards.nth(0).locator('[data-mhist="delete"]').click();
+  await page.waitForFunction(() => document.querySelector('.mc-hist .pill')?.textContent.includes('נמחקה מכאן'));
+  check(deleted.includes(top), 'מחיקת טיוטה מג\'ימייל מתוך ההיסטוריה');
+}
+await settle(3500);
+check(Array.isArray(userdata?.prefs?.mailHistory) && userdata.prefs.mailHistory.length >= 7 && userdata.prefs.mailHistory[0].state === 'deleted', 'ההיסטוריה נשמרת בחשבון');
+
+// שליחת בדיקה אליי: מייל אמיתי — רק לחשבון המחובר
+{
+  const s0 = sent.length;
+  await page.click('[data-mop="test"]');
+  for (let t = 0; t < 100 && sent.length === s0; t++) await page.waitForTimeout(100);
+  const m = sent.at(-1) || '';
+  check(header(m, 'To') === 'admin@example.com' && !/^Bcc:/m.test(m.split('\r\n\r\n')[0]) && subjectOf(m).startsWith('[בדיקה] '), '"שליחת בדיקה אליי": רק לחשבון המחובר, בלי הרשימה');
+}
+
+// תבניות שמורות
+await tab('design');
+await page.click('[data-mstyle="ocean"]');
+await page.click('[data-mfont="classic"]');
+await page.fill('[data-m-tplname]', 'חגים');
+await page.click('[data-mop="tpl-save"]');
+await page.click('[data-mstyle="clean"]');
+await page.click('[data-mfont="modern"]');
+await page.click('[data-mtpl="apply"][data-name="חגים"]');
+await settle();
+check((await page.locator('[data-mstyle="ocean"]').getAttribute('aria-checked')) === 'true' && (await page.locator('[data-mfont="classic"]').getAttribute('aria-checked')) === 'true' && (await frameHtml()).includes('Frank Ruhl'), 'תבנית שמורה מחזירה את העיצוב והגופן');
+await shot('composer-design');
+
+// תצוגת טקסט, והורדה כקובץ ‎.eml
+await page.click('[data-mview="text"]');
+check(await page.locator('[data-m-text]').isVisible() && (await page.locator('[data-m-text]').innerText()).includes('utm_source=email') && await page.locator('[data-m-frame]').isHidden(), 'תצוגת "טקסט": הגרסה הפשוטה של המייל');
+await page.click('[data-mview="desktop"]');
+{
+  const [dl] = await Promise.all([page.waitForEvent('download'), (async () => { await page.click('.mc-more summary'); await page.click('[data-mop="eml"]'); })()]);
+  const eml = readFileSync(await dl.path(), 'utf8');
+  check(dl.suggestedFilename().endsWith('.eml') && /^X-Unsent: 1$/m.test(eml) && /^Bcc: /m.test(eml), 'הורדה כקובץ ‎.eml שנפתח כהודעה חדשה, עם הנמענים בעותק מוסתר');
+}
+
+// סיכום של כמה תוכניות
+const top3 = catalog.episodes.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.number || 0) - (a.number || 0)).slice(0, 3);
+await page.click('[data-mkind="digest"]');
+await tab('content');
+await settle();
+{
+  const html = await frameHtml();
+  check(top3.every((e) => html.includes(e.title.replace(/&/g, '&amp;'))) && (await page.locator('[data-m-inbox-subject]').innerText()).includes('3 תוכניות'), 'סיכום: שלוש התוכניות האחרונות, והנושא סופר אותן');
+  await page.uncheck(`[data-mpick="${top3[2].id}"]`);
+  await settle();
+  check((await page.locator('[data-m-inbox-subject]').innerText()).includes('2 תוכניות') && !(await frameHtml()).includes(top3[2].title.replace(/&/g, '&amp;')), 'סיכום: בחירת התוכניות משנה את המייל');
+  const n3 = drafts.length;
+  await page.click('[data-mop="create"]');
+  for (let t = 0; t < 100 && drafts.length === n3; t++) await page.waitForTimeout(100);
+  check(partOf(drafts.at(-1), 'text/html').includes('archive.html?utm_source=email'), 'טיוטת הסיכום נוצרה, עם כפתור לארכיון');
+}
+await shot('composer-digest');
+// הודעה חופשית
+await page.click('[data-mkind="note"]');
+await page.fill('[data-m="headline"]', 'חג שמח מכולנו!');
+await page.fill('[data-m="intro"]', 'שלום לכולם!\n\nהתוכנית הבאה תעלה אחרי החג. בינתיים — כל הארכיון מחכה באתר.');
+await settle();
+check((await frameText()).includes('חג שמח מכולנו!') && (await frameHtml()).includes('?utm_source=email') && !(await frameHtml()).includes('הורדת התוכנית'), 'הודעה חופשית: כותרת, טקסט וכפתור לאתר — בלי כפתורי תוכנית');
+// תמונה משלכם שייכת להודעה הזו בלבד
+await tab('design');
+await page.fill('[data-m="image"]', 'https://media.example/banner.jpg');
+await settle();
+check((await frameHtml()).includes('https://media.example/banner.jpg'), 'תמונה משלכם בהודעה');
+// חזרה לתוכנית: הכל במקום
+await page.click('[data-mkind="episode"]');
+await tab('content');
+check((await page.locator('[data-m="ep"]').inputValue()) === EP.id && (await page.locator('[data-m="description"]').inputValue()).includes('ראיון בלעדי'), 'חזרה ל"תוכנית חדשה": אותה תוכנית ואותו נוסח');
+check(!(await frameHtml()).includes('banner.jpg'), 'הבאנר של ההודעה לא עבר למייל על התוכנית');
+// "להתחיל מחדש": הנוסח חוזר לברירת המחדל — גם הנושא
+await page.click('[data-mop="work-reset"]');
+await settle();
+check((await page.locator('[data-m="subject"]').inputValue()).startsWith('🎙️ תוכנית חדשה ב') && (await page.locator('[data-m="description"]').inputValue()) === (EP.description || '') && await page.locator('[data-m-work]').isHidden(), '"להתחיל מחדש": הנושא והתיאור חוזרים להתחלה');
+await settle(3500);
+check(!userdata?.prefs?.mailWork?.[`ep:${EP.id}`] && String(userdata?.prefs?.mailDraft?.subject || '').startsWith('🎙️ תוכנית חדשה ב') && String(userdata.prefs.mailDraft.subject).includes('{{title}}'), 'אחרי "להתחיל מחדש" — העבודה נמחקה מהחשבון, והנושא שמור כברירת המחדל');
+// עריכה שאינה בתיאור לא שומרת עותק של התיאור מהאתר
+await page.fill('[data-m="intro"]', 'שלום שוב');
+await settle(3500);
+check(userdata?.prefs?.mailWork?.[`ep:${EP.id}`] && !('description' in userdata.prefs.mailWork[`ep:${EP.id}`].o), 'תיאור שלא נערך לא נשמר — בפעם הבאה ייכנס התיאור העדכני מהאתר');
+{
+  const n4 = drafts.length;
+  await page.focus('[data-m="subject"]');
+  await page.keyboard.press('Control+Enter');
+  for (let t = 0; t < 100 && drafts.length === n4; t++) await page.waitForTimeout(100);
+  check(drafts.length === n4 + 1, 'Ctrl+Enter יוצר טיוטה');
+}
+await settle(3500);
+check(userdata?.prefs?.mailTemplates?.[0]?.name === 'חגים' && userdata.prefs.mailTemplates[0].data.style === 'ocean', 'התבניות נשמרות בחשבון');
+check(!(await page.evaluate(() => Object.keys(localStorage).some((k) => /mail/i.test(k)))), 'גם עכשיו — שום דבר מהמייל לא במכשיר');
+await page.setViewportSize({ width: 390, height: 844 });
+await settle(300);
+check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'בטלפון: בלי גלילה לצדדים');
+await shot('composer-phone');
+if (process.env.SHOTS) {
+  await page.locator('.mail-composer').evaluate((el) => el.scrollIntoView());
+  await shot('composer-phone-top', false);
+  await page.locator('[data-mbody="intro"]').evaluate((el) => el.scrollIntoView({ block: 'center' }));
+  await shot('composer-phone-intro', false);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.setViewportSize({ width: 1360, height: 900 });
+  await page.locator('.mail-composer').evaluate((el) => el.scrollIntoView());
+  await settle(300);
+  await shot('composer-dark', false);
+  await page.emulateMedia({ colorScheme: 'light' });
+}
+await page.setViewportSize({ width: 1360, height: 900 });
 
 /* ---------- מנהל שאינו מנהל ---------- */
 admin = false;

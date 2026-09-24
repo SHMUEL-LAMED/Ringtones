@@ -716,7 +716,8 @@
       this.dirty = false;
       try {
         const body = JSON.stringify({ data: this.data });
-        const r = await fetch(sb.base('/api/program/userdata'), { method: 'PUT', headers: sb.headers(), body, keepalive: keepalive && body.length < 60000, cache: 'no-store' });
+        // keepalive מוגבל ל־64KB בבתים (עברית = 2 בתים לאות), לא בתווים
+        const r = await fetch(sb.base('/api/program/userdata'), { method: 'PUT', headers: sb.headers(), body, keepalive: keepalive && new Blob([body]).size < 60000, cache: 'no-store' });
         if (!r.ok) { if (r.status === 401) { sb.session = null; this.account = null; } else this.dirty = true; }
       } catch { this.dirty = true; }
     },
