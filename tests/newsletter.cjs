@@ -108,6 +108,11 @@ assert(!Buffer.from(M.raw({ to: ['me@example.com'], subject: 'x', html: '<p>x</p
   const empty = M.build({ ...ep, guests: [] }, ctx, { intro: 'עם {{guests}}' });
   same(empty.report.empty, ['{{guests}}']);
   assert(M.audit(r).some((x) => x.id === 'tokens' && x.level === 'error'), 'Unknown token is an error');
+  const desc = M.build(ep, ctx, { description: 'על {{title}} ו{{oops}}' });
+  assert(desc.html.includes(`על ${ep.title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}`) && desc.text.includes(`על ${ep.title}`) && desc.report.leftover.includes('{{oops}}'), 'Tokens are filled in the description too, and checked');
+  // שם שאינו סגנון/סוג אמיתי ("constructor") לא שובר את המייל
+  const odd = M.build(ep, ctx, { kind: 'constructor', style: 'constructor', font: 'toString', shape: '__proto__', blocks: [{ id: 'constructor', on: true }] });
+  assert(odd.report.kind === 'episode' && odd.html.includes(M.STYLES.night.bg) && odd.html.includes('להאזנה באתר'), 'Inherited names fall back to the defaults');
 }
 
 /* ---------- בלוקים: סדר, הפעלה, ציטוט, כפתור נוסף, שירים, עוד תוכניות, שיתוף ---------- */

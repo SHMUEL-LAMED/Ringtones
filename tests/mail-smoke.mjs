@@ -352,6 +352,18 @@ check((await page.locator('[data-m-audit] .lv-error').first().innerText()).inclu
   await page.waitForSelector('.mc-result [data-mop="create-anyway"]');
   check(drafts.length === n0, 'עם שגיאה — לא נוצרת טיוטה, ומוצע "ליצור בכל זאת"');
 }
+// גם "החלפת הטיוטה הקודמת" שנעצרה בבדיקה — "ליצור בכל זאת" מחליף, ולא משאיר שתי טיוטות לרשימה
+{
+  await page.waitForSelector('[data-mop="replace"]:not([hidden])');
+  const n0 = drafts.length, prevId = `r-${drafts.length}`;
+  await page.click('[data-mop="replace"]');
+  await page.waitForSelector('.mc-result [data-mop="create-anyway"]');
+  check(drafts.length === n0, 'החלפה עם שגיאה נעצרת');
+  await page.click('.mc-result [data-mop="create-anyway"]');
+  for (let t = 0; t < 100 && !deleted.includes(prevId); t++) await page.waitForTimeout(100);
+  check(drafts.length === n0 + 1 && deleted.includes(prevId), '"ליצור בכל זאת" אחרי "החלפה": הקודמת נמחקה');
+}
+await tab('check');
 await page.click('.mc-audit [data-mgo="content"]');
 check(await page.locator('[data-panel="content"]').isVisible(), '"לתיקון" מוביל ללשונית הנכונה');
 await page.fill('[data-m="subject"]', 'תוכנית חדשה: {{title}}');
@@ -394,6 +406,7 @@ await page.waitForFunction(() => !document.querySelector('[data-mop="hist-check"
 {
   const cards = page.locator('.mc-hist');
   check((await cards.nth(0).innerText()).includes('מחכה בטיוטות') && (await cards.nth(1).innerText()).includes('הוחלפה בחדשה'), 'היסטוריה: החדשה מחכה, הקודמת סומנה כהוחלפה');
+  check(!(await page.locator('.mc-hist.done a[href*="compose"]').count()), 'לטיוטה שהוחלפה אין קישור פתיחה');
   check((await cards.last().innerText()).includes('נשלחה או נמחקה'), 'בדיקת המצב: טיוטה שכבר לא בג\'ימייל מסומנת "נשלחה או נמחקה"');
   const top = `r-${drafts.length}`;
   await cards.nth(0).locator('[data-mhist="delete"]').click();
@@ -420,7 +433,7 @@ await page.fill('[data-m-tplname]', 'חגים');
 await page.click('[data-mop="tpl-save"]');
 await page.click('[data-mstyle="clean"]');
 await page.click('[data-mfont="modern"]');
-await page.click('[data-mtpl="apply"][data-i="0"]');
+await page.click('[data-mtpl="apply"][data-name="חגים"]');
 await settle();
 check((await page.locator('[data-mstyle="ocean"]').getAttribute('aria-checked')) === 'true' && (await page.locator('[data-mfont="classic"]').getAttribute('aria-checked')) === 'true' && (await frameHtml()).includes('Frank Ruhl'), 'תבנית שמורה מחזירה את העיצוב והגופן');
 await shot('composer-design');
@@ -458,9 +471,26 @@ await page.fill('[data-m="headline"]', 'חג שמח מכולנו!');
 await page.fill('[data-m="intro"]', 'שלום לכולם!\n\nהתוכנית הבאה תעלה אחרי החג. בינתיים — כל הארכיון מחכה באתר.');
 await settle();
 check((await frameText()).includes('חג שמח מכולנו!') && (await frameHtml()).includes('?utm_source=email') && !(await frameHtml()).includes('הורדת התוכנית'), 'הודעה חופשית: כותרת, טקסט וכפתור לאתר — בלי כפתורי תוכנית');
+// תמונה משלכם שייכת להודעה הזו בלבד
+await tab('design');
+await page.fill('[data-m="image"]', 'https://media.example/banner.jpg');
+await settle();
+check((await frameHtml()).includes('https://media.example/banner.jpg'), 'תמונה משלכם בהודעה');
 // חזרה לתוכנית: הכל במקום
 await page.click('[data-mkind="episode"]');
+await tab('content');
 check((await page.locator('[data-m="ep"]').inputValue()) === EP.id && (await page.locator('[data-m="description"]').inputValue()).includes('ראיון בלעדי'), 'חזרה ל"תוכנית חדשה": אותה תוכנית ואותו נוסח');
+check(!(await frameHtml()).includes('banner.jpg'), 'הבאנר של ההודעה לא עבר למייל על התוכנית');
+// "להתחיל מחדש": הנוסח חוזר לברירת המחדל — גם הנושא
+await page.click('[data-mop="work-reset"]');
+await settle();
+check((await page.locator('[data-m="subject"]').inputValue()).startsWith('🎙️ תוכנית חדשה ב') && (await page.locator('[data-m="description"]').inputValue()) === (EP.description || '') && await page.locator('[data-m-work]').isHidden(), '"להתחיל מחדש": הנושא והתיאור חוזרים להתחלה');
+await settle(3500);
+check(!userdata?.prefs?.mailWork?.[`ep:${EP.id}`] && String(userdata?.prefs?.mailDraft?.subject || '').startsWith('🎙️ תוכנית חדשה ב') && String(userdata.prefs.mailDraft.subject).includes('{{title}}'), 'אחרי "להתחיל מחדש" — העבודה נמחקה מהחשבון, והנושא שמור כברירת המחדל');
+// עריכה שאינה בתיאור לא שומרת עותק של התיאור מהאתר
+await page.fill('[data-m="intro"]', 'שלום שוב');
+await settle(3500);
+check(userdata?.prefs?.mailWork?.[`ep:${EP.id}`] && !('description' in userdata.prefs.mailWork[`ep:${EP.id}`].o), 'תיאור שלא נערך לא נשמר — בפעם הבאה ייכנס התיאור העדכני מהאתר');
 {
   const n4 = drafts.length;
   await page.focus('[data-m="subject"]');

@@ -15,6 +15,7 @@
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const unesc = (s) => String(s).replace(/&(amp|lt|gt|quot|#39);/g, (m, k) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[k]);
+  const own = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);   // "constructor" אינו סגנון
   const clamp = (n, lo, hi, fb) => { const v = Math.floor(Number(n)); return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fb; };
 
   /* ---------- גופנים, צורות וסגנונות ---------- */
@@ -24,7 +25,7 @@
     classic: { name: 'קלאסי', hint: 'Frank Ruhl — כמו עיתון', sans: "'Frank Ruhl Libre', David, 'Times New Roman', serif", display: "'Frank Ruhl Libre', David, 'Times New Roman', serif", css: 'family=Frank+Ruhl+Libre:wght@400;700;900', size: 36, weight: 900, lh: 1.2 },
     soft: { name: 'רך', hint: 'Rubik — עגול וידידותי', sans: "Rubik, Heebo, 'Arial Hebrew', Arial, sans-serif", display: "Rubik, Heebo, 'Arial Hebrew', Arial, sans-serif", css: 'family=Rubik:wght@400;700;900', size: 36, weight: 900, lh: 1.2 },
   };
-  const fontsUrl = (key) => `https://fonts.googleapis.com/css2?${(FONT_SETS[key] || FONT_SETS.modern).css}&display=swap`;
+  const fontsUrl = (key) => `https://fonts.googleapis.com/css2?${(own(FONT_SETS, key) ? FONT_SETS[key] : FONT_SETS.modern).css}&display=swap`;
   const FONTS_URL = fontsUrl('modern');
   const SHAPES = { pill: { name: 'עגול', r: 999 }, round: { name: 'מעוגל', r: 12 }, square: { name: 'ישר', r: 4 } };
 
@@ -65,7 +66,7 @@
   };
   /** הסגנון המלא לתוכנית: הצבעוני נגזר מהגוון, ואפשר להחליף את צבע ההדגשה */
   function palette(opts = {}, ctx = {}) {
-    const key = STYLES[opts.style] ? opts.style : 'night';
+    const key = own(STYLES, opts.style) ? opts.style : 'night';
     const p = { ...STYLES[key], key };
     if (key === 'vivid') {
       const h = Number.isFinite(Number(ctx.hue)) ? Number(ctx.hue) : 268;
@@ -105,7 +106,7 @@
     const src = Array.isArray(o.blocks) && o.blocks.length ? o.blocks : null;
     const out = [], seen = new Set();
     for (const b of src || DEFAULT_BLOCKS) {
-      if (!b || !BLOCKS[b.id] || seen.has(b.id)) continue;
+      if (!b || !own(BLOCKS, b.id) || seen.has(b.id)) continue;
       seen.add(b.id); out.push({ id: b.id, on: b.on !== false });
     }
     DEFAULT_BLOCKS.forEach((b, i) => { if (!seen.has(b.id)) out.splice(Math.min(i, out.length), 0, { ...b }); });
@@ -178,9 +179,10 @@
 
   /** ברירות המחדל לפי סוג המייל. השאר (סגנון, חתימה, בלוקים) נשמר בין מייל למייל. */
   function defaults(episode, ctx = {}, kind = 'episode') {
+    if (!own(KINDS, kind)) kind = 'episode';
     const name = ctx.siteName || 'ראש בראש';
     const base = {
-      kind: KINDS[kind] ? kind : 'episode',
+      kind: own(KINDS, kind) ? kind : 'episode',
       style: 'night', accent: '', cover: 'side', font: 'modern', shape: 'pill', image: '',
       listenLabel: 'להאזנה באתר', downloadLabel: 'הורדת התוכנית', siteLabel: kind === 'digest' ? 'לכל התוכניות באתר' : 'לאתר התוכנית',
       // התיאור במייל: מתחיל מהתיאור של התוכנית באתר, ואפשר לערוך אותו למייל בלבד
@@ -207,13 +209,13 @@
    * opts: כמו defaults() אחרי עריכה.
    */
   function build(episode, ctx = {}, opts = {}) {
-    const kind = KINDS[opts.kind] ? opts.kind : 'episode';
+    const kind = own(KINDS, opts.kind) ? opts.kind : 'episode';
     const d = defaults(episode, ctx, kind);
     const o = { ...d, ...opts, kind, show: { ...d.show, ...(opts.show || {}) } };
     const e = episode || {};
     const p = palette(o, ctx);
-    const F = FONT_SETS[o.font] || FONT_SETS.modern;
-    const radius = (SHAPES[o.shape] || SHAPES.pill).r;
+    const F = own(FONT_SETS, o.font) ? FONT_SETS[o.font] : FONT_SETS.modern;
+    const radius = (own(SHAPES, o.shape) ? SHAPES[o.shape] : SHAPES.pill).r;
     const name = ctx.siteName || 'ראש בראש';
     const items = kind === 'digest' && Array.isArray(ctx.items) ? ctx.items.filter(Boolean) : [];
     const guests = kind === 'episode' && Array.isArray(e.guests) ? e.guests.filter(Boolean) : [];
@@ -267,7 +269,7 @@ ${td(`${m ? `<p style="margin:0 0 4px;font-family:${F.sans};font-size:12.5px;fon
 
     /* הבלוקים */
     const introText = t(o.intro), sigText = t(o.signature);
-    const descText = kind === 'episode' ? (typeof o.description === 'string' ? o.description : String(e.description || '')) : '';
+    const descText = kind === 'episode' ? t(typeof o.description === 'string' ? o.description : String(e.description || '')) : '';
     const listenUrl = ctx.listenUrl || ctx.siteUrl || '#';
     const download = kind === 'episode' && o.show.download && ctx.downloadUrl ? ctx.downloadUrl : '';
     const links = kind === 'episode' && Array.isArray(ctx.links) ? ctx.links.filter((l) => l && l.url) : [];
@@ -616,6 +618,6 @@ ${bodyHtml}
     STYLES, KINDS, BLOCKS, DEFAULT_BLOCKS, FONT_SETS, SHAPES, TOKENS, FONTS_URL,
     defaults, build, audit, blocksFor, suggestSubjects, rich, plain, tokens,
     raw, mime, chunk, parseEmails, checkAddresses, fixAddress, dailyLimit, encodeWord, base64url,
-    inkFor, contrast, hslHex, palette,
+    inkFor, contrast, hslHex, palette, own,
   };
 })();

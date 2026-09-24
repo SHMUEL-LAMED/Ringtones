@@ -106,11 +106,13 @@
   const toTemplate = (text, e) => { const t = label(e); return e && t.length > 1 ? String(text ?? '').split(t).join(TITLE) : String(text ?? ''); };
   const fill = (text, e) => (e ? String(text ?? '').split(TITLE).join(label(e)) : String(text ?? ''));
   // העיצוב והניסוח שעוברים ממייל למייל
-  const KEEP = ['style', 'accent', 'cover', 'font', 'shape', 'image', 'listenLabel', 'downloadLabel', 'signature', 'descTitle', 'tracksTitle', 'moreTitle', 'shareTitle', 'shareText', 'ctaLabel', 'ctaUrl'];
+  const KEEP = ['style', 'accent', 'cover', 'font', 'shape', 'listenLabel', 'downloadLabel', 'signature', 'descTitle', 'tracksTitle', 'moreTitle', 'shareTitle', 'shareText', 'ctaLabel', 'ctaUrl'];
   // לכל סוג מייל בנפרד, כתבנית לפעם הבאה (שם התוכנית → {{title}})
   const TEXT = ['subject', 'intro', 'headline', 'preheader'];
   // העבודה על מייל מסוים — נשמרת לפי התוכנית (או הסוג), כדי שאפשר יהיה לסגור ולחזור
-  const WORKED = [...TEXT, 'description', 'descTitle', 'quote', 'quoteBy', 'siteLabel'];
+  // (גם התמונה משלכם: באנר לחג לא אמור להפוך לתמונה של כל תוכנית אחריו)
+  const WORKED = [...TEXT, 'description', 'descTitle', 'quote', 'quoteBy', 'siteLabel', 'image'];
+  const hid = (h) => `${h.at}|${h.key}`;   // מזהה של טיוטה בהיסטוריה
   const OPT = new Set([...WORKED, 'signature', 'listenLabel', 'downloadLabel', 'tracksTitle', 'ctaLabel', 'ctaUrl', 'moreTitle', 'shareTitle', 'shareText', 'image']);
   const DONE = new Set(['gone', 'replaced', 'deleted']);
   const TABS = [['content', 'תוכן'], ['design', 'עיצוב'], ['people', 'נמענים'], ['check', 'בדיקה'], ['history', 'היסטוריה']];
@@ -128,17 +130,31 @@
     const contacts = () => cfg.contacts?.() || S.settings?.contacts || {};
     const prefs = obj(S.prefs.get(PREF, null));
     const st = {
-      kind: M.KINDS[cfg.kind] ? cfg.kind : 'episode', id: '', digest: [], opts: null, prefs,
+      kind: M.own(M.KINDS, cfg.kind) ? cfg.kind : 'episode', id: '', digest: [], opts: null, prefs,
       tab: 'content', view: 'desktop', expanded: new Set(['intro', 'description']),
-      busy: false, error: '', errorForce: false, progress: '', account: '', accountToken: '', restored: 0, dirty: false, pending: false, last: null, lastResult: null, checking: false, quality: null,
+      busy: false, error: '', errorForce: false, errorReplace: false, progress: '', account: '', accountToken: '', restored: 0, dirty: false, pending: false, last: null, lastResult: null, checking: false, quality: null,
       mode: 'all', to: S.sb.user?.email || '', replyTo: '', chunk: 400, exclude: [],
       rcp: { state: 'loading', list: [], error: '', source: '' },
       server: new Set(), serverOk: false,   // מה שכבר ברשימת התפוצה בשרת (כתובות חדשות אפשר לשמור בה)
       lines: new Map(),                      // כתובת → השורה שממנה נלקחה (עם השם), לשמירה ברשימה
-      templates: arr(S.prefs.get(TEMPLATES, null)).filter((t) => t && t.name && t.data),
-      history: arr(S.prefs.get(HISTORY, null)).filter((h) => h && h.at && h.key && Array.isArray(h.drafts)),
-      work: obj(S.prefs.get(WORK, null)),
+      history: [],
     };
+    /* התבניות, ההיסטוריה והעבודה נקראות מהחשבון בכל פעם מחדש (ומתמזגות לפני שמירה) —
+       כך לשונית או מכשיר נוסף לא דורסים זה את זה */
+    const templates = () => arr(S.prefs.get(TEMPLATES, null)).filter((t) => t && t.name && t.data);
+    const work = () => obj(S.prefs.get(WORK, null));
+    const forgotten = new Set();   // מה שהוסר מההיסטוריה כאן — לא חוזר ממיזוג
+    function syncHistory() {
+      const all = new Map(st.history.map((h) => [hid(h), h]));
+      for (const h of arr(S.prefs.get(HISTORY, null))) {
+        if (!h || !h.at || !h.key || !Array.isArray(h.drafts) || forgotten.has(hid(h))) continue;
+        const mine = all.get(hid(h));
+        if (!mine) all.set(hid(h), h);
+        else if (DONE.has(h.state) && !DONE.has(mine.state)) mine.state = h.state;   // נמחקה/הוחלפה במקום אחר
+      }
+      st.history = [...all.values()].sort((a, b) => b.at - a.at).slice(0, 30);
+    }
+    syncHistory();
     st.chunk = clamp(prefs.chunk, 1, 2000, 400);
     st.replyTo = typeof prefs.replyTo === 'string' ? prefs.replyTo : String(contacts().email || '');
     st.exclude = M.parseEmails(arr(prefs.exclude).join('\n'));
@@ -176,24 +192,24 @@
       return c;
     }
     function optionsFor(kind, e) {
-      const p = st.prefs, d = M.defaults(e, ctxFor(kind, e), kind);
+      const p = st.prefs = obj(S.prefs.get(PREF, null)), d = M.defaults(e, ctxFor(kind, e), kind);
       const o = { ...d, show: { ...d.show, ...obj(p.show) } };
       KEEP.forEach((k) => { if (typeof p[k] === 'string') o[k] = p[k]; });
       o.moreCount = clamp(p.moreCount, 1, 4, d.moreCount);
       o.blocks = M.blocksFor({ blocks: p.blocks, show: p.show });
       const txt = kind === 'episode' ? p : obj(obj(p.byKind)[kind]);
       TEXT.forEach((k) => { if (typeof txt[k] === 'string' && (txt[k].trim() || k === 'preheader')) o[k] = fill(txt[k], e); });
-      if (!M.STYLES[o.style]) o.style = 'night';
-      if (!M.FONT_SETS[o.font]) o.font = 'modern';
-      if (!M.SHAPES[o.shape]) o.shape = 'pill';
+      if (!M.own(M.STYLES, o.style)) o.style = 'night';
+      if (!M.own(M.FONT_SETS, o.font)) o.font = 'modern';
+      if (!M.own(M.SHAPES, o.shape)) o.shape = 'pill';
       // העבודה שנשמרה על המייל הזה (אם סגרו באמצע)
-      const w = obj(st.work[keyFor(kind, e?.id)]);
+      const w = obj(work()[keyFor(kind, e?.id)]);
       st.restored = 0;
       if (w.o) { WORKED.forEach((k) => { if (typeof w.o[k] === 'string') o[k] = w.o[k]; }); st.restored = Number(w.at) || 1; }
       return o;
     }
     function digestDefault() {
-      const ids = arr(obj(st.work.digest).digest).filter((id) => eps().some((e) => e.id === id));
+      const ids = arr(obj(work().digest).digest).filter((id) => eps().some((e) => e.id === id));
       return ids.length ? ids : liveEps().slice(0, 3).map((e) => e.id);
     }
 
@@ -203,20 +219,22 @@
     function flush() {
       clearTimeout(saveTimer);
       const o = st.opts; if (!o || (!st.pending && !st.dirty)) return;
-      const e = ep(), p = { ...st.prefs };
+      const e = ep(), p = { ...obj(S.prefs.get(PREF, null)) };
       KEEP.forEach((k) => { p[k] = o[k]; });
+      delete p.image;   // נשמר פעם כאן — עכשיו רק במייל עצמו
       Object.assign(p, { show: { ...o.show }, blocks: o.blocks.map((b) => ({ id: b.id, on: b.on })), moreCount: o.moreCount, chunk: st.chunk, replyTo: st.replyTo, exclude: st.exclude.slice(0, 500) });
       const txt = Object.fromEntries(TEXT.map((k) => [k, cut(toTemplate(o[k], e), 2000)]));
       if (st.kind === 'episode') Object.assign(p, txt); else p.byKind = { ...obj(p.byKind), [st.kind]: txt };
       st.prefs = p; S.prefs.set(PREF, p);
       if (st.dirty) {
-        const all = { ...st.work, [keyFor()]: { at: Date.now(), o: Object.fromEntries(WORKED.map((k) => [k, cut(o[k])])), ...(st.kind === 'digest' ? { digest: st.digest.slice(0, 20) } : {}) } };
-        st.work = Object.fromEntries(Object.entries(all).sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 8));   // רק המיילים האחרונים
-        S.prefs.set(WORK, st.work);
+        // התיאור נשמר רק אם נערך למייל — אחרת בפעם הבאה ייכנס התיאור העדכני מהאתר
+        const keep = WORKED.filter((k) => k !== 'description' || (st.kind === 'episode' && o.description !== String(e?.description || '')));
+        const all = { ...work(), [keyFor()]: { at: Date.now(), o: Object.fromEntries(keep.map((k) => [k, k === 'description' ? String(o[k]) : cut(o[k])])), ...(st.kind === 'digest' ? { digest: st.digest.slice(0, 60) } : {}) } };
+        S.prefs.set(WORK, Object.fromEntries(Object.entries(all).sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 8)));   // רק המיילים האחרונים
       }
       st.pending = false; st.dirty = false;
     }
-    const saveHistory = () => { st.history = st.history.slice(0, 30); S.prefs.set(HISTORY, st.history); };
+    const saveHistory = () => { syncHistory(); S.prefs.set(HISTORY, st.history.slice()); };
     const built = () => { const e = ep(); return st.kind === 'episode' && !e ? null : M.build(e, ctxFor(), { ...st.opts, kind: st.kind }); };
     const effective = () => { const x = new Set(st.exclude); return st.rcp.list.filter((a) => !x.has(a)); };
     const limit = () => M.dailyLimit(st.account || S.sb.user?.email);
@@ -231,7 +249,7 @@
       renderPanel('content'); renderPanel('design'); paintAll();
     }
     function setKind(k) {
-      if (!M.KINDS[k] || k === st.kind) return;
+      if (!M.own(M.KINDS, k) || k === st.kind) return;
       flush();
       st.kind = k; st.error = ''; st.errorForce = false;
       if (k === 'digest' && !st.digest.length) st.digest = digestDefault();
@@ -427,8 +445,9 @@
     }
     function paintTemplates() {
       const box = $('[data-m-templates]'); if (!box) return;
-      box.innerHTML = st.templates.length
-        ? `<ul class="mc-tpls">${st.templates.map((t, i) => `<li><span><b>${esc(t.name)}</b><small>${esc([M.KINDS[t.kind]?.name, M.STYLES[t.data.style]?.name, when(t.at)].filter(Boolean).join(' · '))}</small></span><button type="button" class="btn small" data-mtpl="apply" data-i="${i}">החלה</button><button type="button" class="icon-btn del" data-mtpl="del" data-i="${i}" aria-label="מחיקת התבנית ${esc(t.name)}">✕</button></li>`).join('')}</ul>`
+      const list = templates();
+      box.innerHTML = list.length
+        ? `<ul class="mc-tpls">${list.map((t) => `<li><span><b>${esc(t.name)}</b><small>${esc([M.own(M.KINDS, t.kind) ? M.KINDS[t.kind].name : '', M.own(M.STYLES, t.data.style) ? M.STYLES[t.data.style].name : '', when(t.at)].filter(Boolean).join(' · '))}</small></span><button type="button" class="btn small" data-mtpl="apply" data-name="${esc(t.name)}">החלה</button><button type="button" class="icon-btn del" data-mtpl="del" data-name="${esc(t.name)}" aria-label="מחיקת התבנית ${esc(t.name)}">✕</button></li>`).join('')}</ul>`
         : '<p class="cue-hint">עוד אין תבניות. עצבו מייל ושמרו אותו — לחגים, למהדורות מיוחדות, לסיכום חודשי. התבניות נשמרות בחשבון.</p>';
     }
     function paintContrast() {
@@ -611,9 +630,10 @@
       const open = st.history.filter((h) => h.mode !== 'me' && !DONE.has(h.state)).length;
       const badge = $('[data-mbadge="history"]'); if (badge) { badge.textContent = open ? fmtN(open) : ''; badge.className = 'mc-badge'; }
       const box = $('[data-m-history]'); if (!box) return;
+      syncHistory();
       const chk = $('[data-mop="hist-check"]'); if (chk) { chk.disabled = st.checking || !st.history.length; chk.innerHTML = st.checking ? '<span class="notice-spinner" aria-hidden="true"></span> בודקים…' : 'בדיקת המצב בג\'ימייל'; }
       if (!st.history.length) { box.innerHTML = '<p class="cue-hint">עוד לא נוצרו טיוטות מכאן.</p>'; return; }
-      box.innerHTML = st.history.map((h, i) => {
+      box.innerHTML = st.history.map((h) => {
         const [text, tone] = STATE[h.state] || ['לא נבדק', 'navy'];
         const partial = h.state === 'open' && h.alive && h.alive < h.drafts.length ? ` (${fmtN(h.alive)} מתוך ${fmtN(h.drafts.length)})` : '';
         const cur = h.key === keyFor();
@@ -621,7 +641,7 @@
   <div class="mc-hist-head"><b>${esc(h.title || h.subject || '')}</b><span class="pill ${tone}">${esc(text + partial)}</span></div>
   <small>${esc([M.KINDS[h.kind]?.name, when(h.at), h.email, h.mode === 'me' ? 'בדיקה אליי' : `${fmtN(h.total)} נמענים`, h.drafts.length > 1 ? `${fmtN(h.drafts.length)} טיוטות` : ''].filter(Boolean).join(' · '))}</small>
   ${h.subject ? `<small class="mc-hist-subj">${esc(h.subject)}</small>` : ''}
-  <div class="mc-hist-ops">${DONE.has(h.state) ? '' : h.drafts.map((d, j) => `<a class="btn small" href="${esc(draftUrl(h.email, d.messageId))}" target="_blank" rel="noopener">${h.drafts.length > 1 ? `טיוטה ${j + 1}${d.day > 1 ? ` · יום ${d.day}` : ''}` : 'פתיחה בג\'ימייל'} ←</a>`).join('')}${cur ? '' : `<button type="button" class="btn small ghost" data-mhist="load" data-i="${i}">לעריכה כאן</button>`}${DONE.has(h.state) ? '' : `<button type="button" class="btn small danger" data-mhist="delete" data-i="${i}">מחיקה מג'ימייל</button>`}<button type="button" class="icon-btn" data-mhist="forget" data-i="${i}" aria-label="הסרה מהרשימה">✕</button></div>
+  <div class="mc-hist-ops">${DONE.has(h.state) ? '' : h.drafts.map((d, j) => `<a class="btn small" href="${esc(draftUrl(h.email, d.messageId))}" target="_blank" rel="noopener">${h.drafts.length > 1 ? `טיוטה ${j + 1}${d.day > 1 ? ` · יום ${d.day}` : ''}` : 'פתיחה בג\'ימייל'} ←</a>`).join('')}${cur ? '' : `<button type="button" class="btn small ghost" data-mhist="load" data-id="${esc(hid(h))}">לעריכה כאן</button>`}${DONE.has(h.state) ? '' : `<button type="button" class="btn small danger" data-mhist="delete" data-id="${esc(hid(h))}">מחיקה מג'ימייל</button>`}<button type="button" class="icon-btn" data-mhist="forget" data-id="${esc(hid(h))}" aria-label="הסרה מהרשימה">✕</button></div>
 </article>`;
       }).join('');
     }
@@ -680,7 +700,10 @@
       const key = keyFor(), list = st.mode === 'me' ? [] : effective();
       if (st.mode === 'all' && !list.length) { st.error = 'אין כתובות ברשימה — ייבאו קובץ או הדביקו כתובות, או בחרו "רק אליי".'; st.errorForce = false; paintResult(); return; }
       const blocking = M.audit(b, auditInfo()).filter((x) => x.level === 'error' && x.id !== 'recipients');
-      if (blocking.length && !force) { st.error = `לפני היצירה כדאי לתקן: ${blocking.map((x) => x.text).join(' · ')}`; st.errorForce = true; paintResult(); return; }
+      if (blocking.length && !force) { st.error = `לפני היצירה כדאי לתקן: ${blocking.map((x) => x.text).join(' · ')}`; st.errorForce = true; st.errorReplace = replace; paintResult(); return; }
+      // מה שהטיוטה עליה — נקבע ברגע הלחיצה (בזמן שמחכים לג'ימייל אפשר להמשיך לעבור בעורך)
+      const kind = st.kind, mode = st.mode, title = titleOf(b), size = st.chunk;
+      const unsubscribe = st.opts.show.unsubscribe ? ctxFor().unsubscribeUrl : '';
       const replyTo = M.parseEmails(st.replyTo)[0] || '';
       /* כל רשימת התפוצה רק בעותק מוסתר (Bcc). ב"אל" יש כתובת אחת בלבד — שלכם — ואף פעם לא כתובת מהרשימה:
          כתובת מהרשימה שהוקלדה שם יורדת ממנו (היא כבר בעותק המוסתר), וכתובות נוספות שהוקלדו עוברות לעותק המוסתר. */
@@ -693,12 +716,12 @@
         await tokenP;
         st.progress = 'יוצרים את הטיוטה…'; paintResult();
         const email = await account();
-        const to = st.mode === 'me' ? [email] : [typed[0] || email].filter(Boolean);
-        const groups = st.mode === 'me' ? [[]] : M.chunk(list.filter((a) => !to.includes(a)), st.chunk);
-        if (!groups.length) groups.push([]);   // הרשימה היא רק הכתובת שב"אל"
-        if (st.mode !== 'me' && extra.length) groups[0] = [...new Set([...groups[0], ...extra])];
-        const unsubscribe = st.opts.show.unsubscribe ? ctxFor().unsubscribeUrl : '';
         const L = M.dailyLimit(email), drafts = [];
+        const to = mode === 'me' ? [email] : [typed[0] || email].filter(Boolean);
+        // טיוטה אחת לא יכולה להיות גדולה מהמגבלה היומית — אחרת ג'ימייל לא ישלח אותה
+        const groups = mode === 'me' ? [[]] : M.chunk(list.filter((a) => !to.includes(a)), Math.min(size, L));
+        if (!groups.length) groups.push([]);   // הרשימה היא רק הכתובת שב"אל"
+        if (mode !== 'me' && extra.length) groups[0] = [...new Set([...groups[0], ...extra])];
         let day = 1, used = 0;
         for (let i = 0; i < groups.length; i++) {
           if (groups.length > 1) { st.progress = `יוצרים טיוטה ${i + 1} מתוך ${groups.length}…`; paintResult(); }
@@ -708,8 +731,9 @@
           used += groups[i].length;
           drafts.push({ id: d.id, messageId: d.message?.id || '', count: groups[i].length, day });
         }
+        syncHistory();
         const prev = replace ? st.history.find((h) => h.key === key && h.email === email && h.mode !== 'me' && !DONE.has(h.state)) : null;
-        const entry = { at: Date.now(), key, kind: st.kind, title: titleOf(b), subject: b.subject, email, to: to[0] || '', mode: st.mode, total: drafts.reduce((n, d) => n + d.count, 0), drafts, state: 'open' };
+        const entry = { at: Date.now(), key, kind, title, subject: b.subject, email, to: to[0] || '', mode, total: drafts.reduce((n, d) => n + d.count, 0), drafts, state: 'open' };
         st.lastResult = entry; st.history.unshift(entry); saveHistory();
         if (prev) { st.progress = 'מוחקים את הטיוטה הקודמת…'; paintResult(); await removeDrafts(prev, 'replaced'); }
         U.notify(`${drafts.length === 1 ? 'הטיוטה נוצרה' : `${drafts.length} טיוטות נוצרו`} בג'ימייל של ${email}${prev ? ' — והקודמת נמחקה' : ''}.`, 'success');
@@ -742,7 +766,7 @@
           if (h.email !== email || DONE.has(h.state)) continue;
           let alive = 0;
           for (const d of h.drafts) {
-            try { await gmail(`/drafts/${encodeURIComponent(d.id)}?format=minimal`); alive++; }
+            try { const r = await gmail(`/drafts/${encodeURIComponent(d.id)}?format=minimal`); alive++; if (r.message?.id) d.messageId = r.message.id; }   // עריכה בג'ימייל מחליפה את מזהה ההודעה
             catch (err) { if (err.status !== 404) throw err; }
           }
           h.state = alive ? 'open' : 'gone'; h.alive = alive; h.checkedAt = Date.now();
@@ -751,9 +775,9 @@
       } catch (err) { if (interactive) U.notify(err.message, 'error'); }
       finally { st.checking = false; paintHistory(); paintResult(); paintWarn(); }
     }
-    async function historyOp(op, i) {
-      const h = st.history[i]; if (!h) return;
-      if (op === 'forget') { st.history.splice(i, 1); saveHistory(); paintHistory(); paintResult(); paintWarn(); return; }
+    async function historyOp(op, id) {
+      const h = st.history.find((x) => hid(x) === id); if (!h) return;
+      if (op === 'forget') { forgotten.add(id); st.history = st.history.filter((x) => x !== h); saveHistory(); paintHistory(); paintResult(); paintWarn(); return; }
       if (op === 'load') {
         const [kind, id] = h.key.startsWith('ep:') ? ['episode', h.key.slice(3)] : [h.key, ''];
         if (kind === 'episode' && !eps().some((e) => e.id === id)) { U.notify('התוכנית הזו כבר לא ברשימה.', 'error'); return; }
@@ -859,26 +883,25 @@
       const input = $('[data-m-tplname]'), name = (input?.value || '').trim();
       if (!name) { input?.focus(); U.notify('תנו שם לתבנית.', 'info'); return; }
       const o = st.opts, e = ep();
-      const data = { ...Object.fromEntries(KEEP.map((k) => [k, o[k]])), show: { ...o.show }, blocks: o.blocks.map((b) => ({ id: b.id, on: b.on })), moreCount: o.moreCount, siteLabel: o.siteLabel, ...Object.fromEntries(TEXT.map((k) => [k, cut(toTemplate(o[k], e), 2000)])) };
+      const data = { ...Object.fromEntries(KEEP.map((k) => [k, o[k]])), image: o.image, show: { ...o.show }, blocks: o.blocks.map((b) => ({ id: b.id, on: b.on })), moreCount: o.moreCount, siteLabel: o.siteLabel, ...Object.fromEntries(TEXT.map((k) => [k, cut(toTemplate(o[k], e), 2000)])) };
       const t = { name: name.slice(0, 40), at: Date.now(), kind: st.kind, data };
-      st.templates = [t, ...st.templates.filter((x) => x.name !== t.name)].slice(0, 12);
-      S.prefs.set(TEMPLATES, st.templates);
+      S.prefs.set(TEMPLATES, [t, ...templates().filter((x) => x.name !== t.name)].slice(0, 12));
       if (input) input.value = '';
       paintTemplates(); U.notify(`התבנית "${t.name}" נשמרה בחשבון.`, 'success');
     }
-    function applyTemplate(i) {
-      const t = st.templates[i]; if (!t) return;
-      if (t.kind !== st.kind && M.KINDS[t.kind] && (t.kind === 'note' || eps().length)) { flush(); st.kind = t.kind; if (t.kind === 'digest' && !st.digest.length) st.digest = digestDefault(); if (t.kind === 'episode' && !ep()) st.id = (eps().find(isLive) || eps()[0])?.id || ''; st.opts = optionsFor(st.kind, ep()); }
+    function applyTemplate(name) {
+      const t = templates().find((x) => x.name === name); if (!t) return;
+      if (t.kind !== st.kind && M.own(M.KINDS, t.kind) && (t.kind === 'note' || eps().length)) { flush(); st.kind = t.kind; if (t.kind === 'digest' && !st.digest.length) st.digest = digestDefault(); if (t.kind === 'episode' && !ep()) st.id = (eps().find(isLive) || eps()[0])?.id || ''; st.opts = optionsFor(st.kind, ep()); }
       const d = obj(t.data), e = ep(), o = { ...st.opts };
-      KEEP.forEach((k) => { if (typeof d[k] === 'string') o[k] = d[k]; });
+      [...KEEP, 'image'].forEach((k) => { if (typeof d[k] === 'string') o[k] = d[k]; });
       o.show = { ...o.show, ...obj(d.show) };
       if (Array.isArray(d.blocks)) o.blocks = M.blocksFor({ blocks: d.blocks });
       o.moreCount = clamp(d.moreCount, 1, 4, o.moreCount);
       TEXT.forEach((k) => { if (typeof d[k] === 'string') o[k] = fill(d[k], e); });
       if (typeof d.siteLabel === 'string' && d.siteLabel) o.siteLabel = d.siteLabel;
-      if (!M.STYLES[o.style]) o.style = 'night';
-      if (!M.FONT_SETS[o.font]) o.font = 'modern';
-      if (!M.SHAPES[o.shape]) o.shape = 'pill';
+      if (!M.own(M.STYLES, o.style)) o.style = 'night';
+      if (!M.own(M.FONT_SETS, o.font)) o.font = 'modern';
+      if (!M.own(M.SHAPES, o.shape)) o.shape = 'pill';
       st.opts = o; st.dirty = true; save(); render();
       U.notify(`הוחלה התבנית "${t.name}".`, 'success');
     }
@@ -897,7 +920,12 @@
       else if (OPT.has(k)) { st.opts[k] = t.value; if (WORKED.includes(k)) st.dirty = true; }
       else return;
       if (k === 'description') paintDescNote();
-      if (k === 'image') { const cv = $$('[data-mcover]'); cv.forEach((x) => { x.disabled = x.dataset.mcover !== 'none' && !(ep()?.cover || ep()?.thumb) && !/^https:\/\//i.test(t.value); }); }
+      if (k === 'image') {
+        const ok = /^https:\/\/\S+$/i.test(t.value.trim());
+        // קישור לתמונה כש"בלי תמונה" מסומן — מציגים אותה (בהודעה ובסיכום: באנר גדול למעלה)
+        if (ok && st.opts.cover === 'none') st.opts.cover = st.kind === 'episode' ? 'side' : 'full';
+        $$('[data-mcover]').forEach((x) => { x.disabled = x.dataset.mcover !== 'none' && !(ep()?.cover || ep()?.thumb) && !ok; x.setAttribute('aria-pressed', String(x.dataset.mcover === st.opts.cover)); });
+      }
       save(); preview();
     });
     root.addEventListener('change', async (ev) => {
@@ -978,15 +1006,15 @@
       if (b.dataset.msubject) { closeMenus(); const el = $('[data-m="subject"]'); if (el) { el.value = b.dataset.msubject; el.dispatchEvent(new Event('input', { bubbles: true })); el.focus(); } return; }
       if (b.dataset.mfix) { fixAddresses([b.dataset.mfix]); return; }
       if (b.dataset.mtpl) {
-        const i = Number(b.dataset.i);
-        if (b.dataset.mtpl === 'apply') applyTemplate(i);
-        else if (confirm(`למחוק את התבנית "${st.templates[i]?.name}"?`)) { st.templates = st.templates.filter((_, j) => j !== i); S.prefs.set(TEMPLATES, st.templates); paintTemplates(); }
+        const name = b.dataset.name;
+        if (b.dataset.mtpl === 'apply') applyTemplate(name);
+        else if (confirm(`למחוק את התבנית "${name}"?`)) { S.prefs.set(TEMPLATES, templates().filter((x) => x.name !== name)); paintTemplates(); }
         return;
       }
-      if (b.dataset.mhist) { historyOp(b.dataset.mhist, Number(b.dataset.i)); return; }
+      if (b.dataset.mhist) { historyOp(b.dataset.mhist, b.dataset.id); return; }
       switch (b.dataset.mop) {
         case 'create': create(); break;
-        case 'create-anyway': create({ force: true }); break;
+        case 'create-anyway': create({ force: true, replace: st.errorReplace }); break;
         case 'replace': create({ replace: true }); break;
         case 'test': sendTest(); break;
         case 'copy': copyMail(); break;
@@ -997,12 +1025,17 @@
         case 'accent-reset': st.opts.accent = ''; renderPanel('design'); save(); preview(); break;
         case 'desc-reset': { const e = ep(); if (!e) break; st.opts.description = String(e.description || ''); st.dirty = true; const el = $('[data-m="description"]'); if (el) el.value = st.opts.description; paintDescNote(); save(); preview(); break; }
         case 'work-reset': {
-          const key = keyFor(), rest = { ...st.work }; delete rest[key]; st.work = rest; S.prefs.set(WORK, rest);
+          // המייל הזה חוזר לנוסח של ברירת המחדל — גם הנושא והפתיחה ששמורים כתבנית, שאחרת היו חוזרים
+          const rest = { ...work() }; delete rest[keyFor()]; S.prefs.set(WORK, rest);
           if (st.kind === 'digest') st.digest = liveEps().slice(0, 3).map((e) => e.id);
-          st.opts = optionsFor(st.kind, ep()); st.dirty = false; renderPanel('content'); preview(true);
-          U.notify('חזרתם לנוסח ההתחלתי של המייל.', 'info'); break;
+          const e = ep(), d = M.defaults(e, ctxFor(st.kind, e), st.kind);
+          st.opts = optionsFor(st.kind, e);
+          [...TEXT, 'description', 'quote', 'quoteBy', 'siteLabel', 'image'].forEach((k) => { st.opts[k] = d[k] ?? ''; });
+          st.restored = 0; st.dirty = false; st.pending = true; flush();
+          renderPanel('content'); renderPanel('design'); preview(true);
+          U.notify('המייל חזר לנוסח של ברירת המחדל.', 'info'); break;
         }
-        case 'reset': closeMenus(); if (confirm('לחזור לעיצוב ולניסוח של ברירת המחדל? (התבניות, ההיסטוריה ורשימת "לא לשלוח אל" נשארות.)')) { st.prefs = { chunk: st.chunk, replyTo: st.replyTo, exclude: st.exclude }; S.prefs.set(PREF, st.prefs); const rest = { ...st.work }; delete rest[keyFor()]; st.work = rest; S.prefs.set(WORK, rest); st.opts = optionsFor(st.kind, ep()); render(); } break;
+        case 'reset': closeMenus(); if (confirm('לחזור לעיצוב ולניסוח של ברירת המחדל? (התבניות, ההיסטוריה ורשימת "לא לשלוח אל" נשארות.)')) { clearTimeout(saveTimer); st.pending = false; st.dirty = false; S.prefs.set(PREF, { chunk: st.chunk, replyTo: st.replyTo, exclude: st.exclude }); const rest = { ...work() }; delete rest[keyFor()]; S.prefs.set(WORK, rest); st.opts = optionsFor(st.kind, ep()); render(); } break;
         case 'digest-latest': st.digest = liveEps().slice(0, 3).map((e) => e.id); st.dirty = true; save(); renderPanel('content'); preview(); break;
         case 'digest-month': { const from = new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10); st.digest = liveEps().filter((e) => (e.date || '') >= from).map((e) => e.id); if (!st.digest.length) U.notify('לא עלו תוכניות בחודש האחרון.', 'info'); st.dirty = true; save(); renderPanel('content'); preview(); break; }
         case 'digest-none': st.digest = []; st.dirty = true; save(); renderPanel('content'); preview(); break;
@@ -1010,7 +1043,7 @@
         case 'fix-all': fixAddresses(st.quality.typos.map((t) => t.email)); break;
         case 'drop-risky': { const add = st.quality.risky; st.exclude = [...new Set([...st.exclude, ...add])]; const ta = $('[data-m="exclude"]'); if (ta) ta.value = st.exclude.join('\n'); save(); paintRecipients(false); paintChecks(); U.notify(`${fmtN(add.length)} כתובות הוצאו מהטיוטות.`, 'success'); break; }
         case 'hist-check': checkHistory(true); break;
-        case 'hist-clear': if (confirm('לנקות את רשימת הטיוטות שנוצרו? הטיוטות עצמן נשארות בג\'ימייל.')) { st.history = []; saveHistory(); paintHistory(); paintResult(); paintWarn(); } break;
+        case 'hist-clear': if (confirm('לנקות את רשימת הטיוטות שנוצרו? הטיוטות עצמן נשארות בג\'ימייל.')) { syncHistory(); st.history.forEach((h) => forgotten.add(hid(h))); st.history = []; saveHistory(); paintHistory(); paintResult(); paintWarn(); } break;
         case 'import': $('[data-m-file]')?.click(); break;
         case 'add-open': { const box = $('[data-m-listbox]'), el = $('[data-m="list"]'); if (!box || !el) break; box.open = true; if (el.value && !el.value.endsWith('\n')) el.value += '\n'; el.focus(); el.setSelectionRange(el.value.length, el.value.length); el.scrollTop = el.scrollHeight; box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); break; }
         case 'save-list': saveToList(b); break;
@@ -1024,6 +1057,11 @@
       box.innerHTML = list.map((s) => `<button type="button" data-msubject="${esc(s)}">${esc(s)}</button>`).join('');
     }
 
+    // לפני שהדף נסגר או עובר לרקע: מה שעוד מחכה לשמירה נכנס לחשבון. בשלב הלכידה, כדי לרוץ לפני
+    // המאזין של store.js — והוא שולח את הכל בבקשה אחת
+    const leave = () => { if (root.isConnected) flush(); };
+    window.addEventListener('pagehide', leave, true);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) leave(); }, true);
     // לחיצה מחוץ לעורך סוגרת תפריט פתוח
     document.addEventListener('click', (ev) => { if (root.isConnected && !root.contains(ev.target)) closeMenus(); });
 
