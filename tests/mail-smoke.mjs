@@ -173,6 +173,25 @@ await page.click('[data-mop="create"]');
 await page.waitForFunction((n) => document.querySelector('.mc-done span')?.textContent.includes('טיוטת בדיקה'), null, { timeout: 10000 });
 check(drafts.length === 4 && header(drafts[3], 'To') === 'admin@example.com' && !drafts[3].includes('Bcc:'), '"רק אליי": בלי הרשימה');
 
+// כל רשימת התפוצה רק בעותק מוסתר: גם כשמדביקים כתובות מהרשימה בשדה "אל" — הן לא נכנסות אליו
+await page.click('[data-mmode="all"]');
+await page.fill('[data-m="chunk"]', '400');
+await page.fill('[data-m="to"]', 'One@Example.com, guest@other.org; three@example.com, second@other.org');
+await page.click('[data-mop="create"]');
+await page.waitForFunction(() => document.querySelector('.mc-done span')?.textContent.includes('Bcc'), null, { timeout: 10000 });
+{
+  const mime = drafts.at(-1), to = header(mime, 'To'), bcc = header(mime, 'Bcc').split(/,\s*/).sort();
+  check(to === 'guest@other.org', `"אל": כתובת אחת בלבד, אף פעם לא כתובת מהרשימה (${to})`);
+  check(JSON.stringify(bcc) === JSON.stringify(['one@example.com', 'second@other.org', 'three@example.com', 'two@example.com']), 'כל הרשימה (וכתובות נוספות שהוקלדו) בעותק מוסתר בלבד');
+  check(!/^Cc:/m.test(mime.split('\r\n\r\n')[0]), 'בלי עותק גלוי (Cc)');
+  check((await page.locator('.mc-done span').first().innerText()).includes('כולם בעותק מוסתר (Bcc). ב"אל" רק guest@other.org'), 'ההודעה אומרת במפורש: כולם בעותק מוסתר, ומי ב"אל"');
+}
+// "אל" ריק: הכתובת של חשבון הג'ימייל
+await page.fill('[data-m="to"]', '');
+{ const before = drafts.length; await page.click('[data-mop="create"]'); for (let t = 0; t < 100 && drafts.length === before; t++) await page.waitForTimeout(100); }
+check(header(drafts.at(-1), 'To') === 'admin@example.com' && header(drafts.at(-1), 'Bcc').split(',').length === 3, '"אל" ריק: הכתובת של חשבון הג\'ימייל, והרשימה בעותק מוסתר');
+await page.fill('[data-m="to"]', 'admin@example.com');
+
 // הבחירות נשמרות בחשבון לפעם הבאה, עם שם התוכנית כמקום ריק
 await settle(3500);
 check(userdata?.prefs?.mailDraft?.style === 'gold' && userdata.prefs.mailDraft.accent === '#1d4ed8' && userdata.prefs.mailDraft.show?.phone === false, 'הסגנון והבחירות נשמרו בחשבון');

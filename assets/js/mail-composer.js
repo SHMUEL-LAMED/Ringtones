@@ -238,7 +238,7 @@
         </div>
       </details>
       <div class="form-grid">
-        <label class="field"><span>נמען גלוי ("אל")</span><input data-m="to" value="${esc(st.to)}" class="ltr" type="email" autocomplete="off"><small>כל הרשימה נכנסת בעותק מוסתר — אף אחד לא רואה את הכתובות של האחרים.</small></label>
+        <label class="field"><span>"אל" — הכתובת שלכם</span><input data-m="to" value="${esc(st.to)}" class="ltr" type="email" autocomplete="off" placeholder="${esc(S.sb.user?.email || '')}"><small>כתובת אחת בלבד. כל רשימת התפוצה נכנסת רק לעותק מוסתר (Bcc) — אף נמען לא רואה את הכתובות של האחרים, וכתובת מהרשימה לא תיכנס ל"אל".</small></label>
         <label class="field"><span>תשובות יגיעו אל (לא חובה)</span><input data-m="replyTo" value="${esc(st.replyTo)}" class="ltr" type="email" placeholder="${esc(st.to)}" autocomplete="off"></label>
         <label class="field"><span>עד כמה נמענים בכל טיוטה</span><input data-m="chunk" type="number" min="1" max="2000" value="${st.chunk}" inputmode="numeric"><small>בג'ימייל רגיל אפשר לשלוח עד 500 נמענים ביום; ברשימה ארוכה יותר נוצרות כמה טיוטות.</small></label>
       </div>
@@ -289,7 +289,7 @@
       if (st.mode === 'me') count.textContent = 'טיוטת בדיקה אליכם בלבד — בלי הרשימה. ככה רואים איך המייל נראה באמת לפני שיוצרים את הטיוטה לכולם.';
       else if (r.state === 'loading') count.innerHTML = '<span class="notice-spinner" aria-hidden="true"></span> טוענים את רשימת התפוצה…';
       else if (!n) count.innerHTML = `<span class="problems">${esc(r.state === 'missing' ? 'השרת עוד לא מחזיר את רשימת התפוצה (צריך לעדכן אותו). בינתיים: הורידו את הרשימה מניהול הסקר ("רשימת תפוצה" ← הורדה) וייבאו את הקובץ כאן, או הדביקו כתובות.' : r.state === 'error' ? `הרשימה לא נטענה: ${r.error}` : 'אין כתובות ברשימה. הדביקו כתובות או ייבאו קובץ.')}</span>`;
-      else count.textContent = `${n.toLocaleString('he-IL')} כתובות${r.source === 'manual' ? ' (רשימה שערכתם כאן)' : ' מרשימת התפוצה'} ייכנסו בעותק מוסתר${drafts > 1 ? ` — ${drafts} טיוטות, עד ${st.chunk.toLocaleString('he-IL')} נמענים בכל אחת` : ''}.`;
+      else count.textContent = `${n.toLocaleString('he-IL')} כתובות${r.source === 'manual' ? ' (רשימה שערכתם כאן)' : ' מרשימת התפוצה'} ייכנסו בעותק מוסתר (Bcc) בלבד${drafts > 1 ? ` — ${drafts} טיוטות, עד ${st.chunk.toLocaleString('he-IL')} נמענים בכל אחת` : ''}.`;
       if (ta && fillBox) ta.value = r.list.join('\n');
       const box = $('[data-m-listbox]'); if (box && st.mode === 'all' && !n && r.state !== 'loading') box.open = true;
       const addrow = $('[data-m-addrow]'); if (addrow) addrow.hidden = st.mode === 'me';
@@ -346,7 +346,7 @@
       if (!done?.length) { box.innerHTML = ''; return; }
       const last = done[done.length - 1];
       box.innerHTML = `<div class="mc-done"><b>✓ ${last.drafts.length === 1 ? 'הטיוטה מחכה' : `${last.drafts.length} טיוטות מחכות`} בג'ימייל של ${esc(last.email)}</b>
-<span>${last.mode === 'me' ? 'טיוטת בדיקה אליכם בלבד.' : `${last.total.toLocaleString('he-IL')} נמענים בעותק מוסתר.`} אפשר לערוך אותה שם, ואז "שליחה".</span>
+<span>${last.mode === 'me' ? 'טיוטת בדיקה אליכם בלבד.' : `${last.total.toLocaleString('he-IL')} נמענים — כולם בעותק מוסתר (Bcc). ב"אל" רק ${esc(last.to)}.`} אפשר לערוך אותה שם, ואז "שליחה".</span>
 <span class="mc-done-links">${last.drafts.map((d, i) => `<a class="btn small gold" href="${esc(draftUrl(last.email, d.messageId))}" target="_blank" rel="noopener">${last.drafts.length > 1 ? `טיוטה ${i + 1} (${d.count})` : 'פתיחת הטיוטה'} ←</a>`).join('')}<a class="btn small ghost" href="${esc(`${inbox(last.email)}#drafts`)}" target="_blank" rel="noopener">כל הטיוטות</a></span></div>`;
     }
 
@@ -355,8 +355,12 @@
       const e = ep(); if (!e) return;
       const list = st.mode === 'me' ? [] : st.rcp.list;
       if (st.mode === 'all' && !list.length) { st.error = 'אין כתובות ברשימה — ייבאו קובץ או הדביקו כתובות, או בחרו "רק אליי".'; paintResult(); return; }
-      const to = M.parseEmails(st.to), replyTo = M.parseEmails(st.replyTo)[0] || '';
-      if (st.mode === 'all' && !to.length) { st.error = 'כתבו כתובת בשדה "נמען גלוי" (בדרך כלל — הכתובת שלכם).'; paintResult(); return; }
+      const replyTo = M.parseEmails(st.replyTo)[0] || '';
+      /* כל רשימת התפוצה רק בעותק מוסתר (Bcc). ב"אל" יש כתובת אחת בלבד — שלכם — ואף פעם לא כתובת מהרשימה:
+         כתובת מהרשימה שהוקלדה שם יורדת ממנו (היא כבר בעותק המוסתר), וכתובות נוספות שהוקלדו עוברות לעותק המוסתר. */
+      const inList = new Set(list);
+      const typed = M.parseEmails(st.to).filter((a) => !inList.has(a));
+      const extra = typed.slice(1);
       const tokenP = getToken();   // מיד, בתוך הלחיצה
       st.busy = true; st.error = ''; st.progress = 'מחכים לאישור של Google…'; paintResult();
       try {
@@ -364,15 +368,18 @@
         st.progress = 'יוצרים את הטיוטה…'; paintResult();
         const email = (await gmail('/profile')).emailAddress || S.sb.user?.email || '';
         const b = built();
-        const groups = st.mode === 'me' ? [[]] : M.chunk(list, st.chunk);
+        const to = st.mode === 'me' ? [email] : [typed[0] || email].filter(Boolean);
+        const groups = st.mode === 'me' ? [[]] : M.chunk(list.filter((a) => !to.includes(a)), st.chunk);
+        if (!groups.length) groups.push([]);   // הרשימה היא רק הכתובת שב"אל"
+        if (st.mode !== 'me' && extra.length) groups[0] = [...new Set([...groups[0], ...extra])];
         const drafts = [];
         for (let i = 0; i < groups.length; i++) {
           if (groups.length > 1) { st.progress = `יוצרים טיוטה ${i + 1} מתוך ${groups.length}…`; paintResult(); }
-          const raw = M.raw({ to: st.mode === 'me' ? [email] : to, bcc: groups[i], replyTo, subject: b.subject, html: b.html, text: b.text });
+          const raw = M.raw({ to, bcc: groups[i], replyTo, subject: b.subject, html: b.html, text: b.text });
           const d = await gmail('/drafts', { method: 'POST', body: { message: { raw } } });
           drafts.push({ id: d.id, messageId: d.message?.id || '', count: groups[i].length });
         }
-        (st.results[e.id] = st.results[e.id] || []).push({ email, drafts, total: list.length, mode: st.mode });
+        (st.results[e.id] = st.results[e.id] || []).push({ email, to: to[0] || '', drafts, total: drafts.reduce((n, d) => n + d.count, 0), mode: st.mode });
         U.notify(drafts.length === 1 ? `הטיוטה נוצרה בג'ימייל של ${email}.` : `${drafts.length} טיוטות נוצרו בג'ימייל של ${email}.`, 'success');
         if (email && S.sb.user?.email && email.toLowerCase() !== S.sb.user.email.toLowerCase()) U.notify(`שימו לב: הטיוטה נוצרה בחשבון ${email}, לא ב־${S.sb.user.email}.`, 'info');
       } catch (err) { st.error = err.message; }
