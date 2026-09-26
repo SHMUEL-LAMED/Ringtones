@@ -140,7 +140,7 @@
   St.innerHTML = list.length ? `
 <div class="stats">
   <div class="stat"><b data-count="${nShows}">0</b><small>תוכניות ופרקי בונוס</small></div>
-  <div class="stat"><b data-count="${nLegacy}">0</b><small>הקלטות מקו המכלול</small></div>
+  <div class="stat"><b data-count="${nLegacy}">0</b><small>הקלטות משוחזרות</small></div>
   <div class="stat"><b data-count="${sets.length}">0</b><small>סטים מיוחדים</small></div>
   <div class="stat"><b data-count="${nAudio}">0</b><small>הקלטות להאזנה</small></div>
 </div>` : '';
